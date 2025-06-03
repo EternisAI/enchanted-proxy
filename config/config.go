@@ -26,6 +26,10 @@ type Config struct {
 	// Composio API
 	ComposioAPIKey string
 	ComposioTwitterConfig string
+
+	// OpenAI API
+	OpenAIAPIKey string
+	OpenRouterAPIKey string
 }
 
 var AppConfig *Config
@@ -55,6 +59,10 @@ func LoadConfig() {
 		ComposioAPIKey: getEnvOrDefault("COMPOSIO_API_KEY", ""),
 
 		ComposioTwitterConfig: getEnvOrDefault("COMPOSIO_TWITTER_CONFIG", ""),
+
+		// OpenAI
+		OpenAIAPIKey: getEnvOrDefault("OPENAI_API_KEY", ""),
+		OpenRouterAPIKey: getEnvOrDefault("OPENROUTER_API_KEY", ""),
 	}
 	
 	// Validate required configs
