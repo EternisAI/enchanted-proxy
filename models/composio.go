@@ -4,16 +4,14 @@ import "time"
 
 // CreateConnectedAccountRequest represents the request to create a new connected account
 type CreateConnectedAccountRequest struct {
-	ToolkitSlug string `json:"toolkit_slug" binding:"required"`
+	Provider string `json:"provider" binding:"required"`
 	UserID      string `json:"user_id" binding:"required"`
 	RedirectURI string `json:"redirect_uri,omitempty"`
 }
 
-// CreateConnectedAccountResponse represents the response from creating a connected account
 type CreateConnectedAccountResponse struct {
-	ConnectionStatus    string `json:"connection_status"`
-	ConnectedAccountID  string `json:"connected_account_id"`
-	RedirectURL         string `json:"redirect_url,omitempty"`
+	ID             string         `json:"id"`
+	URL            string         `json:"url"`
 }
 
 // Toolkit represents a toolkit/tool information
@@ -77,6 +75,13 @@ type ExecuteToolResponse struct {
 	SessionInfo interface{} `json:"session_info"`
 }
 
+// DetailedConnectedAccountResponse represents a detailed response from creating/getting a connected account
+type ConnectedAccountResponse struct {
+	ID             string         `json:"id"`
+	Status         string         `json:"status"`
+	RedirectURL    string         `json:"redirect_url"`
+}
+
 // ComposioError represents an error response from Composio API
 type ComposioError struct {
 	Message string `json:"message"`
@@ -89,4 +94,33 @@ func (e ComposioError) Error() string {
 		return e.Message + ": " + e.Details
 	}
 	return e.Message
+}
+
+// ConnectedAccountDetails represents the detailed connected account response
+type ConnectedAccountDetailResponse struct {
+	UserID     string     `json:"user_id"`
+	ID         string     `json:"id"`
+	Status     string     `json:"status"`
+	State      AuthState  `json:"state"`
+}
+
+// AuthState represents the authentication state with OAuth details
+type AuthState struct {
+	AuthScheme string        `json:"authScheme"`
+	Val        OAuth2Details `json:"val"`
+}
+
+// OAuth2Details represents OAuth2 authentication details
+type OAuth2Details struct {
+	Status           string `json:"status"`
+	AccessToken      string `json:"access_token"`
+	TokenType        string `json:"token_type"`
+	RefreshToken     string `json:"refresh_token"`
+	ExpiresIn        int    `json:"expires_in"`
 } 
+
+type ComposioRefreshTokenResponse struct {
+	ID         string  `json:"id"`
+	RedirectURL string `json:"redirect_url"`
+	Status      string `json:"status"`
+}

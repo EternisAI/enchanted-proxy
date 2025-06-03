@@ -195,16 +195,12 @@ func (s *OAuthService) ExchangeToken(req models.TokenExchangeRequest) (*models.T
 	// Calculate expiration
 	tokenResp.ExpiresAt = timeBeforeTokenRequest.Add(time.Duration(expiresIn) * time.Second)
 	tokenResp.Platform = req.Platform
-
-
-	fmt.Printf("Token exchange response: %+v\n", tokenResp)
 	
 	return &tokenResp, nil
 }
 
 // RefreshToken refreshes an existing access token
 func (s *OAuthService) RefreshToken(platform, refreshToken string) (*models.TokenResponse, error) {
-	s.logger.Printf("refreshing OAuth token for provider: %s", platform)
 
 	if refreshToken == "" {
 		return nil, fmt.Errorf("refresh token is required")
@@ -219,10 +215,8 @@ func (s *OAuthService) RefreshToken(platform, refreshToken string) (*models.Toke
 
 	tokenResp, err := s.ExchangeToken(req)
 	if err != nil {
-		s.logger.Printf("failed to refresh token for provider %s: %v", platform, err)
 		return nil, fmt.Errorf("failed to refresh token: %w", err)
 	}
 
-	s.logger.Printf("successfully refreshed OAuth token for provider: %s", platform)
 	return tokenResp, nil
 }

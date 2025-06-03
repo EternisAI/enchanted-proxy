@@ -18,9 +18,11 @@ func main() {
 
 	// Initialize services
 	oauthService := services.NewOAuthService()
+	composioService := services.NewComposioService()
 
 	// Initialize handlers
 	oauthHandler := handlers.NewOAuthHandler(oauthService)
+	composioHandler := handlers.NewComposioHandler(composioService)
 
 	// Initialize Gin router
 	router := gin.Default()
@@ -49,6 +51,13 @@ func main() {
 		auth.POST("/refresh", oauthHandler.RefreshToken)
 	}
 
+	// Compose API routes
+	compose := router.Group("/composio")
+	{
+		compose.POST("/auth", composioHandler.CreateConnectedAccount)
+		compose.GET("/account", composioHandler.GetConnectedAccount)
+		compose.GET("/refresh", composioHandler.RefreshToken)
+	}
 
 
 	// Start server

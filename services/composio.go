@@ -34,8 +34,17 @@ func NewComposioService() *ComposioService {
 	}
 }
 
+
+func (s *ComposioService) getComposioConfig(toolkitSlug string) (string, error) {
+	switch toolkitSlug {
+	case "twitter":
+		return config.AppConfig.ComposioTwitterConfig, nil
+	default:
+		return "", fmt.Errorf("unsupported toolkit slug: %s", toolkitSlug)
+	}
+}
 // CreateConnectedAccount creates a new connected account and returns the redirect URL
-func (s *ComposioService) CreateConnectedAccount(userID, toolkitSlug string) (*models.CreateConnectedAccountResponse, error) {
+func (s *ComposioService) CreateConnectedAccount(userID, toolkitSlug, callbackURL string) (*models.CreateConnectedAccountResponse, error) {
 	s.logger.Printf("Creating connected account for user %s with toolkit %s", userID, toolkitSlug)
 
 	if s.apiKey == "" {
@@ -46,14 +55,23 @@ func (s *ComposioService) CreateConnectedAccount(userID, toolkitSlug string) (*m
 	// as v1 is deprecated. However, since we're implementing v3 service, we'll use the 
 	// connected accounts endpoint pattern but adapt it for the current API structure
 	url := fmt.Sprintf("%s/connected_accounts", ComposioBaseURL)
+	composioConfig, err := s.getComposioConfig(toolkitSlug)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get composio config: %w", err)
+	}
 
 	// Prepare request payload
 	payload := map[string]interface{}{
-		"toolkit_slug": toolkitSlug,
-		"user_id":      userID,
+		"auth_config": map[string]interface{}{
+			"id": composioConfig,
+		},
+		"connection": map[string]interface{}{
+			"user_id": userID,
+			"callback_url": callbackURL,
+		},
 	}
-
 	jsonPayload, err := json.Marshal(payload)
+	
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request payload: %w", err)
 	}
@@ -96,14 +114,133 @@ func (s *ComposioService) CreateConnectedAccount(userID, toolkitSlug string) (*m
 	}
 
 	// Parse successful response
-	var response models.CreateConnectedAccountResponse
+	var response models.ConnectedAccountResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	s.logger.Printf("Successfully created connected account: %s", response.ConnectedAccountID)
+	return &models.CreateConnectedAccountResponse{
+		ID: response.ID,
+		URL: response.RedirectURL,
+	}, nil
+}
+
+
+func (s *ComposioService) GetConnectedAccount(accountID string) (*models.ConnectedAccountDetailResponse, error) {
+
+	if s.apiKey == "" {
+		return nil, fmt.Errorf("composio API key is not configured")
+	}
+
+	// Based on the API documentation, we need to use the v2 endpoint for initiate connection
+	// as v1 is deprecated. However, since we're implementing v3 service, we'll use the 
+	// connected accounts endpoint pattern but adapt it for the current API structure
+	url := fmt.Sprintf("%s/connected_accounts/%s", ComposioBaseURL, accountID)
+
+	// Create HTTP request
+	ctx := context.Background()
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", s.apiKey)
+	// Execute request
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			s.logger.Printf("failed to close response body: %v", closeErr)
+		}
+	}()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check for HTTP errors
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		var composioErr models.ComposioError
+		if jsonErr := json.Unmarshal(body, &composioErr); jsonErr == nil {
+			return nil, composioErr
+		}
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse successful response
+	var response models.ConnectedAccountDetailResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &response, nil	
+}
+
+func (s *ComposioService) RefreshToken(accountID string) (*models.ComposioRefreshTokenResponse, error) {
+
+	if s.apiKey == "" {
+		return nil, fmt.Errorf("composio API key is not configured")
+	}
+
+	// Based on the API documentation, we need to use the v2 endpoint for initiate connection
+	// as v1 is deprecated. However, since we're implementing v3 service, we'll use the 
+	// connected accounts endpoint pattern but adapt it for the current API structure
+	url := fmt.Sprintf("%s/connected_accounts/%s/refresh", ComposioBaseURL, accountID)
+
+
+
+	// Create HTTP request
+	ctx := context.Background()
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", s.apiKey)
+
+	// Execute request
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			s.logger.Printf("failed to close response body: %v", closeErr)
+		}
+	}()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check for HTTP errors
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		var composioErr models.ComposioError
+		if jsonErr := json.Unmarshal(body, &composioErr); jsonErr == nil {
+			return nil, composioErr
+		}
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse successful response
+	var response models.ComposioRefreshTokenResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
 	return &response, nil
 }
+
+
 
 // GetToolBySlug retrieves toolkit information by slug
 func (s *ComposioService) GetToolBySlug(slug string) (*models.Toolkit, error) {

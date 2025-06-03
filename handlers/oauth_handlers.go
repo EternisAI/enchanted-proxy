@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
 	"oauth-proxy/models"
 	"oauth-proxy/services"
@@ -24,7 +23,7 @@ func NewOAuthHandler(oauthService *services.OAuthService) *OAuthHandler {
 func (h *OAuthHandler) ExchangeToken(c *gin.Context) {
 	var req models.TokenExchangeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fmt.Println("ExchangeToken request unmarshalling error:", err)
+
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{
 			Error:       "invalid_request",
 			Description: err.Error(),
@@ -35,7 +34,6 @@ func (h *OAuthHandler) ExchangeToken(c *gin.Context) {
 
 	tokenResponse, err := h.oauthService.ExchangeToken(req)
 	if err != nil {
-		fmt.Println("ExchangeToken api error:", err)
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{
 			Error:       "exchange_failed",
 			Description: err.Error(),

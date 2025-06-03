@@ -39,16 +39,17 @@ func (h *ComposioHandler) CreateConnectedAccount(c *gin.Context) {
 		return
 	}
 
-	if req.ToolkitSlug == "" {
+	if req.Provider == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "toolkit_slug is required",
+			"error": "provider is required",
 		})
 		return
 	}
 
 	// Call the service
-	response, err := h.composioService.CreateConnectedAccount(req.UserID, req.ToolkitSlug)
+	response, err := h.composioService.CreateConnectedAccount(req.UserID, req.Provider, req.RedirectURI)
 	if err != nil {
+		
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to create connected account",
 			"details": err.Error(),
@@ -59,6 +60,46 @@ func (h *ComposioHandler) CreateConnectedAccount(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+func (h *ComposioHandler) GetConnectedAccount(c *gin.Context) {
+	accountID := c.Query("account_id")
+	if accountID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "account_id is required",
+		})
+		return
+	}
+
+	response, err := h.composioService.GetConnectedAccount(accountID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get connected account",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *ComposioHandler) RefreshToken(c *gin.Context) {
+	accountID := c.Query("account_id")
+	if accountID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "account_id is required in query params",
+		})
+	}
+
+	response, err := h.composioService.RefreshToken(accountID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to refresh token",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
 // GetToolBySlug handles retrieving toolkit information by slug
 // GET /composio/tools/:slug
 func (h *ComposioHandler) GetToolBySlug(c *gin.Context) {

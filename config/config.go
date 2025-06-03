@@ -25,6 +25,7 @@ type Config struct {
 	
 	// Composio API
 	ComposioAPIKey string
+	ComposioTwitterConfig string
 }
 
 var AppConfig *Config
@@ -52,6 +53,8 @@ func LoadConfig() {
 		
 		// Composio
 		ComposioAPIKey: getEnvOrDefault("COMPOSIO_API_KEY", ""),
+
+		ComposioTwitterConfig: getEnvOrDefault("COMPOSIO_TWITTER_CONFIG", ""),
 	}
 	
 	// Validate required configs
