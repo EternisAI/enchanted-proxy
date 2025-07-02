@@ -12,7 +12,7 @@ type ComposioHandler struct {
 	composioService *services.ComposioService
 }
 
-// NewComposioHandler creates a new ComposioHandler instance
+// NewComposioHandler creates a new ComposioHandler instance.
 func NewComposioHandler(composioService *services.ComposioService) *ComposioHandler {
 	return &ComposioHandler{
 		composioService: composioService,
@@ -20,7 +20,7 @@ func NewComposioHandler(composioService *services.ComposioService) *ComposioHand
 }
 
 // CreateConnectedAccount handles the creation of a new connected account
-// POST /composio/connect
+// POST /composio/connect.
 func (h *ComposioHandler) CreateConnectedAccount(c *gin.Context) {
 	var req models.CreateConnectedAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -49,7 +49,6 @@ func (h *ComposioHandler) CreateConnectedAccount(c *gin.Context) {
 	// Call the service
 	response, err := h.composioService.CreateConnectedAccount(req.UserID, req.Provider, req.RedirectURI)
 	if err != nil {
-
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to create connected account",
 			"details": err.Error(),
@@ -102,7 +101,7 @@ func (h *ComposioHandler) RefreshToken(c *gin.Context) {
 }
 
 // GetToolBySlug handles retrieving toolkit information by slug
-// GET /composio/tools/:slug
+// GET /composio/tools/:slug.
 func (h *ComposioHandler) GetToolBySlug(c *gin.Context) {
 	slug := c.Param("slug")
 	if slug == "" {
@@ -126,7 +125,7 @@ func (h *ComposioHandler) GetToolBySlug(c *gin.Context) {
 }
 
 // ExecuteTool handles tool execution
-// POST /composio/tools/:slug/execute
+// POST /composio/tools/:slug/execute.
 func (h *ComposioHandler) ExecuteTool(c *gin.Context) {
 	slug := c.Param("slug")
 	if slug == "" {
@@ -167,7 +166,7 @@ func (h *ComposioHandler) ExecuteTool(c *gin.Context) {
 }
 
 // GetConnectedAccounts handles retrieving connected accounts for a user
-// GET /composio/accounts/:user_id
+// GET /composio/accounts/:user_id.
 func (h *ComposioHandler) GetConnectedAccounts(c *gin.Context) {
 	userID := c.Param("user_id")
 	if userID == "" {
@@ -194,7 +193,7 @@ func (h *ComposioHandler) GetConnectedAccounts(c *gin.Context) {
 }
 
 // HealthCheck provides a health check endpoint for the Composio service
-// GET /composio/health
+// GET /composio/health.
 func (h *ComposioHandler) HealthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "healthy",

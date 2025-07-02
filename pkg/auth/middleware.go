@@ -21,7 +21,7 @@ func NewFirebaseAuthMiddleware(validator TokenValidator) (*FirebaseAuthMiddlewar
 	}, nil
 }
 
-// RequireAuth is a middleware that validates Firebase tokens and attaches user UUID to context
+// RequireAuth is a middleware that validates Firebase tokens and attaches user UUID to context.
 func (f *FirebaseAuthMiddleware) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Extract Authorization header
@@ -61,7 +61,7 @@ func (f *FirebaseAuthMiddleware) RequireAuth() gin.HandlerFunc {
 	}
 }
 
-// GetUserUUID extracts the user UUID from the Gin context
+// GetUserUUID extracts the user UUID from the Gin context.
 func GetUserUUID(c *gin.Context) (string, bool) {
 	userUUID, exists := c.Get(UserUUIDKey)
 	if !exists {
@@ -70,4 +70,4 @@ func GetUserUUID(c *gin.Context) (string, bool) {
 
 	uuid, ok := userUUID.(string)
 	return uuid, ok
-} 
+}

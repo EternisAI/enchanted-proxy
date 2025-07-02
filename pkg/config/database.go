@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// InitDatabase initializes the database connection and runs migrations
+// InitDatabase initializes the database connection and runs migrations.
 func InitDatabase() (*gorm.DB, error) {
 	db, err := gorm.Open(postgres.Open(AppConfig.DatabaseURL), &gorm.Config{})
 	if err != nil {

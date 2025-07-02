@@ -20,11 +20,10 @@ func NewOAuthHandler(oauthService *services.OAuthService) *OAuthHandler {
 }
 
 // ExchangeToken handles token exchange endpoint
-// POST /auth/exchange
+// POST /auth/exchange.
 func (h *OAuthHandler) ExchangeToken(c *gin.Context) {
 	var req models.TokenExchangeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{
 			Error:       "invalid_request",
 			Description: err.Error(),
@@ -48,7 +47,7 @@ func (h *OAuthHandler) ExchangeToken(c *gin.Context) {
 }
 
 // RefreshToken handles token refresh endpoint
-// POST /auth/refresh
+// POST /auth/refresh.
 func (h *OAuthHandler) RefreshToken(c *gin.Context) {
 	var req models.RefreshTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -74,7 +73,7 @@ func (h *OAuthHandler) RefreshToken(c *gin.Context) {
 }
 
 // GoogleCallback handles Google OAuth callback
-// GET /auth/google/callback
+// GET /auth/google/callback.
 func (h *OAuthHandler) GoogleCallback(c *gin.Context) {
 	code := c.Query("code")
 	state := c.Query("state")
@@ -107,7 +106,7 @@ func (h *OAuthHandler) GoogleCallback(c *gin.Context) {
 }
 
 // SlackCallback handles Slack OAuth callback
-// GET /auth/slack/callback
+// GET /auth/slack/callback.
 func (h *OAuthHandler) SlackCallback(c *gin.Context) {
 	code := c.Query("code")
 	state := c.Query("state")
@@ -140,7 +139,7 @@ func (h *OAuthHandler) SlackCallback(c *gin.Context) {
 }
 
 // TwitterCallback handles Twitter OAuth callback
-// GET /auth/twitter/callback
+// GET /auth/twitter/callback.
 func (h *OAuthHandler) TwitterCallback(c *gin.Context) {
 	code := c.Query("code")
 	state := c.Query("state")
@@ -173,7 +172,7 @@ func (h *OAuthHandler) TwitterCallback(c *gin.Context) {
 }
 
 // HealthCheck handles health check endpoint
-// GET /health
+// GET /health.
 func (h *OAuthHandler) HealthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "healthy",

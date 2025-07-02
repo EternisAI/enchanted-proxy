@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-// TokenResponse represents the structure of OAuth token response
+// TokenResponse represents the structure of OAuth token response.
 type TokenResponse struct {
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token,omitempty"`
@@ -14,7 +14,7 @@ type TokenResponse struct {
 	Platform     string    `json:"platform"`
 }
 
-// TokenExchangeRequest represents the request structure for token exchange endpoint
+// TokenExchangeRequest represents the request structure for token exchange endpoint.
 type TokenExchangeRequest struct {
 	GrantType    string `json:"grant_type" binding:"required"`
 	Code         string `json:"code,omitempty"`
@@ -24,13 +24,13 @@ type TokenExchangeRequest struct {
 	RedirectURI  string `json:"redirect_uri,omitempty"`
 }
 
-// RefreshTokenRequest represents the request structure for token refresh
+// RefreshTokenRequest represents the request structure for token refresh.
 type RefreshTokenRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 	Platform     string `json:"platform" binding:"required"`
 }
 
-// OAuthURLRequest represents the request structure for generating OAuth URLs
+// OAuthURLRequest represents the request structure for generating OAuth URLs.
 type OAuthURLRequest struct {
 	Platform    string `json:"platform" binding:"required"`
 	RedirectURI string `json:"redirect_uri" binding:"required"`
@@ -38,21 +38,21 @@ type OAuthURLRequest struct {
 	Scopes      string `json:"scopes,omitempty"`
 }
 
-// OAuthURLResponse represents the response structure for OAuth URL generation
+// OAuthURLResponse represents the response structure for OAuth URL generation.
 type OAuthURLResponse struct {
 	AuthURL  string `json:"auth_url"`
 	Platform string `json:"platform"`
 	State    string `json:"state,omitempty"`
 }
 
-// ErrorResponse represents error response structure
+// ErrorResponse represents error response structure.
 type ErrorResponse struct {
 	Error       string `json:"error"`
 	Description string `json:"error_description,omitempty"`
 	Code        int    `json:"code"`
 }
 
-// OAuthConfig represents OAuth configuration for a provider
+// OAuthConfig represents OAuth configuration for a provider.
 type OAuthConfig struct {
 	TokenEndpoint string
 	ClientID      string
@@ -60,7 +60,7 @@ type OAuthConfig struct {
 	RedirectURI   string
 }
 
-// UserInfo represents basic user information from OAuth providers
+// UserInfo represents basic user information from OAuth providers.
 type UserInfo struct {
 	ID       string `json:"id"`
 	Name     string `json:"name,omitempty"`

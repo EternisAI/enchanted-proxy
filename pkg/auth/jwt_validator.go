@@ -65,15 +65,13 @@ func (v *JWTTokenValidator) ValidateToken(tokenString string) (string, error) {
 			return "", fmt.Errorf("%w: %v", ErrInvalidToken, err)
 		}
 
-		
-
 		if claims, ok := token.Claims.(*StandardClaims); ok {
 			if claims.Sub == "" {
 				return "", fmt.Errorf("%w: no subject (sub) found in token claims", ErrInvalidToken)
 			}
 			return claims.Sub, nil
 		}
-		
+
 		return "", ErrInvalidToken
 	}
 

@@ -1,0 +1,79 @@
+name: Go CI (backend)
+
+on:
+  pull_request:
+    branches: [main, master]
+    paths-ignore: ['deploy/**']
+  push:
+    branches: [main, master]
+    paths-ignore: ['deploy/**']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+          cache: true
+
+      - name: Lint only the diff
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.1.6
+          only-new-issues: true
+
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+          cache: true
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test
+
+  dead-code-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+          cache: true
+
+      - name: Check for dead code
+        run: |
+          deadcode_output=$(go run golang.org/x/tools/cmd/deadcode@latest -tags=deadcode ./... 2>/dev/null || true)
+          if [ -n "$deadcode_output" ]; then
+            echo "❌ Dead code found! Please remove the following:"
+            echo "$deadcode_output"
+            exit 1
+          else
+            echo "✅ No dead code found"
+          fi

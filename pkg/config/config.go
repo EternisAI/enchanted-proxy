@@ -37,8 +37,8 @@ type Config struct {
 	OpenAIAPIKey     string
 	OpenRouterAPIKey string
 
-	ValidatorType         string // "jwk" or "firebase"
-	JWTJWKSURL            string
+	ValidatorType string // "jwk" or "firebase"
+	JWTJWKSURL    string
 }
 
 var AppConfig *Config

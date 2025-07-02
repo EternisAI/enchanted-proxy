@@ -26,7 +26,7 @@ func NewOAuthService() *OAuthService {
 	}
 }
 
-// getOAuthConfig returns the OAuth configuration for a given provider
+// getOAuthConfig returns the OAuth configuration for a given provider.
 func (s *OAuthService) getOAuthConfig(provider string) (models.OAuthConfig, error) {
 	switch provider {
 	case "google":
@@ -55,7 +55,7 @@ func (s *OAuthService) getOAuthConfig(provider string) (models.OAuthConfig, erro
 	}
 }
 
-// ExchangeToken exchanges authorization code for access token or refreshes a token
+// ExchangeToken exchanges authorization code for access token or refreshes a token.
 func (s *OAuthService) ExchangeToken(req models.TokenExchangeRequest) (*models.TokenResponse, error) {
 	oauthConfig, err := s.getOAuthConfig(req.Platform)
 	if err != nil {
@@ -203,7 +203,7 @@ func (s *OAuthService) ExchangeToken(req models.TokenExchangeRequest) (*models.T
 	return &tokenResp, nil
 }
 
-// RefreshToken refreshes an existing access token
+// RefreshToken refreshes an existing access token.
 func (s *OAuthService) RefreshToken(platform, refreshToken string) (*models.TokenResponse, error) {
 	if refreshToken == "" {
 		return nil, fmt.Errorf("refresh token is required")

@@ -20,8 +20,8 @@ import (
 )
 
 var allowedBaseURLs = map[string]string{
-	"https://openrouter.ai/api/v1":                 os.Getenv("OPENROUTER_API_KEY"),
-	"https://api.openai.com/v1":                    os.Getenv("OPENAI_API_KEY"),
+	"https://openrouter.ai/api/v1": os.Getenv("OPENROUTER_API_KEY"),
+	"https://api.openai.com/v1":    os.Getenv("OPENAI_API_KEY"),
 }
 
 func getAPIKey(baseURL string, config *config.Config) string {
@@ -48,14 +48,11 @@ func main() {
 	logger.Info("Setting Gin mode", "mode", config.AppConfig.GinMode)
 	gin.SetMode(config.AppConfig.GinMode)
 
-
-
 	// Initialize database
 	db, err := config.InitDatabase()
 	if err != nil {
 		logger.Fatal("Failed to initialize database", "error", err)
 	}
-
 
 	tokenValidator, err := NewTokenValidator(config.AppConfig, logger)
 	if err != nil {
@@ -66,8 +63,6 @@ func main() {
 	if err != nil {
 		logger.Fatal("Failed to initialize Firebase auth middleware", "error", err)
 	}
-
-
 
 	// Initialize services
 	oauthService := services.NewOAuthService()
@@ -136,7 +131,7 @@ func main() {
 	log.Fatal(router.Run(port))
 }
 
-// Helper function to get keys from map for logging
+// Helper function to get keys from map for logging.
 func getKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

@@ -24,7 +24,7 @@ type ComposioService struct {
 	apiKey     string
 }
 
-// NewComposioService creates a new instance of ComposioService
+// NewComposioService creates a new instance of ComposioService.
 func NewComposioService() *ComposioService {
 	return &ComposioService{
 		logger: log.New(log.Writer(), "[Composio] ", log.LstdFlags),
@@ -44,7 +44,7 @@ func (s *ComposioService) getComposioConfig(toolkitSlug string) (string, error) 
 	}
 }
 
-// CreateConnectedAccount creates a new connected account and returns the redirect URL
+// CreateConnectedAccount creates a new connected account and returns the redirect URL.
 func (s *ComposioService) CreateConnectedAccount(userID, toolkitSlug, callbackURL string) (*models.CreateConnectedAccountResponse, error) {
 	s.logger.Printf("Creating connected account for user %s with toolkit %s", userID, toolkitSlug)
 
@@ -235,7 +235,7 @@ func (s *ComposioService) RefreshToken(accountID string) (*models.ComposioRefres
 	return &response, nil
 }
 
-// GetToolBySlug retrieves toolkit information by slug
+// GetToolBySlug retrieves toolkit information by slug.
 func (s *ComposioService) GetToolBySlug(slug string) (*models.Toolkit, error) {
 	s.logger.Printf("Getting toolkit by slug: %s", slug)
 
@@ -291,7 +291,7 @@ func (s *ComposioService) GetToolBySlug(slug string) (*models.Toolkit, error) {
 	return &toolkit, nil
 }
 
-// ExecuteTool executes a tool with the provided parameters
+// ExecuteTool executes a tool with the provided parameters.
 func (s *ComposioService) ExecuteTool(toolSlug string, req models.ExecuteToolRequest) (*models.ExecuteToolResponse, error) {
 	s.logger.Printf("Executing tool: %s for user: %s", toolSlug, req.UserID)
 
@@ -358,7 +358,7 @@ func (s *ComposioService) ExecuteTool(toolSlug string, req models.ExecuteToolReq
 	return &response, nil
 }
 
-// GetConnectedAccountByUserID retrieves connected accounts for a specific user
+// GetConnectedAccountByUserID retrieves connected accounts for a specific user.
 func (s *ComposioService) GetConnectedAccountByUserID(userID string) ([]map[string]interface{}, error) {
 	s.logger.Printf("Getting connected accounts for user: %s", userID)
 

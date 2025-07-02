@@ -20,14 +20,14 @@ func (s *InviteCodeService) CreateInviteCode(inviteCode *models.InviteCode) erro
 	return s.db.Create(inviteCode).Error
 }
 
-// GetAllInviteCodes returns all invite codes
+// GetAllInviteCodes returns all invite codes.
 func (s *InviteCodeService) GetAllInviteCodes() ([]models.InviteCode, error) {
 	var inviteCodes []models.InviteCode
 	err := s.db.Find(&inviteCodes).Error
 	return inviteCodes, err
 }
 
-// GetInviteCodeByCode returns an invite code by its code (using hash lookup)
+// GetInviteCodeByCode returns an invite code by its code (using hash lookup).
 func (s *InviteCodeService) GetInviteCodeByCode(code string) (*models.InviteCode, error) {
 	codeHash := models.HashCode(code)
 	var inviteCode models.InviteCode
@@ -40,7 +40,7 @@ func (s *InviteCodeService) GetInviteCodeByCode(code string) (*models.InviteCode
 	return &inviteCode, nil
 }
 
-// GetInviteCodeByID returns an invite code by its ID
+// GetInviteCodeByID returns an invite code by its ID.
 func (s *InviteCodeService) GetInviteCodeByID(id uint) (*models.InviteCode, error) {
 	var inviteCode models.InviteCode
 	err := s.db.Model(&models.InviteCode{}).Where("id = ?", id).First(&inviteCode).Error
@@ -50,7 +50,7 @@ func (s *InviteCodeService) GetInviteCodeByID(id uint) (*models.InviteCode, erro
 	return &inviteCode, nil
 }
 
-// UseInviteCode marks an invite code as used by a user email
+// UseInviteCode marks an invite code as used by a user email.
 func (s *InviteCodeService) UseInviteCode(code string, email string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		// Check if invite code ends with "-eternis" for special whitelisting
@@ -58,7 +58,7 @@ func (s *InviteCodeService) UseInviteCode(code string, email string) error {
 
 		if isEternisCode {
 			inviteCode := models.InviteCode{}
-			inviteCode.SetCodeAndHash()
+			_ = inviteCode.SetCodeAndHash()
 			inviteCode.IsUsed = true
 			inviteCode.RedeemedBy = &email
 			now := time.Now()
@@ -66,7 +66,6 @@ func (s *InviteCodeService) UseInviteCode(code string, email string) error {
 			inviteCode.IsActive = true
 			inviteCode.CreatedBy = 0
 			return tx.Create(&inviteCode).Error
-
 		}
 
 		// For regular codes, follow normal flow
@@ -104,17 +103,17 @@ func (s *InviteCodeService) UseInviteCode(code string, email string) error {
 	})
 }
 
-// DeleteInviteCode soft deletes an invite code
+// DeleteInviteCode soft deletes an invite code.
 func (s *InviteCodeService) DeleteInviteCode(id uint) error {
 	return s.db.Model(&models.InviteCode{}).Where("id = ?", id).Delete(&models.InviteCode{}).Error
 }
 
-// DeactivateInviteCode deactivates an invite code
+// DeactivateInviteCode deactivates an invite code.
 func (s *InviteCodeService) DeactivateInviteCode(id uint) error {
 	return s.db.Model(&models.InviteCode{}).Where("id = ?", id).Updates(map[string]interface{}{"is_active": false}).Error
 }
 
-// IsEmailWhitelisted checks if an email has valid invite codes (is whitelisted)
+// IsEmailWhitelisted checks if an email has valid invite codes (is whitelisted).
 func (s *InviteCodeService) IsEmailWhitelisted(email string) (bool, error) {
 	var count int64
 	err := s.db.Model(&models.InviteCode{}).
@@ -127,7 +126,7 @@ func (s *InviteCodeService) IsEmailWhitelisted(email string) (bool, error) {
 	return count > 0, nil
 }
 
-// ResetInviteCode resets an invite code by clearing redeemed_by, redeemed_at and setting is_used to false
+// ResetInviteCode resets an invite code by clearing redeemed_by, redeemed_at and setting is_used to false.
 func (s *InviteCodeService) ResetInviteCode(code string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		var inviteCode models.InviteCode

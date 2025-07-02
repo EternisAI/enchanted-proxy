@@ -30,7 +30,6 @@ func NewFirebaseTokenValidator(ctx context.Context, projectID string) (*Firebase
 	}, nil
 }
 
-
 func (f *FirebaseTokenValidator) ValidateToken(tokenString string) (string, error) {
 	ctx := context.Background()
 
@@ -40,7 +39,7 @@ func (f *FirebaseTokenValidator) ValidateToken(tokenString string) (string, erro
 	}
 
 	if token.UID == "" {
-		return "", fmt.Errorf("No user ID found in Firebase token")
+		return "", fmt.Errorf("no user ID found in Firebase token")
 	}
 
 	return token.UID, nil

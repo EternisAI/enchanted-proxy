@@ -20,13 +20,13 @@ func NewInviteCodeHandler(inviteService *services.InviteCodeService) *InviteCode
 	}
 }
 
-// RedeemInviteCodeRequest represents the request body for redeeming an invite code with OAuth
+// RedeemInviteCodeRequest represents the request body for redeeming an invite code with OAuth.
 type RedeemInviteCodeRequest struct {
 	AccessToken string `json:"access_token" binding:"required"`
 }
 
 // RedeemInviteCode handles redeeming an invite code with OAuth verification
-// POST /api/v1/invites/:code/redeem
+// POST /api/v1/invites/:code/redeem.
 func (h *InviteCodeHandler) RedeemInviteCode(c *gin.Context) {
 	code := c.Param("code")
 
@@ -76,7 +76,7 @@ func (h *InviteCodeHandler) RedeemInviteCode(c *gin.Context) {
 }
 
 // DeleteInviteCode handles deleting an invite code
-// DELETE /api/v1/invites/:id
+// DELETE /api/v1/invites/:id.
 func (h *InviteCodeHandler) DeleteInviteCode(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -98,7 +98,7 @@ func (h *InviteCodeHandler) DeleteInviteCode(c *gin.Context) {
 }
 
 // ResetInviteCode handles resetting an invite code
-// GET /api/v1/invites/reset/:code
+// GET /api/v1/invites/reset/:code.
 func (h *InviteCodeHandler) ResetInviteCode(c *gin.Context) {
 	code := c.Param("code")
 
@@ -115,7 +115,7 @@ func (h *InviteCodeHandler) ResetInviteCode(c *gin.Context) {
 }
 
 // CheckEmailWhitelist checks if an email is whitelisted
-// GET /api/v1/invites/:email/whitelist
+// GET /api/v1/invites/:email/whitelist.
 func (h *InviteCodeHandler) CheckEmailWhitelist(c *gin.Context) {
 	email := c.Param("email")
 
