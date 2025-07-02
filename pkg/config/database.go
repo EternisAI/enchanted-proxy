@@ -1,7 +1,7 @@
 package config
 
 import (
-	"github.com/eternisai/enchanted-proxy/pkg/models"
+	"github.com/eternisai/enchanted-proxy/pkg/invitecode"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -14,7 +14,7 @@ func InitDatabase() (*gorm.DB, error) {
 	}
 
 	// Auto migrate the models
-	err = db.AutoMigrate(&models.InviteCode{})
+	err = db.AutoMigrate(&invitecode.InviteCode{})
 	if err != nil {
 		return nil, err
 	}

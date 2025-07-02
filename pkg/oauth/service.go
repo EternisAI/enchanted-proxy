@@ -1,4 +1,4 @@
-package services
+package oauth
 
 import (
 	"bytes"
@@ -13,50 +13,49 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/pkg/config"
-	"github.com/eternisai/enchanted-proxy/pkg/models"
 )
 
-type OAuthService struct {
+type Service struct {
 	logger *log.Logger
 }
 
-func NewOAuthService() *OAuthService {
-	return &OAuthService{
+func NewService() *Service {
+	return &Service{
 		logger: log.New(log.Writer(), "[OAuth] ", log.LstdFlags),
 	}
 }
 
 // getOAuthConfig returns the OAuth configuration for a given provider.
-func (s *OAuthService) getOAuthConfig(provider string) (models.OAuthConfig, error) {
+func (s *Service) getOAuthConfig(provider string) (OAuthConfig, error) {
 	switch provider {
 	case "google":
-		return models.OAuthConfig{
+		return OAuthConfig{
 			TokenEndpoint: "https://oauth2.googleapis.com/token",
 			ClientID:      config.AppConfig.GoogleClientID,
 			ClientSecret:  config.AppConfig.GoogleClientSecret,
 			RedirectURI:   "http://localhost:8080/auth/google/callback",
 		}, nil
 	case "slack":
-		return models.OAuthConfig{
+		return OAuthConfig{
 			TokenEndpoint: "https://slack.com/api/oauth.v2.access",
 			ClientID:      config.AppConfig.SlackClientID,
 			ClientSecret:  config.AppConfig.SlackClientSecret,
 			RedirectURI:   "http://localhost:8080/auth/slack/callback",
 		}, nil
 	case "twitter":
-		return models.OAuthConfig{
+		return OAuthConfig{
 			TokenEndpoint: "https://api.twitter.com/2/oauth2/token",
 			ClientID:      config.AppConfig.TwitterClientID,
 			ClientSecret:  "",
 			RedirectURI:   "http://localhost:8080/auth/twitter/callback",
 		}, nil
 	default:
-		return models.OAuthConfig{}, fmt.Errorf("unsupported provider: %s", provider)
+		return OAuthConfig{}, fmt.Errorf("unsupported provider: %s", provider)
 	}
 }
 
 // ExchangeToken exchanges authorization code for access token or refreshes a token.
-func (s *OAuthService) ExchangeToken(req models.TokenExchangeRequest) (*models.TokenResponse, error) {
+func (s *Service) ExchangeToken(req TokenExchangeRequest) (*TokenResponse, error) {
 	oauthConfig, err := s.getOAuthConfig(req.Platform)
 	if err != nil {
 		return nil, err
@@ -124,7 +123,7 @@ func (s *OAuthService) ExchangeToken(req models.TokenExchangeRequest) (*models.T
 	}
 
 	// Parse token response based on provider
-	var tokenResp models.TokenResponse
+	var tokenResp TokenResponse
 	var expiresIn int
 
 	if req.Platform == "slack" {
@@ -204,13 +203,13 @@ func (s *OAuthService) ExchangeToken(req models.TokenExchangeRequest) (*models.T
 }
 
 // RefreshToken refreshes an existing access token.
-func (s *OAuthService) RefreshToken(platform, refreshToken string) (*models.TokenResponse, error) {
+func (s *Service) RefreshToken(platform, refreshToken string) (*TokenResponse, error) {
 	if refreshToken == "" {
 		return nil, fmt.Errorf("refresh token is required")
 	}
 
 	// Use the same ExchangeToken function with refresh_token grant type
-	req := models.TokenExchangeRequest{
+	req := TokenExchangeRequest{
 		GrantType:    "refresh_token",
 		Platform:     platform,
 		RefreshToken: refreshToken,

@@ -1,4 +1,4 @@
-package models
+package invitecode
 
 import (
 	"crypto/rand"

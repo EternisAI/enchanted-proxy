@@ -1,30 +1,28 @@
-package handlers
+package oauth
 
 import (
 	"fmt"
 	"net/http"
 
-	"github.com/eternisai/enchanted-proxy/pkg/models"
-	"github.com/eternisai/enchanted-proxy/pkg/services"
 	"github.com/gin-gonic/gin"
 )
 
-type OAuthHandler struct {
-	oauthService *services.OAuthService
+type Handler struct {
+	service *Service
 }
 
-func NewOAuthHandler(oauthService *services.OAuthService) *OAuthHandler {
-	return &OAuthHandler{
-		oauthService: oauthService,
+func NewHandler(service *Service) *Handler {
+	return &Handler{
+		service: service,
 	}
 }
 
 // ExchangeToken handles token exchange endpoint
 // POST /auth/exchange.
-func (h *OAuthHandler) ExchangeToken(c *gin.Context) {
-	var req models.TokenExchangeRequest
+func (h *Handler) ExchangeToken(c *gin.Context) {
+	var req TokenExchangeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error:       "invalid_request",
 			Description: err.Error(),
 			Code:        http.StatusBadRequest,
@@ -33,9 +31,9 @@ func (h *OAuthHandler) ExchangeToken(c *gin.Context) {
 	}
 
 	fmt.Println("ExchangeTokenReq: ", req)
-	tokenResponse, err := h.oauthService.ExchangeToken(req)
+	tokenResponse, err := h.service.ExchangeToken(req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error:       "exchange_failed",
 			Description: err.Error(),
 			Code:        http.StatusBadRequest,
@@ -48,10 +46,10 @@ func (h *OAuthHandler) ExchangeToken(c *gin.Context) {
 
 // RefreshToken handles token refresh endpoint
 // POST /auth/refresh.
-func (h *OAuthHandler) RefreshToken(c *gin.Context) {
-	var req models.RefreshTokenRequest
+func (h *Handler) RefreshToken(c *gin.Context) {
+	var req RefreshTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error:       "invalid_request",
 			Description: err.Error(),
 			Code:        http.StatusBadRequest,
@@ -59,9 +57,9 @@ func (h *OAuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	tokenResponse, err := h.oauthService.RefreshToken(req.Platform, req.RefreshToken)
+	tokenResponse, err := h.service.RefreshToken(req.Platform, req.RefreshToken)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error:       "refresh_failed",
 			Description: err.Error(),
 			Code:        http.StatusBadRequest,
@@ -74,13 +72,13 @@ func (h *OAuthHandler) RefreshToken(c *gin.Context) {
 
 // GoogleCallback handles Google OAuth callback
 // GET /auth/google/callback.
-func (h *OAuthHandler) GoogleCallback(c *gin.Context) {
+func (h *Handler) GoogleCallback(c *gin.Context) {
 	code := c.Query("code")
 	state := c.Query("state")
 	error := c.Query("error")
 
 	if error != "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error:       error,
 			Description: "OAuth authorization failed",
 			Code:        http.StatusBadRequest,
@@ -89,7 +87,7 @@ func (h *OAuthHandler) GoogleCallback(c *gin.Context) {
 	}
 
 	if code == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error:       "missing_code",
 			Description: "Authorization code is required",
 			Code:        http.StatusBadRequest,
@@ -107,13 +105,13 @@ func (h *OAuthHandler) GoogleCallback(c *gin.Context) {
 
 // SlackCallback handles Slack OAuth callback
 // GET /auth/slack/callback.
-func (h *OAuthHandler) SlackCallback(c *gin.Context) {
+func (h *Handler) SlackCallback(c *gin.Context) {
 	code := c.Query("code")
 	state := c.Query("state")
 	error := c.Query("error")
 
 	if error != "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error:       error,
 			Description: "OAuth authorization failed",
 			Code:        http.StatusBadRequest,
@@ -122,7 +120,7 @@ func (h *OAuthHandler) SlackCallback(c *gin.Context) {
 	}
 
 	if code == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error:       "missing_code",
 			Description: "Authorization code is required",
 			Code:        http.StatusBadRequest,
@@ -140,13 +138,13 @@ func (h *OAuthHandler) SlackCallback(c *gin.Context) {
 
 // TwitterCallback handles Twitter OAuth callback
 // GET /auth/twitter/callback.
-func (h *OAuthHandler) TwitterCallback(c *gin.Context) {
+func (h *Handler) TwitterCallback(c *gin.Context) {
 	code := c.Query("code")
 	state := c.Query("state")
 	error := c.Query("error")
 
 	if error != "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error:       error,
 			Description: "OAuth authorization failed",
 			Code:        http.StatusBadRequest,
@@ -155,7 +153,7 @@ func (h *OAuthHandler) TwitterCallback(c *gin.Context) {
 	}
 
 	if code == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error:       "missing_code",
 			Description: "Authorization code is required",
 			Code:        http.StatusBadRequest,
@@ -173,7 +171,7 @@ func (h *OAuthHandler) TwitterCallback(c *gin.Context) {
 
 // HealthCheck handles health check endpoint
 // GET /health.
-func (h *OAuthHandler) HealthCheck(c *gin.Context) {
+func (h *Handler) HealthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "healthy",
 		"service": "oauth-proxy",

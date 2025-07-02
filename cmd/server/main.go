@@ -13,9 +13,10 @@ import (
 
 	"github.com/charmbracelet/log"
 	"github.com/eternisai/enchanted-proxy/pkg/auth"
+	"github.com/eternisai/enchanted-proxy/pkg/composio"
 	"github.com/eternisai/enchanted-proxy/pkg/config"
-	"github.com/eternisai/enchanted-proxy/pkg/handlers"
-	"github.com/eternisai/enchanted-proxy/pkg/services"
+	"github.com/eternisai/enchanted-proxy/pkg/invitecode"
+	"github.com/eternisai/enchanted-proxy/pkg/oauth"
 	"github.com/gin-gonic/gin"
 )
 
@@ -65,14 +66,14 @@ func main() {
 	}
 
 	// Initialize services
-	oauthService := services.NewOAuthService()
-	composioService := services.NewComposioService()
-	inviteCodeService := services.NewInviteCodeService(db)
+	oauthService := oauth.NewService()
+	composioService := composio.NewService()
+	inviteCodeService := invitecode.NewService(db)
 
 	// Initialize handlers
-	oauthHandler := handlers.NewOAuthHandler(oauthService)
-	composioHandler := handlers.NewComposioHandler(composioService)
-	inviteCodeHandler := handlers.NewInviteCodeHandler(inviteCodeService)
+	oauthHandler := oauth.NewHandler(oauthService)
+	composioHandler := composio.NewHandler(composioService)
+	inviteCodeHandler := invitecode.NewHandler(inviteCodeService)
 
 	// Initialize Gin router
 	router := gin.Default()

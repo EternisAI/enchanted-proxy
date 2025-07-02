@@ -1,4 +1,4 @@
-package services
+package composio
 
 import (
 	"bytes"
@@ -11,22 +11,21 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/pkg/config"
-	"github.com/eternisai/enchanted-proxy/pkg/models"
 )
 
 const (
 	ComposioBaseURL = "https://backend.composio.dev/api/v3"
 )
 
-type ComposioService struct {
+type Service struct {
 	logger     *log.Logger
 	httpClient *http.Client
 	apiKey     string
 }
 
 // NewComposioService creates a new instance of ComposioService.
-func NewComposioService() *ComposioService {
-	return &ComposioService{
+func NewService() *Service {
+	return &Service{
 		logger: log.New(log.Writer(), "[Composio] ", log.LstdFlags),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
@@ -35,7 +34,7 @@ func NewComposioService() *ComposioService {
 	}
 }
 
-func (s *ComposioService) getComposioConfig(toolkitSlug string) (string, error) {
+func (s *Service) getComposioConfig(toolkitSlug string) (string, error) {
 	switch toolkitSlug {
 	case "twitter":
 		return config.AppConfig.ComposioTwitterConfig, nil
@@ -45,7 +44,7 @@ func (s *ComposioService) getComposioConfig(toolkitSlug string) (string, error) 
 }
 
 // CreateConnectedAccount creates a new connected account and returns the redirect URL.
-func (s *ComposioService) CreateConnectedAccount(userID, toolkitSlug, callbackURL string) (*models.CreateConnectedAccountResponse, error) {
+func (s *Service) CreateConnectedAccount(userID, toolkitSlug, callbackURL string) (*CreateConnectedAccountResponse, error) {
 	s.logger.Printf("Creating connected account for user %s with toolkit %s", userID, toolkitSlug)
 
 	if s.apiKey == "" {
@@ -106,7 +105,7 @@ func (s *ComposioService) CreateConnectedAccount(userID, toolkitSlug, callbackUR
 
 	// Check for HTTP errors
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		var composioErr models.ComposioError
+		var composioErr ComposioError
 		if jsonErr := json.Unmarshal(body, &composioErr); jsonErr == nil {
 			return nil, composioErr
 		}
@@ -114,18 +113,18 @@ func (s *ComposioService) CreateConnectedAccount(userID, toolkitSlug, callbackUR
 	}
 
 	// Parse successful response
-	var response models.ConnectedAccountResponse
+	var response ConnectedAccountResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	return &models.CreateConnectedAccountResponse{
+	return &CreateConnectedAccountResponse{
 		ID:  response.ID,
 		URL: response.RedirectURL,
 	}, nil
 }
 
-func (s *ComposioService) GetConnectedAccount(accountID string) (*models.ConnectedAccountDetailResponse, error) {
+func (s *Service) GetConnectedAccount(accountID string) (*ConnectedAccountDetailResponse, error) {
 	if s.apiKey == "" {
 		return nil, fmt.Errorf("composio API key is not configured")
 	}
@@ -163,7 +162,7 @@ func (s *ComposioService) GetConnectedAccount(accountID string) (*models.Connect
 
 	// Check for HTTP errors
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		var composioErr models.ComposioError
+		var composioErr ComposioError
 		if jsonErr := json.Unmarshal(body, &composioErr); jsonErr == nil {
 			return nil, composioErr
 		}
@@ -171,7 +170,7 @@ func (s *ComposioService) GetConnectedAccount(accountID string) (*models.Connect
 	}
 
 	// Parse successful response
-	var response models.ConnectedAccountDetailResponse
+	var response ConnectedAccountDetailResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
@@ -179,7 +178,7 @@ func (s *ComposioService) GetConnectedAccount(accountID string) (*models.Connect
 	return &response, nil
 }
 
-func (s *ComposioService) RefreshToken(accountID string) (*models.ComposioRefreshTokenResponse, error) {
+func (s *Service) RefreshToken(accountID string) (*ComposioRefreshTokenResponse, error) {
 	if s.apiKey == "" {
 		return nil, fmt.Errorf("composio API key is not configured")
 	}
@@ -219,7 +218,7 @@ func (s *ComposioService) RefreshToken(accountID string) (*models.ComposioRefres
 
 	// Check for HTTP errors
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		var composioErr models.ComposioError
+		var composioErr ComposioError
 		if jsonErr := json.Unmarshal(body, &composioErr); jsonErr == nil {
 			return nil, composioErr
 		}
@@ -227,7 +226,7 @@ func (s *ComposioService) RefreshToken(accountID string) (*models.ComposioRefres
 	}
 
 	// Parse successful response
-	var response models.ComposioRefreshTokenResponse
+	var response ComposioRefreshTokenResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
@@ -236,7 +235,7 @@ func (s *ComposioService) RefreshToken(accountID string) (*models.ComposioRefres
 }
 
 // GetToolBySlug retrieves toolkit information by slug.
-func (s *ComposioService) GetToolBySlug(slug string) (*models.Toolkit, error) {
+func (s *Service) GetToolBySlug(slug string) (*Toolkit, error) {
 	s.logger.Printf("Getting toolkit by slug: %s", slug)
 
 	if s.apiKey == "" {
@@ -274,7 +273,7 @@ func (s *ComposioService) GetToolBySlug(slug string) (*models.Toolkit, error) {
 
 	// Check for HTTP errors
 	if resp.StatusCode != http.StatusOK {
-		var composioErr models.ComposioError
+		var composioErr ComposioError
 		if jsonErr := json.Unmarshal(body, &composioErr); jsonErr == nil {
 			return nil, composioErr
 		}
@@ -282,7 +281,7 @@ func (s *ComposioService) GetToolBySlug(slug string) (*models.Toolkit, error) {
 	}
 
 	// Parse successful response
-	var toolkit models.Toolkit
+	var toolkit Toolkit
 	if err := json.Unmarshal(body, &toolkit); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
@@ -292,7 +291,7 @@ func (s *ComposioService) GetToolBySlug(slug string) (*models.Toolkit, error) {
 }
 
 // ExecuteTool executes a tool with the provided parameters.
-func (s *ComposioService) ExecuteTool(toolSlug string, req models.ExecuteToolRequest) (*models.ExecuteToolResponse, error) {
+func (s *Service) ExecuteTool(toolSlug string, req ExecuteToolRequest) (*ExecuteToolResponse, error) {
 	s.logger.Printf("Executing tool: %s for user: %s", toolSlug, req.UserID)
 
 	if s.apiKey == "" {
@@ -341,7 +340,7 @@ func (s *ComposioService) ExecuteTool(toolSlug string, req models.ExecuteToolReq
 
 	// Check for HTTP errors
 	if resp.StatusCode != http.StatusOK {
-		var composioErr models.ComposioError
+		var composioErr ComposioError
 		if jsonErr := json.Unmarshal(body, &composioErr); jsonErr == nil {
 			return nil, composioErr
 		}
@@ -349,7 +348,7 @@ func (s *ComposioService) ExecuteTool(toolSlug string, req models.ExecuteToolReq
 	}
 
 	// Parse successful response
-	var response models.ExecuteToolResponse
+	var response ExecuteToolResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
@@ -359,7 +358,7 @@ func (s *ComposioService) ExecuteTool(toolSlug string, req models.ExecuteToolReq
 }
 
 // GetConnectedAccountByUserID retrieves connected accounts for a specific user.
-func (s *ComposioService) GetConnectedAccountByUserID(userID string) ([]map[string]interface{}, error) {
+func (s *Service) GetConnectedAccountByUserID(userID string) ([]map[string]interface{}, error) {
 	s.logger.Printf("Getting connected accounts for user: %s", userID)
 
 	if s.apiKey == "" {
@@ -397,7 +396,7 @@ func (s *ComposioService) GetConnectedAccountByUserID(userID string) ([]map[stri
 
 	// Check for HTTP errors
 	if resp.StatusCode != http.StatusOK {
-		var composioErr models.ComposioError
+		var composioErr ComposioError
 		if jsonErr := json.Unmarshal(body, &composioErr); jsonErr == nil {
 			return nil, composioErr
 		}

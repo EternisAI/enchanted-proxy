@@ -1,28 +1,26 @@
-package handlers
+package composio
 
 import (
 	"net/http"
 
-	"github.com/eternisai/enchanted-proxy/pkg/models"
-	"github.com/eternisai/enchanted-proxy/pkg/services"
 	"github.com/gin-gonic/gin"
 )
 
-type ComposioHandler struct {
-	composioService *services.ComposioService
+type Handler struct {
+	service *Service
 }
 
 // NewComposioHandler creates a new ComposioHandler instance.
-func NewComposioHandler(composioService *services.ComposioService) *ComposioHandler {
-	return &ComposioHandler{
-		composioService: composioService,
+func NewHandler(service *Service) *Handler {
+	return &Handler{
+		service: service,
 	}
 }
 
 // CreateConnectedAccount handles the creation of a new connected account
 // POST /composio/connect.
-func (h *ComposioHandler) CreateConnectedAccount(c *gin.Context) {
-	var req models.CreateConnectedAccountRequest
+func (h *Handler) CreateConnectedAccount(c *gin.Context) {
+	var req CreateConnectedAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid request format",
@@ -47,7 +45,7 @@ func (h *ComposioHandler) CreateConnectedAccount(c *gin.Context) {
 	}
 
 	// Call the service
-	response, err := h.composioService.CreateConnectedAccount(req.UserID, req.Provider, req.RedirectURI)
+	response, err := h.service.CreateConnectedAccount(req.UserID, req.Provider, req.RedirectURI)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to create connected account",
@@ -59,7 +57,7 @@ func (h *ComposioHandler) CreateConnectedAccount(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-func (h *ComposioHandler) GetConnectedAccount(c *gin.Context) {
+func (h *Handler) GetConnectedAccount(c *gin.Context) {
 	accountID := c.Query("account_id")
 	if accountID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -68,7 +66,7 @@ func (h *ComposioHandler) GetConnectedAccount(c *gin.Context) {
 		return
 	}
 
-	response, err := h.composioService.GetConnectedAccount(accountID)
+	response, err := h.service.GetConnectedAccount(accountID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to get connected account",
@@ -80,7 +78,7 @@ func (h *ComposioHandler) GetConnectedAccount(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-func (h *ComposioHandler) RefreshToken(c *gin.Context) {
+func (h *Handler) RefreshToken(c *gin.Context) {
 	accountID := c.Query("account_id")
 	if accountID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -88,7 +86,7 @@ func (h *ComposioHandler) RefreshToken(c *gin.Context) {
 		})
 	}
 
-	response, err := h.composioService.RefreshToken(accountID)
+	response, err := h.service.RefreshToken(accountID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to refresh token",
@@ -102,7 +100,7 @@ func (h *ComposioHandler) RefreshToken(c *gin.Context) {
 
 // GetToolBySlug handles retrieving toolkit information by slug
 // GET /composio/tools/:slug.
-func (h *ComposioHandler) GetToolBySlug(c *gin.Context) {
+func (h *Handler) GetToolBySlug(c *gin.Context) {
 	slug := c.Param("slug")
 	if slug == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -112,7 +110,7 @@ func (h *ComposioHandler) GetToolBySlug(c *gin.Context) {
 	}
 
 	// Call the service
-	toolkit, err := h.composioService.GetToolBySlug(slug)
+	toolkit, err := h.service.GetToolBySlug(slug)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to retrieve toolkit",
@@ -126,7 +124,7 @@ func (h *ComposioHandler) GetToolBySlug(c *gin.Context) {
 
 // ExecuteTool handles tool execution
 // POST /composio/tools/:slug/execute.
-func (h *ComposioHandler) ExecuteTool(c *gin.Context) {
+func (h *Handler) ExecuteTool(c *gin.Context) {
 	slug := c.Param("slug")
 	if slug == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -135,7 +133,7 @@ func (h *ComposioHandler) ExecuteTool(c *gin.Context) {
 		return
 	}
 
-	var req models.ExecuteToolRequest
+	var req ExecuteToolRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid request format",
@@ -153,7 +151,7 @@ func (h *ComposioHandler) ExecuteTool(c *gin.Context) {
 	}
 
 	// Call the service
-	response, err := h.composioService.ExecuteTool(slug, req)
+	response, err := h.service.ExecuteTool(slug, req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to execute tool",
@@ -167,7 +165,7 @@ func (h *ComposioHandler) ExecuteTool(c *gin.Context) {
 
 // GetConnectedAccounts handles retrieving connected accounts for a user
 // GET /composio/accounts/:user_id.
-func (h *ComposioHandler) GetConnectedAccounts(c *gin.Context) {
+func (h *Handler) GetConnectedAccounts(c *gin.Context) {
 	userID := c.Param("user_id")
 	if userID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -177,7 +175,7 @@ func (h *ComposioHandler) GetConnectedAccounts(c *gin.Context) {
 	}
 
 	// Call the service
-	accounts, err := h.composioService.GetConnectedAccountByUserID(userID)
+	accounts, err := h.service.GetConnectedAccountByUserID(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to retrieve connected accounts",
@@ -194,7 +192,7 @@ func (h *ComposioHandler) GetConnectedAccounts(c *gin.Context) {
 
 // HealthCheck provides a health check endpoint for the Composio service
 // GET /composio/health.
-func (h *ComposioHandler) HealthCheck(c *gin.Context) {
+func (h *Handler) HealthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "healthy",
 		"service": "composio",

@@ -1,22 +1,21 @@
-package handlers
+package invitecode
 
 import (
 	"net/http"
 	"strconv"
 
 	"github.com/eternisai/enchanted-proxy/pkg/auth"
-	"github.com/eternisai/enchanted-proxy/pkg/services"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
-type InviteCodeHandler struct {
-	inviteService *services.InviteCodeService
+type Handler struct {
+	service *Service
 }
 
-func NewInviteCodeHandler(inviteService *services.InviteCodeService) *InviteCodeHandler {
-	return &InviteCodeHandler{
-		inviteService: inviteService,
+func NewHandler(service *Service) *Handler {
+	return &Handler{
+		service: service,
 	}
 }
 
@@ -27,7 +26,7 @@ type RedeemInviteCodeRequest struct {
 
 // RedeemInviteCode handles redeeming an invite code with OAuth verification
 // POST /api/v1/invites/:code/redeem.
-func (h *InviteCodeHandler) RedeemInviteCode(c *gin.Context) {
+func (h *Handler) RedeemInviteCode(c *gin.Context) {
 	code := c.Param("code")
 
 	var req RedeemInviteCodeRequest
@@ -43,7 +42,7 @@ func (h *InviteCodeHandler) RedeemInviteCode(c *gin.Context) {
 		return
 	}
 
-	isWhitelisted, err := h.inviteService.IsEmailWhitelisted(userUUID)
+	isWhitelisted, err := h.service.IsEmailWhitelisted(userUUID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -55,7 +54,7 @@ func (h *InviteCodeHandler) RedeemInviteCode(c *gin.Context) {
 	}
 
 	// Use invite code with the verified email
-	if err := h.inviteService.UseInviteCode(code, userUUID); err != nil {
+	if err := h.service.UseInviteCode(code, userUUID); err != nil {
 		if err.Error() == "invite code not found" {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Invalid code"})
 			return
@@ -77,7 +76,7 @@ func (h *InviteCodeHandler) RedeemInviteCode(c *gin.Context) {
 
 // DeleteInviteCode handles deleting an invite code
 // DELETE /api/v1/invites/:id.
-func (h *InviteCodeHandler) DeleteInviteCode(c *gin.Context) {
+func (h *Handler) DeleteInviteCode(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
@@ -85,7 +84,7 @@ func (h *InviteCodeHandler) DeleteInviteCode(c *gin.Context) {
 		return
 	}
 
-	if err := h.inviteService.DeleteInviteCode(uint(id)); err != nil {
+	if err := h.service.DeleteInviteCode(uint(id)); err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Invalid code"})
 			return
@@ -99,10 +98,10 @@ func (h *InviteCodeHandler) DeleteInviteCode(c *gin.Context) {
 
 // ResetInviteCode handles resetting an invite code
 // GET /api/v1/invites/reset/:code.
-func (h *InviteCodeHandler) ResetInviteCode(c *gin.Context) {
+func (h *Handler) ResetInviteCode(c *gin.Context) {
 	code := c.Param("code")
 
-	if err := h.inviteService.ResetInviteCode(code); err != nil {
+	if err := h.service.ResetInviteCode(code); err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Invalid code"})
 			return
@@ -116,11 +115,11 @@ func (h *InviteCodeHandler) ResetInviteCode(c *gin.Context) {
 
 // CheckEmailWhitelist checks if an email is whitelisted
 // GET /api/v1/invites/:email/whitelist.
-func (h *InviteCodeHandler) CheckEmailWhitelist(c *gin.Context) {
+func (h *Handler) CheckEmailWhitelist(c *gin.Context) {
 	email := c.Param("email")
 
 	// Check if email is whitelisted (has valid invite codes)
-	isWhitelisted, err := h.inviteService.IsEmailWhitelisted(email)
+	isWhitelisted, err := h.service.IsEmailWhitelisted(email)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

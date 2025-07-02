@@ -1,4 +1,4 @@
-package models
+package composio
 
 import "time"
 
