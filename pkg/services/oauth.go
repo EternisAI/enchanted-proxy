@@ -9,10 +9,11 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"oauth-proxy/config"
-	"oauth-proxy/models"
 	"strings"
 	"time"
+
+	"github.com/eternisai/enchanted-proxy/pkg/config"
+	"github.com/eternisai/enchanted-proxy/pkg/models"
 )
 
 type OAuthService struct {
@@ -61,7 +62,6 @@ func (s *OAuthService) ExchangeToken(req models.TokenExchangeRequest) (*models.T
 		return nil, err
 	}
 
-
 	// Prepare request data
 	data := url.Values{}
 	data.Set("grant_type", req.GrantType)
@@ -85,10 +85,10 @@ func (s *OAuthService) ExchangeToken(req models.TokenExchangeRequest) (*models.T
 	if oauthConfig.ClientSecret != "" {
 		data.Set("client_secret", oauthConfig.ClientSecret)
 	}
-
+	fmt.Println("Data: ", data.Encode())
 	// Track time before request for accurate expiry calculation
 	timeBeforeTokenRequest := time.Now()
-
+	fmt.Println("Time before token request: ", timeBeforeTokenRequest)
 	// Create and execute request
 	ctx := context.Background()
 	httpReq, err := http.NewRequestWithContext(
@@ -98,6 +98,7 @@ func (s *OAuthService) ExchangeToken(req models.TokenExchangeRequest) (*models.T
 		strings.NewReader(data.Encode()),
 	)
 	if err != nil {
+		fmt.Println("Error creating token request: ", err)
 		return nil, fmt.Errorf("failed to create token request: %w", err)
 	}
 
@@ -107,6 +108,7 @@ func (s *OAuthService) ExchangeToken(req models.TokenExchangeRequest) (*models.T
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		fmt.Println("Error sending token request: ", err)
 		return nil, fmt.Errorf("failed to send token request: %w", err)
 	}
 	defer func() {
@@ -117,6 +119,7 @@ func (s *OAuthService) ExchangeToken(req models.TokenExchangeRequest) (*models.T
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		fmt.Println("Failed to obtain token: ", resp.StatusCode, string(body))
 		return nil, fmt.Errorf("failed to obtain token: %d: %s", resp.StatusCode, body)
 	}
 
@@ -176,6 +179,7 @@ func (s *OAuthService) ExchangeToken(req models.TokenExchangeRequest) (*models.T
 			ExpiresIn    int    `json:"expires_in,omitempty"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&stdResp); err != nil {
+			fmt.Println("Error parsing token response: ", err)
 			return nil, fmt.Errorf("failed to parse token response: %w", err)
 		}
 		tokenResp.AccessToken = stdResp.AccessToken
@@ -195,13 +199,12 @@ func (s *OAuthService) ExchangeToken(req models.TokenExchangeRequest) (*models.T
 	// Calculate expiration
 	tokenResp.ExpiresAt = timeBeforeTokenRequest.Add(time.Duration(expiresIn) * time.Second)
 	tokenResp.Platform = req.Platform
-	
+
 	return &tokenResp, nil
 }
 
 // RefreshToken refreshes an existing access token
 func (s *OAuthService) RefreshToken(platform, refreshToken string) (*models.TokenResponse, error) {
-
 	if refreshToken == "" {
 		return nil, fmt.Errorf("refresh token is required")
 	}

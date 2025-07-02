@@ -1,10 +1,11 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
-	"oauth-proxy/models"
-	"oauth-proxy/services"
 
+	"github.com/eternisai/enchanted-proxy/pkg/models"
+	"github.com/eternisai/enchanted-proxy/pkg/services"
 	"github.com/gin-gonic/gin"
 )
 
@@ -32,6 +33,7 @@ func (h *OAuthHandler) ExchangeToken(c *gin.Context) {
 		return
 	}
 
+	fmt.Println("ExchangeTokenReq: ", req)
 	tokenResponse, err := h.oauthService.ExchangeToken(req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{

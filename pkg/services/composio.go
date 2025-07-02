@@ -8,9 +8,10 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"oauth-proxy/config"
-	"oauth-proxy/models"
 	"time"
+
+	"github.com/eternisai/enchanted-proxy/pkg/config"
+	"github.com/eternisai/enchanted-proxy/pkg/models"
 )
 
 const (
@@ -34,7 +35,6 @@ func NewComposioService() *ComposioService {
 	}
 }
 
-
 func (s *ComposioService) getComposioConfig(toolkitSlug string) (string, error) {
 	switch toolkitSlug {
 	case "twitter":
@@ -43,6 +43,7 @@ func (s *ComposioService) getComposioConfig(toolkitSlug string) (string, error) 
 		return "", fmt.Errorf("unsupported toolkit slug: %s", toolkitSlug)
 	}
 }
+
 // CreateConnectedAccount creates a new connected account and returns the redirect URL
 func (s *ComposioService) CreateConnectedAccount(userID, toolkitSlug, callbackURL string) (*models.CreateConnectedAccountResponse, error) {
 	s.logger.Printf("Creating connected account for user %s with toolkit %s", userID, toolkitSlug)
@@ -52,7 +53,7 @@ func (s *ComposioService) CreateConnectedAccount(userID, toolkitSlug, callbackUR
 	}
 
 	// Based on the API documentation, we need to use the v2 endpoint for initiate connection
-	// as v1 is deprecated. However, since we're implementing v3 service, we'll use the 
+	// as v1 is deprecated. However, since we're implementing v3 service, we'll use the
 	// connected accounts endpoint pattern but adapt it for the current API structure
 	url := fmt.Sprintf("%s/connected_accounts", ComposioBaseURL)
 	composioConfig, err := s.getComposioConfig(toolkitSlug)
@@ -66,12 +67,11 @@ func (s *ComposioService) CreateConnectedAccount(userID, toolkitSlug, callbackUR
 			"id": composioConfig,
 		},
 		"connection": map[string]interface{}{
-			"user_id": userID,
+			"user_id":      userID,
 			"callback_url": callbackURL,
 		},
 	}
 	jsonPayload, err := json.Marshal(payload)
-	
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request payload: %w", err)
 	}
@@ -120,20 +120,18 @@ func (s *ComposioService) CreateConnectedAccount(userID, toolkitSlug, callbackUR
 	}
 
 	return &models.CreateConnectedAccountResponse{
-		ID: response.ID,
+		ID:  response.ID,
 		URL: response.RedirectURL,
 	}, nil
 }
 
-
 func (s *ComposioService) GetConnectedAccount(accountID string) (*models.ConnectedAccountDetailResponse, error) {
-
 	if s.apiKey == "" {
 		return nil, fmt.Errorf("composio API key is not configured")
 	}
 
 	// Based on the API documentation, we need to use the v2 endpoint for initiate connection
-	// as v1 is deprecated. However, since we're implementing v3 service, we'll use the 
+	// as v1 is deprecated. However, since we're implementing v3 service, we'll use the
 	// connected accounts endpoint pattern but adapt it for the current API structure
 	url := fmt.Sprintf("%s/connected_accounts/%s", ComposioBaseURL, accountID)
 
@@ -178,21 +176,18 @@ func (s *ComposioService) GetConnectedAccount(accountID string) (*models.Connect
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	return &response, nil	
+	return &response, nil
 }
 
 func (s *ComposioService) RefreshToken(accountID string) (*models.ComposioRefreshTokenResponse, error) {
-
 	if s.apiKey == "" {
 		return nil, fmt.Errorf("composio API key is not configured")
 	}
 
 	// Based on the API documentation, we need to use the v2 endpoint for initiate connection
-	// as v1 is deprecated. However, since we're implementing v3 service, we'll use the 
+	// as v1 is deprecated. However, since we're implementing v3 service, we'll use the
 	// connected accounts endpoint pattern but adapt it for the current API structure
 	url := fmt.Sprintf("%s/connected_accounts/%s/refresh", ComposioBaseURL, accountID)
-
-
 
 	// Create HTTP request
 	ctx := context.Background()
@@ -239,8 +234,6 @@ func (s *ComposioService) RefreshToken(accountID string) (*models.ComposioRefres
 
 	return &response, nil
 }
-
-
 
 // GetToolBySlug retrieves toolkit information by slug
 func (s *ComposioService) GetToolBySlug(slug string) (*models.Toolkit, error) {

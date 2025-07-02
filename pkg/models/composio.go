@@ -4,24 +4,24 @@ import "time"
 
 // CreateConnectedAccountRequest represents the request to create a new connected account
 type CreateConnectedAccountRequest struct {
-	Provider string `json:"provider" binding:"required"`
+	Provider    string `json:"provider" binding:"required"`
 	UserID      string `json:"user_id" binding:"required"`
 	RedirectURI string `json:"redirect_uri,omitempty"`
 }
 
 type CreateConnectedAccountResponse struct {
-	ID             string         `json:"id"`
-	URL            string         `json:"url"`
+	ID  string `json:"id"`
+	URL string `json:"url"`
 }
 
 // Toolkit represents a toolkit/tool information
 type Toolkit struct {
-	Slug              string                 `json:"slug"`
-	Name              string                 `json:"name"`
-	Enabled           bool                   `json:"enabled"`
-	IsLocalToolkit    bool                   `json:"is_local_toolkit"`
-	Meta              ToolkitMeta            `json:"meta"`
-	AuthConfigDetails []AuthConfigDetail     `json:"auth_config_details,omitempty"`
+	Slug              string             `json:"slug"`
+	Name              string             `json:"name"`
+	Enabled           bool               `json:"enabled"`
+	IsLocalToolkit    bool               `json:"is_local_toolkit"`
+	Meta              ToolkitMeta        `json:"meta"`
+	AuthConfigDetails []AuthConfigDetail `json:"auth_config_details,omitempty"`
 }
 
 // ToolkitMeta contains metadata about a toolkit
@@ -77,9 +77,9 @@ type ExecuteToolResponse struct {
 
 // DetailedConnectedAccountResponse represents a detailed response from creating/getting a connected account
 type ConnectedAccountResponse struct {
-	ID             string         `json:"id"`
-	Status         string         `json:"status"`
-	RedirectURL    string         `json:"redirect_url"`
+	ID          string `json:"id"`
+	Status      string `json:"status"`
+	RedirectURL string `json:"redirect_url"`
 }
 
 // ComposioError represents an error response from Composio API
@@ -98,10 +98,10 @@ func (e ComposioError) Error() string {
 
 // ConnectedAccountDetails represents the detailed connected account response
 type ConnectedAccountDetailResponse struct {
-	UserID     string     `json:"user_id"`
-	ID         string     `json:"id"`
-	Status     string     `json:"status"`
-	State      AuthState  `json:"state"`
+	UserID string    `json:"user_id"`
+	ID     string    `json:"id"`
+	Status string    `json:"status"`
+	State  AuthState `json:"state"`
 }
 
 // AuthState represents the authentication state with OAuth details
@@ -112,15 +112,15 @@ type AuthState struct {
 
 // OAuth2Details represents OAuth2 authentication details
 type OAuth2Details struct {
-	Status           string `json:"status"`
-	AccessToken      string `json:"access_token"`
-	TokenType        string `json:"token_type"`
-	RefreshToken     string `json:"refresh_token"`
-	ExpiresIn        int    `json:"expires_in"`
-} 
+	Status       string `json:"status"`
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
+}
 
 type ComposioRefreshTokenResponse struct {
-	ID         string  `json:"id"`
+	ID          string `json:"id"`
 	RedirectURL string `json:"redirect_url"`
 	Status      string `json:"status"`
 }

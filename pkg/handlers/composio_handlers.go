@@ -2,9 +2,9 @@ package handlers
 
 import (
 	"net/http"
-	"oauth-proxy/models"
-	"oauth-proxy/services"
 
+	"github.com/eternisai/enchanted-proxy/pkg/models"
+	"github.com/eternisai/enchanted-proxy/pkg/services"
 	"github.com/gin-gonic/gin"
 )
 
@@ -49,7 +49,7 @@ func (h *ComposioHandler) CreateConnectedAccount(c *gin.Context) {
 	// Call the service
 	response, err := h.composioService.CreateConnectedAccount(req.UserID, req.Provider, req.RedirectURI)
 	if err != nil {
-		
+
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to create connected account",
 			"details": err.Error(),
@@ -100,6 +100,7 @@ func (h *ComposioHandler) RefreshToken(c *gin.Context) {
 
 	c.JSON(http.StatusOK, response)
 }
+
 // GetToolBySlug handles retrieving toolkit information by slug
 // GET /composio/tools/:slug
 func (h *ComposioHandler) GetToolBySlug(c *gin.Context) {
@@ -200,4 +201,4 @@ func (h *ComposioHandler) HealthCheck(c *gin.Context) {
 		"service": "composio",
 		"message": "Composio service is running",
 	})
-} 
+}
