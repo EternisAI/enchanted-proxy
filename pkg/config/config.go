@@ -8,37 +8,23 @@ import (
 )
 
 type Config struct {
-	Port    string
-	GinMode string
-
-	// Firebase
-	FirebaseProjectID string
-
-	// Database
-	DatabaseURL string
-
-	// Google OAuth
-	GoogleClientID     string
-	GoogleClientSecret string
-
-	// Slack OAuth
-	SlackClientID     string
-	SlackClientSecret string
-
-	// Twitter OAuth
-	TwitterClientID     string
-	TwitterClientSecret string
-
-	// Composio API
+	Port                  string
+	GinMode               string
+	FirebaseProjectID     string
+	DatabaseURL           string
+	GoogleClientID        string
+	GoogleClientSecret    string
+	SlackClientID         string
+	SlackClientSecret     string
+	TwitterClientID       string
+	TwitterClientSecret   string
 	ComposioAPIKey        string
 	ComposioTwitterConfig string
-
-	// OpenAI API
-	OpenAIAPIKey     string
-	OpenRouterAPIKey string
-
-	ValidatorType string // "jwk" or "firebase"
-	JWTJWKSURL    string
+	OpenAIAPIKey          string
+	OpenRouterAPIKey      string
+	TinfoilAPIKey         string
+	ValidatorType         string // "jwk" or "firebase"
+	JWTJWKSURL            string
 }
 
 var AppConfig *Config
@@ -77,6 +63,9 @@ func LoadConfig() {
 		// OpenAI
 		OpenAIAPIKey:     getEnvOrDefault("OPENAI_API_KEY", ""),
 		OpenRouterAPIKey: getEnvOrDefault("OPENROUTER_API_KEY", ""),
+
+		// Tinfoil
+		TinfoilAPIKey: getEnvOrDefault("TINFOIL_API_KEY", ""),
 
 		// Validator
 		ValidatorType: getEnvOrDefault("VALIDATOR_TYPE", "firebase"),
