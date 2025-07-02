@@ -38,6 +38,18 @@ func getAPIKey(baseURL string, config *config.Config) string {
 	return ""
 }
 
+func waHandler(c *gin.Context) {
+	body, err := c.GetRawData()
+	if err != nil {
+		log.Printf("Error reading request body: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"status": false, "error": "Failed to read body"})
+		return
+	}
+
+	log.Printf("WA Handler - Request body: %s", string(body))
+	c.JSON(http.StatusOK, gin.H{"status": true})
+}
+
 func main() {
 	config.LoadConfig()
 
@@ -94,6 +106,9 @@ func main() {
 
 		c.Next()
 	})
+
+	// Debug/test endpoint (no auth required)
+	router.POST("/wa", waHandler)
 
 	router.Use(firebaseAuth.RequireAuth())
 
