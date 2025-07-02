@@ -1,30 +1,37 @@
+# Build stage
 FROM golang:1.24-alpine AS builder
 
+# Set working directory
 WORKDIR /app
-RUN apk add --no-cache git
 
+# Install git and other dependencies needed for building
+RUN apk add --no-cache git ca-certificates tzdata
+
+# Copy go mod files first for better caching
 COPY go.mod go.sum ./
+
+# Download dependencies
 RUN go mod download
 
+# Copy source code
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -o oauth-proxy .
+# Build the server binary
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server cmd/server/main.go
 
+# Runtime stage
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates
+# Install ca-certificates for HTTPS requests
+RUN apk --no-cache add ca-certificates tzdata
 
-# create non-root user
-RUN addgroup -S appgroup -g 1001 && \
-    adduser  -S appuser  -u 1001 -G appgroup
+WORKDIR /root/
 
-WORKDIR /app
-COPY --from=builder /app/oauth-proxy .
+# Copy the binary from builder stage
+COPY --from=builder /app/server .
 
-USER appuser
+# Expose port (Railway will provide PORT environment variable, but default to 8080)
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
-
-CMD ["./oauth-proxy"]
+# Run the server
+CMD ["./server"] 
