@@ -40,7 +40,7 @@ func (s *Service) getOAuthConfig(provider string) (OAuthConfig, error) {
 			TokenEndpoint: "https://slack.com/api/oauth.v2.access",
 			ClientID:      config.AppConfig.SlackClientID,
 			ClientSecret:  config.AppConfig.SlackClientSecret,
-			RedirectURI:   "http://localhost:8080/auth/slack/callback",
+			RedirectURI:   "http://localhost:8443/auth/slack/callback",
 		}, nil
 	case "twitter":
 		return OAuthConfig{
