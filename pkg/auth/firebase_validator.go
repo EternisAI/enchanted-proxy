@@ -6,17 +6,18 @@ import (
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/auth"
+	"google.golang.org/api/option"
 )
 
 type FirebaseTokenValidator struct {
 	authClient *auth.Client
-	projectID  string
 }
 
-func NewFirebaseTokenValidator(ctx context.Context, projectID string) (*FirebaseTokenValidator, error) {
-	app, err := firebase.NewApp(ctx, &firebase.Config{ProjectID: projectID})
+func NewFirebaseTokenValidator(ctx context.Context, credJSON string) (*FirebaseTokenValidator, error) {
+	opt := option.WithCredentialsJSON([]byte(credJSON))
+	app, err := firebase.NewApp(context.Background(), nil, opt)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize Firebase app: %w", err)
+		return nil, fmt.Errorf("error initializing app: %v", err)
 	}
 
 	authClient, err := app.Auth(ctx)
@@ -26,7 +27,6 @@ func NewFirebaseTokenValidator(ctx context.Context, projectID string) (*Firebase
 
 	return &FirebaseTokenValidator{
 		authClient: authClient,
-		projectID:  projectID,
 	}, nil
 }
 

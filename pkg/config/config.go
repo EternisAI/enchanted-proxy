@@ -25,6 +25,7 @@ type Config struct {
 	TinfoilAPIKey         string
 	ValidatorType         string // "jwk" or "firebase"
 	JWTJWKSURL            string
+	FirebaseCredJSON      string
 }
 
 var AppConfig *Config
@@ -68,8 +69,9 @@ func LoadConfig() {
 		TinfoilAPIKey: getEnvOrDefault("TINFOIL_API_KEY", ""),
 
 		// Validator
-		ValidatorType: getEnvOrDefault("VALIDATOR_TYPE", "firebase"),
-		JWTJWKSURL:    getEnvOrDefault("JWT_JWKS_URL", ""),
+		ValidatorType:    getEnvOrDefault("VALIDATOR_TYPE", "firebase"),
+		JWTJWKSURL:       getEnvOrDefault("JWT_JWKS_URL", ""),
+		FirebaseCredJSON: getEnvOrDefault("FIREBASE_CRED_JSON", ""),
 	}
 
 	// Validate required configs

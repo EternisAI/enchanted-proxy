@@ -223,7 +223,7 @@ func NewTokenValidator(cfg *config.Config, logger *log.Logger) (auth.TokenValida
 		}
 
 		logger.Info("creating Firebase token validator", "project_id", cfg.FirebaseProjectID)
-		tokenValidator, err := auth.NewFirebaseTokenValidator(context.Background(), cfg.FirebaseProjectID)
+		tokenValidator, err := auth.NewFirebaseTokenValidator(context.Background(), cfg.FirebaseCredJSON)
 		if err != nil {
 			logger.Error("Failed to create Firebase token validator", slog.Any("error", err))
 			return nil, err
