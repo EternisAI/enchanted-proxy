@@ -42,5 +42,10 @@ func (f *FirebaseTokenValidator) ValidateToken(tokenString string) (string, erro
 		return "", fmt.Errorf("no user email found in Firebase token")
 	}
 
-	return token.Claims["email"].(string), nil
+	email, ok := token.Claims["email"].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid email in Firebase token")
+	}
+
+	return email, nil
 }
