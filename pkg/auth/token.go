@@ -15,7 +15,9 @@ var (
 // StandardClaims represents the standard claims in a JWT token.
 type StandardClaims struct {
 	// Standard JWT claims
-	Sub string `json:"sub"`
+	Sub    string `json:"sub"`
+	UserId string `json:"user_id"`
+	Email  string `json:"email"`
 	jwt.RegisteredClaims
 }
 

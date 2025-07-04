@@ -69,7 +69,7 @@ func (v *JWTTokenValidator) ValidateToken(tokenString string) (string, error) {
 			if claims.Sub == "" {
 				return "", fmt.Errorf("%w: no subject (sub) found in token claims", ErrInvalidToken)
 			}
-			return claims.Sub, nil
+			return claims.Email, nil
 		}
 
 		return "", ErrInvalidToken
@@ -142,9 +142,9 @@ func (v *JWTTokenValidator) ValidateToken(tokenString string) (string, error) {
 	}
 
 	// Get the subject (user ID)
-	if claims.Sub == "" {
-		return "", fmt.Errorf("%w: no subject (sub) found in token claims", ErrInvalidToken)
+	if claims.Email == "" {
+		return "", fmt.Errorf("%w: no email found in token claims", ErrInvalidToken)
 	}
 
-	return claims.Sub, nil
+	return claims.Email, nil
 }

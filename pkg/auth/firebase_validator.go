@@ -38,9 +38,9 @@ func (f *FirebaseTokenValidator) ValidateToken(tokenString string) (string, erro
 		return "", err
 	}
 
-	if token.UID == "" {
-		return "", fmt.Errorf("no user ID found in Firebase token")
+	if token.Claims["email"] == nil {
+		return "", fmt.Errorf("no user email found in Firebase token")
 	}
 
-	return token.UID, nil
+	return token.Claims["email"].(string), nil
 }
