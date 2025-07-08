@@ -26,6 +26,10 @@ type Config struct {
 	ValidatorType         string // "jwk" or "firebase"
 	JWTJWKSURL            string
 	FirebaseCredJSON      string
+
+	// MCP
+	PerplexityAPIKey  string
+	ReplicateAPIToken string
 }
 
 var AppConfig *Config
@@ -72,6 +76,10 @@ func LoadConfig() {
 		ValidatorType:    getEnvOrDefault("VALIDATOR_TYPE", "firebase"),
 		JWTJWKSURL:       getEnvOrDefault("JWT_JWKS_URL", ""),
 		FirebaseCredJSON: getEnvOrDefault("FIREBASE_CRED_JSON", ""),
+
+		// MCP
+		PerplexityAPIKey:  getEnvOrDefault("PERPLEXITY_API_KEY", ""),
+		ReplicateAPIToken: getEnvOrDefault("REPLICATE_API_TOKEN", ""),
 	}
 
 	// Validate required configs
@@ -86,6 +94,15 @@ func LoadConfig() {
 	if AppConfig.ComposioAPIKey == "" {
 		log.Println("Warning: Composio API key is missing. Please set COMPOSIO_API_KEY environment variable.")
 	}
+
+	if AppConfig.PerplexityAPIKey == "" {
+		log.Println("Warning: Perplexity API key is missing. Please set PERPLEXITY_API_KEY environment variable.")
+	}
+
+	if AppConfig.ReplicateAPIToken == "" {
+		log.Println("Warning: Replicate API token is missing. Please set REPLICATE_API_TOKEN environment variable.")
+	}
+
 	log.Println("Firebase project ID: ", AppConfig.FirebaseProjectID)
 }
 
