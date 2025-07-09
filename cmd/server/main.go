@@ -16,6 +16,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/pkg/composio"
 	"github.com/eternisai/enchanted-proxy/pkg/config"
 	"github.com/eternisai/enchanted-proxy/pkg/invitecode"
+	"github.com/eternisai/enchanted-proxy/pkg/mcp"
 	"github.com/eternisai/enchanted-proxy/pkg/oauth"
 	"github.com/gin-gonic/gin"
 )
@@ -84,11 +85,13 @@ func main() {
 	oauthService := oauth.NewService()
 	composioService := composio.NewService()
 	inviteCodeService := invitecode.NewService(db)
+	mcpService := mcp.NewService()
 
 	// Initialize handlers
 	oauthHandler := oauth.NewHandler(oauthService)
 	composioHandler := composio.NewHandler(composioService)
 	inviteCodeHandler := invitecode.NewHandler(inviteCodeService)
+	mcpHandler := mcp.NewHandler(mcpService)
 
 	// Initialize Gin router
 	router := gin.Default()
@@ -110,6 +113,10 @@ func main() {
 	// Debug/test endpoint (no auth required)
 	router.POST("/wa", waHandler)
 
+	// MCP API routes (uses Google OAuth validation)
+	router.Any("/mcp", mcp.MCPAuthMiddleware(), mcpHandler.HandleMCPAny)
+
+	// All other routes use Firebase/JWT auth
 	router.Use(firebaseAuth.RequireAuth())
 
 	// OAuth API routes
