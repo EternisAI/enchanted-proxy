@@ -69,9 +69,12 @@ func (v *JWTTokenValidator) ValidateToken(tokenString string) (string, error) {
 			if claims.Sub == "" {
 				return "", fmt.Errorf("%w: no subject (sub) found in token claims", ErrInvalidToken)
 			}
-			// Email if available, fallback to sub for providers like Twitter.
+			// Email if available, fallback to user_id or sub for providers like Twitter.
 			if claims.Email != "" {
 				return claims.Email, nil
+			}
+			if claims.UserId != "" {
+				return claims.UserId, nil
 			}
 			return claims.Sub, nil
 		}
@@ -145,13 +148,17 @@ func (v *JWTTokenValidator) ValidateToken(tokenString string) (string, error) {
 		return "", ErrExpiredToken
 	}
 
-	// Get the user identifier (prefer email, fallback to sub).
+	// Get the user identifier (prefer email, fallback to user_id or sub).
 	if claims.Email != "" {
 		return claims.Email, nil
 	}
+	
+	if claims.UserId != "" {
+		return claims.UserId, nil
+	}
 
 	if claims.Sub == "" {
-		return "", fmt.Errorf("%w: no email or subject (sub) found in token claims", ErrInvalidToken)
+		return "", fmt.Errorf("%w: no email, user_id, or subject (sub) found in token claims", ErrInvalidToken)
 	}
 
 	return claims.Sub, nil

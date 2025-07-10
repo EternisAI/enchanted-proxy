@@ -38,21 +38,24 @@ func (f *FirebaseTokenValidator) ValidateToken(tokenString string) (string, erro
 		return "", err
 	}
 
-	// Email if available, fallback to sub for providers like Twitter.
+	// Email if available, fallback to user_id or sub for providers like Twitter.
 	if token.Claims["email"] != nil {
 		if email, ok := token.Claims["email"].(string); ok && email != "" {
 			return email, nil
 		}
 	}
 
-	if token.Claims["sub"] == nil {
-		return "", fmt.Errorf("no user ID found in Firebase token")
+	if token.Claims["user_id"] != nil {
+		if userID, ok := token.Claims["user_id"].(string); ok && userID != "" {
+			return userID, nil
+		}
 	}
 
-	sub, ok := token.Claims["sub"].(string)
-	if !ok {
-		return "", fmt.Errorf("invalid user ID in Firebase token")
+	if token.Claims["sub"] != nil {
+		if sub, ok := token.Claims["sub"].(string); ok && sub != "" {
+			return sub, nil
+		}
 	}
 
-	return sub, nil
+	return "", fmt.Errorf("no user ID found in Firebase token")
 }
