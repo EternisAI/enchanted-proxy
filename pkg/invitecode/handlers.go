@@ -42,14 +42,14 @@ func (h *Handler) RedeemInviteCode(c *gin.Context) {
 		return
 	}
 
-	isWhitelisted, err := h.service.IsEmailWhitelisted(userUUID)
+	isWhitelisted, err := h.service.IsUserWhitelisted(userUUID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	if isWhitelisted {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Email already whitelisted"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "User already whitelisted"})
 		return
 	}
 
@@ -63,8 +63,8 @@ func (h *Handler) RedeemInviteCode(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "Code already used"})
 			return
 		}
-		if err.Error() == "code bound to a different email" {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Code bound to a different email"})
+		if err.Error() == "code bound to a different user" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Code bound to a different user"})
 			return
 		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -113,20 +113,20 @@ func (h *Handler) ResetInviteCode(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Invite code reset successfully"})
 }
 
-// CheckEmailWhitelist checks if an email is whitelisted
-// GET /api/v1/invites/:email/whitelist.
-func (h *Handler) CheckEmailWhitelist(c *gin.Context) {
-	email := c.Param("email")
+// CheckUserWhitelist checks if a user ID is whitelisted
+// GET /api/v1/invites/:userID/whitelist.
+func (h *Handler) CheckUserWhitelist(c *gin.Context) {
+	userID := c.Param("userID")
 
-	// Check if email is whitelisted (has valid invite codes)
-	isWhitelisted, err := h.service.IsEmailWhitelisted(email)
+	// Check if user ID is whitelisted (has valid invite codes)
+	isWhitelisted, err := h.service.IsUserWhitelisted(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"email":       email,
+		"userID":      userID,
 		"whitelisted": isWhitelisted,
 	})
 }

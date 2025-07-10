@@ -139,7 +139,7 @@ func main() {
 	{
 		invites := api.Group("/invites")
 		{
-			invites.GET("/:email/whitelist", inviteCodeHandler.CheckEmailWhitelist)
+			invites.GET("/:userID/whitelist", inviteCodeHandler.CheckUserWhitelist)
 			invites.POST("/:code/redeem", inviteCodeHandler.RedeemInviteCode)
 			invites.GET("/reset/:code", inviteCodeHandler.ResetInviteCode)
 			invites.DELETE("/:id", inviteCodeHandler.DeleteInviteCode)

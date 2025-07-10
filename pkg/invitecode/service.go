@@ -49,8 +49,8 @@ func (s *Service) GetInviteCodeByID(id uint) (*InviteCode, error) {
 	return &inviteCode, nil
 }
 
-// UseInviteCode marks an invite code as used by a user email.
-func (s *Service) UseInviteCode(code string, email string) error {
+// UseInviteCode marks an invite code as used by a user ID.
+func (s *Service) UseInviteCode(code string, userID string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		// Check if invite code ends with "-eternis" for special whitelisting
 		isEternisCode := len(code) > 8 && code[len(code)-8:] == "-eternis"
@@ -59,7 +59,7 @@ func (s *Service) UseInviteCode(code string, email string) error {
 			inviteCode := InviteCode{}
 			_ = inviteCode.SetCodeAndHash()
 			inviteCode.IsUsed = true
-			inviteCode.RedeemedBy = &email
+			inviteCode.RedeemedBy = &userID
 			now := time.Now()
 			inviteCode.RedeemedAt = &now
 			inviteCode.IsActive = true
@@ -88,14 +88,14 @@ func (s *Service) UseInviteCode(code string, email string) error {
 		}
 
 		// Check if code is bound to a specific email
-		if inviteCode.BoundEmail != nil && *inviteCode.BoundEmail != email {
-			return errors.New("code bound to a different email")
+		if inviteCode.BoundEmail != nil && *inviteCode.BoundEmail != userID {
+			return errors.New("code bound to a different user")
 		}
 
 		// Update the invite code
 		now := time.Now()
 		inviteCode.IsUsed = true
-		inviteCode.RedeemedBy = &email
+		inviteCode.RedeemedBy = &userID
 		inviteCode.RedeemedAt = &now
 
 		return tx.Save(&inviteCode).Error
@@ -112,11 +112,11 @@ func (s *Service) DeactivateInviteCode(id uint) error {
 	return s.db.Model(&InviteCode{}).Where("id = ?", id).Updates(map[string]interface{}{"is_active": false}).Error
 }
 
-// IsEmailWhitelisted checks if an email has valid invite codes (is whitelisted).
-func (s *Service) IsEmailWhitelisted(email string) (bool, error) {
+// IsUserWhitelisted checks if a user ID has valid invite codes (is whitelisted).
+func (s *Service) IsUserWhitelisted(userID string) (bool, error) {
 	var count int64
 	err := s.db.Model(&InviteCode{}).
-		Where("redeemed_by = ?", email).
+		Where("redeemed_by = ?", userID).
 		Count(&count).Error
 	if err != nil {
 		return false, err
