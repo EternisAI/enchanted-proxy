@@ -55,4 +55,3 @@ func IsExpired(ic *invitecodes.InviteCode) bool {
 func CanBeUsed(ic *invitecodes.InviteCode) bool {
 	return ic.IsActive && !IsExpired(ic) && !ic.IsUsed
 }
-

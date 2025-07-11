@@ -10,8 +10,8 @@ import (
 )
 
 type Database struct {
-	DB           *sql.DB
-	InviteCodes  invitecodes.Querier
+	DB          *sql.DB
+	InviteCodes invitecodes.Querier
 }
 
 // InitDatabase initializes the database connection and runs migrations.
