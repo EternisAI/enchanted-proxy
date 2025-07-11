@@ -11,4 +11,5 @@ build:
 test:
 	go test ./... -race
 
-
+sqlc:
+	sqlc generate

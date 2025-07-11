@@ -6,7 +6,6 @@ import (
 
 	"github.com/eternisai/enchanted-proxy/pkg/auth"
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 type Handler struct {
@@ -78,17 +77,13 @@ func (h *Handler) RedeemInviteCode(c *gin.Context) {
 // DELETE /api/v1/invites/:id.
 func (h *Handler) DeleteInviteCode(c *gin.Context) {
 	idStr := c.Param("id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
+	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID"})
 		return
 	}
 
-	if err := h.service.DeleteInviteCode(uint(id)); err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Invalid code"})
-			return
-		}
+	if err := h.service.DeleteInviteCode(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -102,10 +97,6 @@ func (h *Handler) ResetInviteCode(c *gin.Context) {
 	code := c.Param("code")
 
 	if err := h.service.ResetInviteCode(code); err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Invalid code"})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
