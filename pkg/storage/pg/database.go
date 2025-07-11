@@ -6,7 +6,6 @@ import (
 
 	"github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc/invitecodes"
 	_ "github.com/lib/pq"
-	"github.com/pressly/goose/v3"
 )
 
 type Database struct {
@@ -27,7 +26,7 @@ func InitDatabase(databaseURL string) (*Database, error) {
 	}
 
 	// Run migrations
-	if err := goose.Up(db, "pkg/storage/pg/migrations"); err != nil {
+	if err := RunMigrations(db); err != nil {
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
