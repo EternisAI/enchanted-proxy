@@ -84,7 +84,7 @@ func main() {
 	// Initialize services
 	oauthService := oauth.NewService()
 	composioService := composio.NewService()
-	inviteCodeService := invitecode.NewService(db)
+	inviteCodeService := invitecode.NewService(db.InviteCodes)
 	mcpService := mcp.NewService()
 
 	// Initialize handlers

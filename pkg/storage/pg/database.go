@@ -1,0 +1,46 @@
+package pg
+
+import (
+	"database/sql"
+	"fmt"
+
+	"github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc/invitecodes"
+	_ "github.com/lib/pq"
+	"github.com/pressly/goose/v3"
+)
+
+type Database struct {
+	DB           *sql.DB
+	InviteCodes  invitecodes.Querier
+}
+
+// InitDatabase initializes the database connection and runs migrations.
+func InitDatabase(databaseURL string) (*Database, error) {
+	db, err := sql.Open("postgres", databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// Test the connection
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	// Run migrations
+	if err := goose.Up(db, "pkg/storage/pg/migrations"); err != nil {
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	// Create queries
+	queries := invitecodes.New(db)
+
+	return &Database{
+		DB:          db,
+		InviteCodes: queries,
+	}, nil
+}
+
+// Close closes the database connection.
+func (d *Database) Close() error {
+	return d.DB.Close()
+}

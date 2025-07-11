@@ -1,123 +1,161 @@
 package invitecode
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"time"
 
-	"gorm.io/gorm"
+	"github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc/invitecodes"
 )
 
 type Service struct {
-	db *gorm.DB
+	queries invitecodes.Querier
 }
 
-func NewService(db *gorm.DB) *Service {
-	return &Service{db: db}
+func NewService(queries invitecodes.Querier) *Service {
+	return &Service{queries: queries}
 }
 
-func (s *Service) CreateInviteCode(inviteCode *InviteCode) error {
-	return s.db.Create(inviteCode).Error
+func (s *Service) CreateInviteCode(code string, codeHash string, boundEmail *string, createdBy int64, isUsed bool, redeemedBy *string, redeemedAt *time.Time, expiresAt *time.Time, isActive bool) (*invitecodes.InviteCode, error) {
+	ctx := context.Background()
+
+	params := invitecodes.CreateInviteCodeParams{
+		Code:       code,
+		CodeHash:   codeHash,
+		BoundEmail: boundEmail,
+		CreatedBy:  createdBy,
+		IsUsed:     isUsed,
+		RedeemedBy: redeemedBy,
+		RedeemedAt: redeemedAt,
+		ExpiresAt:  expiresAt,
+		IsActive:   isActive,
+	}
+
+	result, err := s.queries.CreateInviteCode(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	return &result, nil
 }
 
-// GetAllInviteCodes returns all invite codes.
-func (s *Service) GetAllInviteCodes() ([]InviteCode, error) {
-	var inviteCodes []InviteCode
-	err := s.db.Find(&inviteCodes).Error
-	return inviteCodes, err
+func (s *Service) GetAllInviteCodes() ([]invitecodes.InviteCode, error) {
+	ctx := context.Background()
+	return s.queries.GetAllInviteCodes(ctx)
 }
 
-// GetInviteCodeByCode returns an invite code by its code (using hash lookup).
-func (s *Service) GetInviteCodeByCode(code string) (*InviteCode, error) {
+func (s *Service) GetInviteCodeByCode(code string) (*invitecodes.InviteCode, error) {
+	ctx := context.Background()
 	codeHash := HashCode(code)
-	var inviteCode InviteCode
-	err := s.db.Model(&InviteCode{}).Where("code_hash = ?", codeHash).First(&inviteCode).Error
+
+	result, err := s.queries.GetInviteCodeByCodeHash(ctx, codeHash)
 	if err != nil {
-		return nil, err
-	}
-	// Set the original code for response (not stored in DB)
-	inviteCode.Code = code
-	return &inviteCode, nil
-}
-
-// GetInviteCodeByID returns an invite code by its ID.
-func (s *Service) GetInviteCodeByID(id uint) (*InviteCode, error) {
-	var inviteCode InviteCode
-	err := s.db.Model(&InviteCode{}).Where("id = ?", id).First(&inviteCode).Error
-	if err != nil {
-		return nil, err
-	}
-	return &inviteCode, nil
-}
-
-// UseInviteCode marks an invite code as used by a user ID.
-func (s *Service) UseInviteCode(code string, userID string) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		// Check if invite code ends with "-eternis" for special whitelisting
-		isEternisCode := len(code) > 8 && code[len(code)-8:] == "-eternis"
-
-		if isEternisCode {
-			inviteCode := InviteCode{}
-			_ = inviteCode.SetCodeAndHash()
-			inviteCode.IsUsed = true
-			inviteCode.RedeemedBy = &userID
-			now := time.Now()
-			inviteCode.RedeemedAt = &now
-			inviteCode.IsActive = true
-			inviteCode.CreatedBy = 0
-			return tx.Create(&inviteCode).Error
+		if err == sql.ErrNoRows {
+			return nil, errors.New("invite code not found")
 		}
+		return nil, err
+	}
 
-		// For regular codes, follow normal flow
-		codeHash := HashCode(code)
-		var inviteCode InviteCode
-		if err := tx.Where("code_hash = ?", codeHash).First(&inviteCode).Error; err != nil {
+	return &result, nil
+}
+
+func (s *Service) GetInviteCodeByID(id int64) (*invitecodes.InviteCode, error) {
+	ctx := context.Background()
+
+	result, err := s.queries.GetInviteCodeByID(ctx, id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, errors.New("invite code not found")
+		}
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+func (s *Service) UseInviteCode(code string, userID string) error {
+	ctx := context.Background()
+
+	// Check if invite code ends with "-eternis" for special whitelisting
+	isEternisCode := len(code) > 8 && code[len(code)-8:] == "-eternis"
+
+	if isEternisCode {
+		// Create a special eternis code
+		generatedCode, codeHash, err := SetCodeAndHash()
+		if err != nil {
 			return err
 		}
 
-		// Check if the invite code can be used
-		if !inviteCode.CanBeUsed() {
-			if inviteCode.IsExpired() {
-				return errors.New("invite code has expired")
-			}
-			if !inviteCode.IsActive {
-				return errors.New("invite code is inactive")
-			}
-			if inviteCode.IsUsed {
-				return errors.New("invite code already used")
-			}
-		}
-
-		// Check if code is bound to a specific email
-		if inviteCode.BoundEmail != nil && *inviteCode.BoundEmail != userID {
-			return errors.New("code bound to a different user")
-		}
-
-		// Update the invite code
 		now := time.Now()
-		inviteCode.IsUsed = true
-		inviteCode.RedeemedBy = &userID
-		inviteCode.RedeemedAt = &now
+		_, err = s.CreateInviteCode(
+			generatedCode, // Use the generated code, not the original
+			codeHash,
+			nil,     // bound_email
+			0,       // created_by
+			true,    // is_used
+			&userID, // redeemed_by
+			&now,    // redeemed_at
+			nil,     // expires_at
+			true,    // is_active
+		)
+		return err
+	}
 
-		return tx.Save(&inviteCode).Error
-	})
+	// For regular codes, follow normal flow
+	inviteCode, err := s.GetInviteCodeByCode(code)
+	if err != nil {
+		return err
+	}
+
+	// Check if the invite code can be used
+	if !CanBeUsed(inviteCode) {
+		if IsExpired(inviteCode) {
+			return errors.New("invite code has expired")
+		}
+		if !inviteCode.IsActive {
+			return errors.New("invite code is inactive")
+		}
+		if inviteCode.IsUsed {
+			return errors.New("invite code already used")
+		}
+	}
+
+	// Check if code is bound to a specific email
+	if inviteCode.BoundEmail != nil && *inviteCode.BoundEmail != userID {
+		return errors.New("code bound to a different user")
+	}
+
+	// Update the invite code
+	now := time.Now()
+	params := invitecodes.UpdateInviteCodeUsageParams{
+		ID:         inviteCode.ID,
+		IsUsed:     true,
+		RedeemedBy: &userID,
+		RedeemedAt: &now,
+	}
+
+	return s.queries.UpdateInviteCodeUsage(ctx, params)
 }
 
-// DeleteInviteCode soft deletes an invite code.
-func (s *Service) DeleteInviteCode(id uint) error {
-	return s.db.Model(&InviteCode{}).Where("id = ?", id).Delete(&InviteCode{}).Error
+func (s *Service) DeleteInviteCode(id int64) error {
+	ctx := context.Background()
+	return s.queries.SoftDeleteInviteCode(ctx, id)
 }
 
-// DeactivateInviteCode deactivates an invite code.
-func (s *Service) DeactivateInviteCode(id uint) error {
-	return s.db.Model(&InviteCode{}).Where("id = ?", id).Updates(map[string]interface{}{"is_active": false}).Error
+func (s *Service) DeactivateInviteCode(id int64) error {
+	ctx := context.Background()
+	params := invitecodes.UpdateInviteCodeActiveParams{
+		ID:       id,
+		IsActive: false,
+	}
+	return s.queries.UpdateInviteCodeActive(ctx, params)
 }
 
-// IsUserWhitelisted checks if a user ID has valid invite codes (is whitelisted).
 func (s *Service) IsUserWhitelisted(userID string) (bool, error) {
-	var count int64
-	err := s.db.Model(&InviteCode{}).
-		Where("redeemed_by = ?", userID).
-		Count(&count).Error
+	ctx := context.Background()
+
+	count, err := s.queries.CountInviteCodesByRedeemedBy(ctx, &userID)
 	if err != nil {
 		return false, err
 	}
@@ -125,19 +163,8 @@ func (s *Service) IsUserWhitelisted(userID string) (bool, error) {
 	return count > 0, nil
 }
 
-// ResetInviteCode resets an invite code by clearing redeemed_by, redeemed_at and setting is_used to false.
 func (s *Service) ResetInviteCode(code string) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		var inviteCode InviteCode
-		if err := tx.Where("code_hash = ?", HashCode(code)).First(&inviteCode).Error; err != nil {
-			return err
-		}
-
-		// Reset the invite code
-		inviteCode.IsUsed = false
-		inviteCode.RedeemedBy = nil
-		inviteCode.RedeemedAt = nil
-
-		return tx.Save(&inviteCode).Error
-	})
+	ctx := context.Background()
+	codeHash := HashCode(code)
+	return s.queries.ResetInviteCode(ctx, codeHash)
 }
