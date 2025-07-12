@@ -66,7 +66,7 @@ func (s *Service) RefreshMaterializedView() error {
 	return s.queries.RefreshUserRequestCountsView(ctx)
 }
 
-// GetProviderFromBaseURL maps base URLs to provider names
+// GetProviderFromBaseURL maps base URLs to provider names.
 func GetProviderFromBaseURL(baseURL string) string {
 	switch baseURL {
 	case "https://openrouter.ai/api/v1":
