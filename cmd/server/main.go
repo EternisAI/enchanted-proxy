@@ -68,7 +68,7 @@ func requestTrackingMiddleware(trackingService *request_tracking.Service, logger
 		}
 
 		if config.AppConfig.RateLimitEnabled {
-			isUnderLimit, err := trackingService.CheckRateLimit(context.Background(), userID, config.AppConfig.RateLimitRequestsPerDay)
+			isUnderLimit, err := trackingService.CheckRateLimit(c.Request.Context(), userID, config.AppConfig.RateLimitRequestsPerDay)
 			if err != nil {
 				logger.Error("Failed to check rate limit", "user_id", userID, "error", err)
 			} else if !isUnderLimit {
@@ -87,15 +87,17 @@ func requestTrackingMiddleware(trackingService *request_tracking.Service, logger
 		baseURL := c.GetHeader("X-BASE-URL")
 		provider := request_tracking.GetProviderFromBaseURL(baseURL)
 
+		endpoint := c.Request.URL.Path
+
 		go func() {
 			info := request_tracking.RequestInfo{
 				UserID:   userID,
-				Endpoint: c.Request.URL.Path,
+				Endpoint: endpoint,
 				Model:    "", // Not extracting model initially.
 				Provider: provider,
 			}
 
-			if err := trackingService.LogRequest(c.Request.Context(), info); err != nil {
+			if err := trackingService.LogRequest(context.Background(), info); err != nil {
 				logger.Error("Failed to log request", "error", err)
 			}
 		}()
