@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc/invitecodes"
+	pgdb "github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc"
 )
 
 // GenerateNanoID creates a new nanoid with custom alphabet (no confusing characters).
@@ -44,7 +44,7 @@ func SetCodeAndHash() (string, string, error) {
 }
 
 // IsExpired checks if the invite code has expired.
-func IsExpired(ic *invitecodes.InviteCode) bool {
+func IsExpired(ic *pgdb.InviteCode) bool {
 	if ic.ExpiresAt == nil {
 		return false
 	}
@@ -52,6 +52,6 @@ func IsExpired(ic *invitecodes.InviteCode) bool {
 }
 
 // CanBeUsed checks if the invite code can still be used.
-func CanBeUsed(ic *invitecodes.InviteCode) bool {
+func CanBeUsed(ic *pgdb.InviteCode) bool {
 	return ic.IsActive && !IsExpired(ic) && !ic.IsUsed
 }

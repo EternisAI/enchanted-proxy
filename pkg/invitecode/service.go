@@ -6,21 +6,21 @@ import (
 	"errors"
 	"time"
 
-	"github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc/invitecodes"
+	pgdb "github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc"
 )
 
 type Service struct {
-	queries invitecodes.Querier
+	queries pgdb.Querier
 }
 
-func NewService(queries invitecodes.Querier) *Service {
+func NewService(queries pgdb.Querier) *Service {
 	return &Service{queries: queries}
 }
 
-func (s *Service) CreateInviteCode(code string, codeHash string, boundEmail *string, createdBy int64, isUsed bool, redeemedBy *string, redeemedAt *time.Time, expiresAt *time.Time, isActive bool) (*invitecodes.InviteCode, error) {
+func (s *Service) CreateInviteCode(code string, codeHash string, boundEmail *string, createdBy int64, isUsed bool, redeemedBy *string, redeemedAt *time.Time, expiresAt *time.Time, isActive bool) (*pgdb.InviteCode, error) {
 	ctx := context.Background()
 
-	params := invitecodes.CreateInviteCodeParams{
+	params := pgdb.CreateInviteCodeParams{
 		Code:       code,
 		CodeHash:   codeHash,
 		BoundEmail: boundEmail,
@@ -40,12 +40,12 @@ func (s *Service) CreateInviteCode(code string, codeHash string, boundEmail *str
 	return &result, nil
 }
 
-func (s *Service) GetAllInviteCodes() ([]invitecodes.InviteCode, error) {
+func (s *Service) GetAllInviteCodes() ([]pgdb.InviteCode, error) {
 	ctx := context.Background()
 	return s.queries.GetAllInviteCodes(ctx)
 }
 
-func (s *Service) GetInviteCodeByCode(code string) (*invitecodes.InviteCode, error) {
+func (s *Service) GetInviteCodeByCode(code string) (*pgdb.InviteCode, error) {
 	ctx := context.Background()
 	codeHash := HashCode(code)
 
@@ -60,7 +60,7 @@ func (s *Service) GetInviteCodeByCode(code string) (*invitecodes.InviteCode, err
 	return &result, nil
 }
 
-func (s *Service) GetInviteCodeByID(id int64) (*invitecodes.InviteCode, error) {
+func (s *Service) GetInviteCodeByID(id int64) (*pgdb.InviteCode, error) {
 	ctx := context.Background()
 
 	result, err := s.queries.GetInviteCodeByID(ctx, id)
@@ -128,7 +128,7 @@ func (s *Service) UseInviteCode(code string, userID string) error {
 
 	// Update the invite code
 	now := time.Now()
-	params := invitecodes.UpdateInviteCodeUsageParams{
+	params := pgdb.UpdateInviteCodeUsageParams{
 		ID:         inviteCode.ID,
 		IsUsed:     true,
 		RedeemedBy: &userID,
@@ -145,7 +145,7 @@ func (s *Service) DeleteInviteCode(id int64) error {
 
 func (s *Service) DeactivateInviteCode(id int64) error {
 	ctx := context.Background()
-	params := invitecodes.UpdateInviteCodeActiveParams{
+	params := pgdb.UpdateInviteCodeActiveParams{
 		ID:       id,
 		IsActive: false,
 	}

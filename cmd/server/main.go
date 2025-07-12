@@ -18,6 +18,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/pkg/invitecode"
 	"github.com/eternisai/enchanted-proxy/pkg/mcp"
 	"github.com/eternisai/enchanted-proxy/pkg/oauth"
+	"github.com/eternisai/enchanted-proxy/pkg/request_tracking"
 	"github.com/gin-gonic/gin"
 )
 
@@ -49,6 +50,118 @@ func waHandler(c *gin.Context) {
 
 	log.Printf("WA Handler - Request body: %s", string(body))
 	c.JSON(http.StatusOK, gin.H{"status": true})
+}
+
+// requestTrackingMiddleware logs requests for authenticated users and checks rate limits.
+func requestTrackingMiddleware(trackingService *request_tracking.Service, logger *log.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Skip tracking for non-proxy endpoints
+		if !isProxyEndpoint(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
+
+		userID, exists := auth.GetUserUUID(c)
+		if !exists {
+			c.Next()
+			return
+		}
+
+		if config.AppConfig.RateLimitEnabled {
+			isUnderLimit, err := trackingService.CheckRateLimit(userID, config.AppConfig.RateLimitRequestsPerDay)
+			if err != nil {
+				logger.Error("Failed to check rate limit", "user_id", userID, "error", err)
+			} else if !isUnderLimit {
+				logger.Warn("🚨 RATE LIMIT EXCEEDED", "user_id", userID, "limit", config.AppConfig.RateLimitRequestsPerDay)
+
+				if !config.AppConfig.RateLimitLogOnly {
+					c.JSON(http.StatusTooManyRequests, gin.H{
+						"error": "Rate limit exceeded. Please try again later.",
+						"limit": config.AppConfig.RateLimitRequestsPerDay,
+					})
+					return
+				}
+			}
+		}
+
+		baseURL := c.GetHeader("X-BASE-URL")
+		provider := request_tracking.GetProviderFromBaseURL(baseURL)
+
+		go func() {
+			info := request_tracking.RequestInfo{
+				UserID:   userID,
+				Endpoint: c.Request.URL.Path,
+				Model:    "", // Not extracting model initially.
+				Provider: provider,
+			}
+
+			if err := trackingService.LogRequest(info); err != nil {
+				logger.Error("Failed to log request", "error", err)
+			}
+		}()
+
+		c.Next()
+	}
+}
+
+// isProxyEndpoint checks if the request is for a proxy endpoint.
+func isProxyEndpoint(path string) bool {
+	proxyPaths := []string{
+		"/chat/completions",
+		"/embeddings",
+		"/audio/speech",
+		"/audio/transcriptions",
+		"/audio/translations",
+	}
+
+	for _, pp := range proxyPaths {
+		if path == pp {
+			return true
+		}
+	}
+	return false
+}
+
+// rateLimitStatusHandler returns the current rate limit status for the authenticated user.
+func rateLimitStatusHandler(trackingService *request_tracking.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, exists := auth.GetUserUUID(c)
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+			return
+		}
+
+		if !config.AppConfig.RateLimitEnabled {
+			c.JSON(http.StatusOK, gin.H{
+				"enabled": false,
+				"message": "Rate limiting is disabled",
+			})
+			return
+		}
+
+		isUnderLimit, err := trackingService.CheckRateLimit(userID, config.AppConfig.RateLimitRequestsPerDay)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check rate limit"})
+			return
+		}
+
+		// Get current request count for the user in the last day
+		oneDayAgo := time.Now().Add(-24 * time.Hour)
+		requestCount, err := trackingService.GetUserRequestCountSince(userID, oneDayAgo)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get request count"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"enabled":       config.AppConfig.RateLimitEnabled,
+			"limit":         config.AppConfig.RateLimitRequestsPerDay,
+			"current_count": requestCount,
+			"remaining":     config.AppConfig.RateLimitRequestsPerDay - requestCount,
+			"under_limit":   isUnderLimit,
+			"log_only_mode": config.AppConfig.RateLimitLogOnly,
+		})
+	}
 }
 
 func main() {
@@ -84,8 +197,24 @@ func main() {
 	// Initialize services
 	oauthService := oauth.NewService()
 	composioService := composio.NewService()
-	inviteCodeService := invitecode.NewService(db.InviteCodes)
+	inviteCodeService := invitecode.NewService(db.Queries)
+	requestTrackingService := request_tracking.NewService(db.Queries)
 	mcpService := mcp.NewService()
+
+	// Start periodic materialized view refresh for request tracking.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		logger.Info("🔄 Starting materialized view refresh routine (every 5 minutes)")
+
+		for range ticker.C {
+			if err := requestTrackingService.RefreshMaterializedView(); err != nil {
+				logger.Error("Failed to refresh materialized view", "error", err)
+			} else {
+				logger.Debug("📊 Materialized view refreshed successfully")
+			}
+		}
+	}()
 
 	// Initialize handlers
 	oauthHandler := oauth.NewHandler(oauthService)
@@ -119,6 +248,9 @@ func main() {
 	// All other routes use Firebase/JWT auth
 	router.Use(firebaseAuth.RequireAuth())
 
+	// Add request tracking middleware after auth.
+	router.Use(requestTrackingMiddleware(requestTrackingService, logger))
+
 	// OAuth API routes
 	auth := router.Group("/auth")
 	{
@@ -144,6 +276,13 @@ func main() {
 			invites.GET("/reset/:code", inviteCodeHandler.ResetInviteCode)
 			invites.DELETE("/:id", inviteCodeHandler.DeleteInviteCode)
 		}
+
+		// Rate limiting routes (protected).
+		// Not used yet.
+		rateLimit := api.Group("/rate-limit")
+		{
+			rateLimit.GET("/status", rateLimitStatusHandler(requestTrackingService))
+		}
 	}
 
 	// Protected proxy routes
@@ -157,6 +296,20 @@ func main() {
 
 	logger.Info("🔁  proxy listening on " + port)
 	logger.Info("✅  allowed base URLs", "paths", getKeys(allowedBaseURLs))
+
+	// Log rate limiting configuration.
+	if config.AppConfig.RateLimitEnabled {
+		mode := "BLOCKING"
+		if config.AppConfig.RateLimitLogOnly {
+			mode = "LOG-ONLY"
+		}
+		logger.Info("🛡️  rate limiting enabled",
+			"limit", config.AppConfig.RateLimitRequestsPerDay,
+			"mode", mode)
+	} else {
+		logger.Info("⚠️  rate limiting disabled")
+	}
+
 	log.Fatal(router.Run(port))
 }
 

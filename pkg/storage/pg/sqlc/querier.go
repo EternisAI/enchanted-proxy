@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.29.0
 
-package invitecodes
+package pgdb
 
 import (
 	"context"
@@ -12,9 +12,13 @@ type Querier interface {
 	AtomicUseInviteCode(ctx context.Context, arg AtomicUseInviteCodeParams) error
 	CountInviteCodesByRedeemedBy(ctx context.Context, redeemedBy *string) (int64, error)
 	CreateInviteCode(ctx context.Context, arg CreateInviteCodeParams) (InviteCode, error)
+	CreateRequestLog(ctx context.Context, arg CreateRequestLogParams) error
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
 	GetInviteCodeByCodeHash(ctx context.Context, codeHash string) (InviteCode, error)
 	GetInviteCodeByID(ctx context.Context, id int64) (InviteCode, error)
+	GetUserRequestCountInLastDay(ctx context.Context, userID string) (int64, error)
+	GetUserRequestCountInTimeWindow(ctx context.Context, arg GetUserRequestCountInTimeWindowParams) (int64, error)
+	RefreshUserRequestCountsView(ctx context.Context) error
 	ResetInviteCode(ctx context.Context, codeHash string) error
 	SoftDeleteInviteCode(ctx context.Context, id int64) error
 	UpdateInviteCodeActive(ctx context.Context, arg UpdateInviteCodeActiveParams) error
