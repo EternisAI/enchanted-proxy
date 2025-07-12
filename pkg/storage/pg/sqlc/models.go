@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.29.0
 
-package invitecodes
+package pgdb
 
 import (
 	"time"
@@ -22,4 +22,19 @@ type InviteCode struct {
 	CreatedAt  time.Time  `json:"createdAt"`
 	UpdatedAt  time.Time  `json:"updatedAt"`
 	DeletedAt  *time.Time `json:"deletedAt"`
+}
+
+type RequestLog struct {
+	ID        int64     `json:"id"`
+	UserID    string    `json:"userId"`
+	Endpoint  string    `json:"endpoint"`
+	Model     *string   `json:"model"`
+	Provider  string    `json:"provider"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type UserRequestCountsDaily struct {
+	UserID       string    `json:"userId"`
+	DayBucket    time.Time `json:"dayBucket"`
+	RequestCount int64     `json:"requestCount"`
 }

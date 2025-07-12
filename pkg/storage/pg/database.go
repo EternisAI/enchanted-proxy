@@ -4,13 +4,13 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc/invitecodes"
+	pgdb "github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc"
 	_ "github.com/lib/pq"
 )
 
 type Database struct {
-	DB          *sql.DB
-	InviteCodes invitecodes.Querier
+	DB      *sql.DB
+	Queries *pgdb.Queries
 }
 
 // InitDatabase initializes the database connection and runs migrations.
@@ -31,11 +31,11 @@ func InitDatabase(databaseURL string) (*Database, error) {
 	}
 
 	// Create queries
-	queries := invitecodes.New(db)
+	queries := pgdb.New(db)
 
 	return &Database{
-		DB:          db,
-		InviteCodes: queries,
+		DB:      db,
+		Queries: queries,
 	}, nil
 }
 

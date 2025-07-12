@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -30,6 +31,11 @@ type Config struct {
 	// MCP
 	PerplexityAPIKey  string
 	ReplicateAPIToken string
+
+	// Rate Limiting
+	RateLimitEnabled        bool
+	RateLimitRequestsPerDay int64
+	RateLimitLogOnly        bool // If true, only log violations, don't block.
 }
 
 var AppConfig *Config
@@ -80,6 +86,11 @@ func LoadConfig() {
 		// MCP
 		PerplexityAPIKey:  getEnvOrDefault("PERPLEXITY_API_KEY", ""),
 		ReplicateAPIToken: getEnvOrDefault("REPLICATE_API_TOKEN", ""),
+
+		// Rate Limiting
+		RateLimitEnabled:        getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
+		RateLimitRequestsPerDay: getEnvAsInt64("RATE_LIMIT_REQUESTS_PER_DAY", 100),
+		RateLimitLogOnly:        getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
 	}
 
 	// Validate required configs
@@ -109,6 +120,17 @@ func LoadConfig() {
 func getEnvOrDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getEnvAsInt64(key string, defaultValue int64) int64 {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return parsed
+		} else {
+			log.Printf("Warning: Failed to parse environment variable %s='%s' as int64, using default %d: %v", key, value, defaultValue, err)
+		}
 	}
 	return defaultValue
 }

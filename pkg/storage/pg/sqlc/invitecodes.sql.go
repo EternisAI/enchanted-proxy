@@ -3,7 +3,7 @@
 //   sqlc v1.29.0
 // source: invitecodes.sql
 
-package invitecodes
+package pgdb
 
 import (
 	"context"
