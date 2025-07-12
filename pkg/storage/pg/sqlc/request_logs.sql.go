@@ -36,7 +36,7 @@ const getUserRequestCountInLastDay = `-- name: GetUserRequestCountInLastDay :one
 SELECT COALESCE(SUM(request_count), 0)::BIGINT as total_requests
 FROM user_request_counts_daily 
 WHERE user_id = $1 
-  AND day_bucket >= DATE_TRUNC('day', NOW()) - INTERVAL '1 day'
+  AND day_bucket = DATE_TRUNC('day', NOW())
 `
 
 func (q *Queries) GetUserRequestCountInLastDay(ctx context.Context, userID string) (int64, error) {

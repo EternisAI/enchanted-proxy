@@ -48,6 +48,8 @@ sql:
             go_type:
               type: "string"
               pointer: true
+          - column: "user_request_counts_daily.day_bucket"
+            go_type: "time.Time"
           - db_type: "text"
             nullable: true
             go_type:

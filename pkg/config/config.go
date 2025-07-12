@@ -128,6 +128,8 @@ func getEnvAsInt64(key string, defaultValue int64) int64 {
 	if value := os.Getenv(key); value != "" {
 		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
 			return parsed
+		} else {
+			log.Printf("Warning: Failed to parse environment variable %s='%s' as int64, using default %d: %v", key, value, defaultValue, err)
 		}
 	}
 	return defaultValue

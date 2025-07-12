@@ -34,7 +34,7 @@ type RequestLog struct {
 }
 
 type UserRequestCountsDaily struct {
-	UserID       string `json:"userId"`
-	DayBucket    int64  `json:"dayBucket"`
-	RequestCount int64  `json:"requestCount"`
+	UserID       string    `json:"userId"`
+	DayBucket    time.Time `json:"dayBucket"`
+	RequestCount int64     `json:"requestCount"`
 }
