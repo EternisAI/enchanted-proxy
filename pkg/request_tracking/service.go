@@ -23,9 +23,7 @@ type RequestInfo struct {
 	Provider string
 }
 
-func (s *Service) LogRequest(info RequestInfo) error {
-	ctx := context.Background()
-
+func (s *Service) LogRequest(ctx context.Context, info RequestInfo) error {
 	var model *string
 	if info.Model != "" {
 		model = &info.Model
@@ -41,9 +39,7 @@ func (s *Service) LogRequest(info RequestInfo) error {
 	return s.queries.CreateRequestLog(ctx, params)
 }
 
-func (s *Service) CheckRateLimit(userID string, maxRequestsPerDay int64) (bool, error) {
-	ctx := context.Background()
-
+func (s *Service) CheckRateLimit(ctx context.Context, userID string, maxRequestsPerDay int64) (bool, error) {
 	count, err := s.queries.GetUserRequestCountInLastDay(ctx, userID)
 	if err != nil {
 		return false, fmt.Errorf("failed to check rate limit: %w", err)
@@ -52,8 +48,7 @@ func (s *Service) CheckRateLimit(userID string, maxRequestsPerDay int64) (bool, 
 	return count < maxRequestsPerDay, nil
 }
 
-func (s *Service) GetUserRequestCountSince(userID string, since time.Time) (int64, error) {
-	ctx := context.Background()
+func (s *Service) GetUserRequestCountSince(ctx context.Context, userID string, since time.Time) (int64, error) {
 	params := pgdb.GetUserRequestCountInTimeWindowParams{
 		UserID:    userID,
 		CreatedAt: since,
@@ -61,8 +56,7 @@ func (s *Service) GetUserRequestCountSince(userID string, since time.Time) (int6
 	return s.queries.GetUserRequestCountInTimeWindow(ctx, params)
 }
 
-func (s *Service) RefreshMaterializedView() error {
-	ctx := context.Background()
+func (s *Service) RefreshMaterializedView(ctx context.Context) error {
 	return s.queries.RefreshUserRequestCountsView(ctx)
 }
 

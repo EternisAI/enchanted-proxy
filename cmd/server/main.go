@@ -68,7 +68,7 @@ func requestTrackingMiddleware(trackingService *request_tracking.Service, logger
 		}
 
 		if config.AppConfig.RateLimitEnabled {
-			isUnderLimit, err := trackingService.CheckRateLimit(userID, config.AppConfig.RateLimitRequestsPerDay)
+			isUnderLimit, err := trackingService.CheckRateLimit(context.Background(), userID, config.AppConfig.RateLimitRequestsPerDay)
 			if err != nil {
 				logger.Error("Failed to check rate limit", "user_id", userID, "error", err)
 			} else if !isUnderLimit {
@@ -95,7 +95,7 @@ func requestTrackingMiddleware(trackingService *request_tracking.Service, logger
 				Provider: provider,
 			}
 
-			if err := trackingService.LogRequest(info); err != nil {
+			if err := trackingService.LogRequest(c.Request.Context(), info); err != nil {
 				logger.Error("Failed to log request", "error", err)
 			}
 		}()
@@ -139,7 +139,7 @@ func rateLimitStatusHandler(trackingService *request_tracking.Service) gin.Handl
 			return
 		}
 
-		isUnderLimit, err := trackingService.CheckRateLimit(userID, config.AppConfig.RateLimitRequestsPerDay)
+		isUnderLimit, err := trackingService.CheckRateLimit(c.Request.Context(), userID, config.AppConfig.RateLimitRequestsPerDay)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check rate limit"})
 			return
@@ -147,7 +147,7 @@ func rateLimitStatusHandler(trackingService *request_tracking.Service) gin.Handl
 
 		// Get current request count for the user in the last day
 		oneDayAgo := time.Now().Add(-24 * time.Hour)
-		requestCount, err := trackingService.GetUserRequestCountSince(userID, oneDayAgo)
+		requestCount, err := trackingService.GetUserRequestCountSince(c.Request.Context(), userID, oneDayAgo)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get request count"})
 			return
@@ -203,12 +203,12 @@ func main() {
 
 	// Start periodic materialized view refresh for request tracking.
 	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
+		ticker := time.NewTicker(30 * time.Minute)
 		defer ticker.Stop()
-		logger.Info("🔄 Starting materialized view refresh routine (every 5 minutes)")
+		logger.Info("🔄 Starting materialized view refresh routine (every 30 minutes)")
 
 		for range ticker.C {
-			if err := requestTrackingService.RefreshMaterializedView(); err != nil {
+			if err := requestTrackingService.RefreshMaterializedView(context.Background()); err != nil {
 				logger.Error("Failed to refresh materialized view", "error", err)
 			} else {
 				logger.Debug("📊 Materialized view refreshed successfully")
