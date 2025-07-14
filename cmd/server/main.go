@@ -55,12 +55,6 @@ func waHandler(c *gin.Context) {
 // requestTrackingMiddleware logs requests for authenticated users and checks rate limits.
 func requestTrackingMiddleware(trackingService *request_tracking.Service, logger *log.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Skip tracking for non-proxy endpoints
-		if !isProxyEndpoint(c.Request.URL.Path) {
-			c.Next()
-			return
-		}
-
 		userID, exists := auth.GetUserUUID(c)
 		if !exists {
 			c.Next()
@@ -104,24 +98,6 @@ func requestTrackingMiddleware(trackingService *request_tracking.Service, logger
 
 		c.Next()
 	}
-}
-
-// isProxyEndpoint checks if the request is for a proxy endpoint.
-func isProxyEndpoint(path string) bool {
-	proxyPaths := []string{
-		"/chat/completions",
-		"/embeddings",
-		"/audio/speech",
-		"/audio/transcriptions",
-		"/audio/translations",
-	}
-
-	for _, pp := range proxyPaths {
-		if path == pp {
-			return true
-		}
-	}
-	return false
 }
 
 // rateLimitStatusHandler returns the current rate limit status for the authenticated user.
@@ -250,9 +226,6 @@ func main() {
 	// All other routes use Firebase/JWT auth
 	router.Use(firebaseAuth.RequireAuth())
 
-	// Add request tracking middleware after auth.
-	router.Use(requestTrackingMiddleware(requestTrackingService, logger))
-
 	// OAuth API routes
 	auth := router.Group("/auth")
 	{
@@ -288,11 +261,15 @@ func main() {
 	}
 
 	// Protected proxy routes
-	router.POST("/chat/completions", proxyHandler)
-	router.POST("/embeddings", proxyHandler)
-	router.POST("/audio/speech", proxyHandler)
-	router.POST("/audio/transcriptions", proxyHandler)
-	router.POST("/audio/translations", proxyHandler)
+	proxy := router.Group("/")
+	proxy.Use(requestTrackingMiddleware(requestTrackingService, logger))
+	{
+		proxy.POST("/chat/completions", proxyHandler)
+		proxy.POST("/embeddings", proxyHandler)
+		proxy.POST("/audio/speech", proxyHandler)
+		proxy.POST("/audio/transcriptions", proxyHandler)
+		proxy.POST("/audio/translations", proxyHandler)
+	}
 
 	port := ":" + config.AppConfig.Port
 
