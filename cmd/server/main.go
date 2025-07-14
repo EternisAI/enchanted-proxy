@@ -52,120 +52,6 @@ func waHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": true})
 }
 
-// requestTrackingMiddleware logs requests for authenticated users and checks rate limits.
-func requestTrackingMiddleware(trackingService *request_tracking.Service, logger *log.Logger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Skip tracking for non-proxy endpoints
-		if !isProxyEndpoint(c.Request.URL.Path) {
-			c.Next()
-			return
-		}
-
-		userID, exists := auth.GetUserUUID(c)
-		if !exists {
-			c.Next()
-			return
-		}
-
-		if config.AppConfig.RateLimitEnabled {
-			isUnderLimit, err := trackingService.CheckRateLimit(c.Request.Context(), userID, config.AppConfig.RateLimitRequestsPerDay)
-			if err != nil {
-				logger.Error("Failed to check rate limit", "user_id", userID, "error", err)
-			} else if !isUnderLimit {
-				logger.Warn("🚨 RATE LIMIT EXCEEDED", "user_id", userID, "limit", config.AppConfig.RateLimitRequestsPerDay)
-
-				if !config.AppConfig.RateLimitLogOnly {
-					c.JSON(http.StatusTooManyRequests, gin.H{
-						"error": "Rate limit exceeded. Please try again later.",
-						"limit": config.AppConfig.RateLimitRequestsPerDay,
-					})
-					return
-				}
-			}
-		}
-
-		baseURL := c.GetHeader("X-BASE-URL")
-		provider := request_tracking.GetProviderFromBaseURL(baseURL)
-
-		endpoint := c.Request.URL.Path
-
-		go func() {
-			info := request_tracking.RequestInfo{
-				UserID:   userID,
-				Endpoint: endpoint,
-				Model:    "", // Not extracting model initially.
-				Provider: provider,
-			}
-
-			if err := trackingService.LogRequest(context.Background(), info); err != nil {
-				logger.Error("Failed to log request", "error", err)
-			}
-		}()
-
-		c.Next()
-	}
-}
-
-// isProxyEndpoint checks if the request is for a proxy endpoint.
-func isProxyEndpoint(path string) bool {
-	proxyPaths := []string{
-		"/chat/completions",
-		"/embeddings",
-		"/audio/speech",
-		"/audio/transcriptions",
-		"/audio/translations",
-	}
-
-	for _, pp := range proxyPaths {
-		if path == pp {
-			return true
-		}
-	}
-	return false
-}
-
-// rateLimitStatusHandler returns the current rate limit status for the authenticated user.
-func rateLimitStatusHandler(trackingService *request_tracking.Service) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		userID, exists := auth.GetUserUUID(c)
-		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
-			return
-		}
-
-		if !config.AppConfig.RateLimitEnabled {
-			c.JSON(http.StatusOK, gin.H{
-				"enabled": false,
-				"message": "Rate limiting is disabled",
-			})
-			return
-		}
-
-		isUnderLimit, err := trackingService.CheckRateLimit(c.Request.Context(), userID, config.AppConfig.RateLimitRequestsPerDay)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check rate limit"})
-			return
-		}
-
-		// Get current request count for the user in the last day
-		oneDayAgo := time.Now().Add(-24 * time.Hour)
-		requestCount, err := trackingService.GetUserRequestCountSince(c.Request.Context(), userID, oneDayAgo)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get request count"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"enabled":       config.AppConfig.RateLimitEnabled,
-			"limit":         config.AppConfig.RateLimitRequestsPerDay,
-			"current_count": requestCount,
-			"remaining":     config.AppConfig.RateLimitRequestsPerDay - requestCount,
-			"under_limit":   isUnderLimit,
-			"log_only_mode": config.AppConfig.RateLimitLogOnly,
-		})
-	}
-}
-
 func main() {
 	config.LoadConfig()
 
@@ -250,9 +136,6 @@ func main() {
 	// All other routes use Firebase/JWT auth
 	router.Use(firebaseAuth.RequireAuth())
 
-	// Add request tracking middleware after auth.
-	router.Use(requestTrackingMiddleware(requestTrackingService, logger))
-
 	// OAuth API routes
 	auth := router.Group("/auth")
 	{
@@ -283,16 +166,20 @@ func main() {
 		// Not used yet.
 		rateLimit := api.Group("/rate-limit")
 		{
-			rateLimit.GET("/status", rateLimitStatusHandler(requestTrackingService))
+			rateLimit.GET("/status", request_tracking.RateLimitStatusHandler(requestTrackingService))
 		}
 	}
 
 	// Protected proxy routes
-	router.POST("/chat/completions", proxyHandler)
-	router.POST("/embeddings", proxyHandler)
-	router.POST("/audio/speech", proxyHandler)
-	router.POST("/audio/transcriptions", proxyHandler)
-	router.POST("/audio/translations", proxyHandler)
+	proxy := router.Group("/")
+	proxy.Use(request_tracking.RequestTrackingMiddleware(requestTrackingService, logger))
+	{
+		proxy.POST("/chat/completions", proxyHandler)
+		proxy.POST("/embeddings", proxyHandler)
+		proxy.POST("/audio/speech", proxyHandler)
+		proxy.POST("/audio/transcriptions", proxyHandler)
+		proxy.POST("/audio/translations", proxyHandler)
+	}
 
 	port := ":" + config.AppConfig.Port
 

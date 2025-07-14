@@ -38,8 +38,3 @@ func InitDatabase(databaseURL string) (*Database, error) {
 		Queries: queries,
 	}, nil
 }
-
-// Close closes the database connection.
-func (d *Database) Close() error {
-	return d.DB.Close()
-}

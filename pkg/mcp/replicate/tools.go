@@ -217,8 +217,3 @@ func StringToPointer(s string) *string {
 	}
 	return &s
 }
-
-// Helper to convert int to pointer for optional fields.
-func IntToPointer(i int) *int {
-	return &i
-}
