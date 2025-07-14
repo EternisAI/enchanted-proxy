@@ -40,30 +40,11 @@ func (s *Service) CreateInviteCode(code string, codeHash string, boundEmail *str
 	return &result, nil
 }
 
-func (s *Service) GetAllInviteCodes() ([]pgdb.InviteCode, error) {
-	ctx := context.Background()
-	return s.queries.GetAllInviteCodes(ctx)
-}
-
 func (s *Service) GetInviteCodeByCode(code string) (*pgdb.InviteCode, error) {
 	ctx := context.Background()
 	codeHash := HashCode(code)
 
 	result, err := s.queries.GetInviteCodeByCodeHash(ctx, codeHash)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, errors.New("invite code not found")
-		}
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-func (s *Service) GetInviteCodeByID(id int64) (*pgdb.InviteCode, error) {
-	ctx := context.Background()
-
-	result, err := s.queries.GetInviteCodeByID(ctx, id)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, errors.New("invite code not found")
@@ -141,15 +122,6 @@ func (s *Service) UseInviteCode(code string, userID string) error {
 func (s *Service) DeleteInviteCode(id int64) error {
 	ctx := context.Background()
 	return s.queries.SoftDeleteInviteCode(ctx, id)
-}
-
-func (s *Service) DeactivateInviteCode(id int64) error {
-	ctx := context.Background()
-	params := pgdb.UpdateInviteCodeActiveParams{
-		ID:       id,
-		IsActive: false,
-	}
-	return s.queries.UpdateInviteCodeActive(ctx, params)
 }
 
 func (s *Service) IsUserWhitelisted(userID string) (bool, error) {
