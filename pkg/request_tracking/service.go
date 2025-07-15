@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/log"
@@ -17,6 +18,7 @@ type Service struct {
 	logChan    chan logRequest
 	workerPool sync.WaitGroup
 	shutdown   chan struct{}
+	closed     atomic.Bool
 	logger     *log.Logger
 }
 
@@ -49,13 +51,13 @@ func (s *Service) logWorker() {
 	for {
 		select {
 		case logReq := <-s.logChan:
-			s.processLogRequest(logReq.ctx, logReq.info)
+			s.handleLogRequest(logReq)
 		case <-s.shutdown:
 			// Process remaining log requests before shutdown.
 			for {
 				select {
 				case logReq := <-s.logChan:
-					s.processLogRequest(logReq.ctx, logReq.info)
+					s.handleLogRequest(logReq)
 				default:
 					return
 				}
@@ -89,24 +91,15 @@ func (s *Service) processLogRequest(ctx context.Context, info RequestInfo) {
 
 // LogRequestAsync queues a log request to be processed by the worker pool.
 func (s *Service) LogRequestAsync(ctx context.Context, info RequestInfo) error {
-	logCtx := ctx
-
-	// Use the caller's context if possible, otherwise create a reasonable timeout.
-	if deadline, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		logCtx, cancel = context.WithTimeout(context.Background(), time.Duration(config.AppConfig.RequestTrackingTimeoutSeconds)*time.Second)
-		_ = cancel
-	} else {
-		remaining := time.Until(deadline)
-		if remaining < time.Second {
-			var cancel context.CancelFunc
-			logCtx, cancel = context.WithTimeout(context.Background(), time.Duration(config.AppConfig.RequestTrackingTimeoutSeconds)*time.Second)
-			_ = cancel
-		}
+	if s.closed.Load() {
+		s.logger.Warn("Request tracking service is shutting down, dropping request",
+			"user_id", info.UserID,
+			"endpoint", info.Endpoint)
+		return fmt.Errorf("service shutting down")
 	}
 
 	logReq := logRequest{
-		ctx:  logCtx,
+		ctx:  ctx,
 		info: info,
 	}
 
@@ -125,9 +118,27 @@ func (s *Service) LogRequestAsync(ctx context.Context, info RequestInfo) error {
 
 // Shutdown gracefully shuts down the worker pool.
 func (s *Service) Shutdown() {
+	s.closed.Store(true)
+
 	close(s.shutdown)
 	s.workerPool.Wait()
 	close(s.logChan)
+}
+
+// handleLogRequest ensures each request has a reasonable timeout and then processes it.
+func (s *Service) handleLogRequest(lr logRequest) {
+	ctx := lr.ctx
+
+	var cancel context.CancelFunc
+	if dl, ok := ctx.Deadline(); !ok || time.Until(dl) < time.Second {
+		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(config.AppConfig.RequestTrackingTimeoutSeconds)*time.Second)
+	}
+
+	s.processLogRequest(ctx, lr.info)
+
+	if cancel != nil {
+		cancel()
+	}
 }
 
 type RequestInfo struct {
