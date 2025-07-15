@@ -123,7 +123,7 @@ func (s *Service) LogRequestAsync(ctx context.Context, info RequestInfo) error {
 	}
 }
 
-// Shutdown gracefully shuts down the worker pool
+// Shutdown gracefully shuts down the worker pool.
 func (s *Service) Shutdown() {
 	close(s.shutdown)
 	s.workerPool.Wait()
