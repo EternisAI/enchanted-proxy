@@ -8,7 +8,9 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/log"
@@ -19,6 +21,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/pkg/mcp"
 	"github.com/eternisai/enchanted-proxy/pkg/oauth"
 	"github.com/eternisai/enchanted-proxy/pkg/request_tracking"
+	"github.com/eternisai/enchanted-proxy/pkg/storage/pg"
 	"github.com/gin-gonic/gin"
 )
 
@@ -66,8 +69,8 @@ func main() {
 	logger.Info("Setting Gin mode", "mode", config.AppConfig.GinMode)
 	gin.SetMode(config.AppConfig.GinMode)
 
-	// Initialize database
-	db, err := config.InitDatabase()
+	// Initialize database.
+	db, err := pg.InitDatabase(config.AppConfig.DatabaseURL)
 	if err != nil {
 		logger.Fatal("Failed to initialize database", "error", err)
 	}
@@ -86,7 +89,7 @@ func main() {
 	oauthService := oauth.NewService()
 	composioService := composio.NewService()
 	inviteCodeService := invitecode.NewService(db.Queries)
-	requestTrackingService := request_tracking.NewService(db.Queries)
+	requestTrackingService := request_tracking.NewService(db.Queries, logger)
 	mcpService := mcp.NewService()
 
 	// Start periodic materialized view refresh for request tracking.
@@ -199,7 +202,35 @@ func main() {
 		logger.Info("⚠️  rate limiting disabled")
 	}
 
-	log.Fatal(router.Run(port))
+	srv := &http.Server{
+		Addr:    port,
+		Handler: router,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Fatal("Failed to start server", "error", err)
+		}
+	}()
+
+	// Graceful shutdown.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	logger.Info("🛑 Shutting down server...")
+
+	// Shutdown the request tracking service worker pool.
+	requestTrackingService.Shutdown()
+	logger.Info("✅ Request tracking service shutdown complete")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.AppConfig.ServerShutdownTimeoutSeconds)*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Fatal("Server forced to shutdown", "error", err)
+	}
+
+	logger.Info("✅ Server exited")
 }
 
 // Helper function to get keys from map for logging.
