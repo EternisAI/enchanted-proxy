@@ -1,7 +1,6 @@
 package request_tracking
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/charmbracelet/log"
@@ -41,18 +40,16 @@ func RequestTrackingMiddleware(trackingService *Service, logger *log.Logger) gin
 
 		endpoint := c.Request.URL.Path
 
-		go func() {
-			info := RequestInfo{
-				UserID:   userID,
-				Endpoint: endpoint,
-				Model:    "", // Not extracting model initially.
-				Provider: provider,
-			}
+		info := RequestInfo{
+			UserID:   userID,
+			Endpoint: endpoint,
+			Model:    "", // Not extracting model initially.
+			Provider: provider,
+		}
 
-			if err := trackingService.LogRequest(context.Background(), info); err != nil {
-				logger.Error("Failed to log request", "error", err)
-			}
-		}()
+		if err := trackingService.LogRequestAsync(c.Request.Context(), info); err != nil {
+			logger.Error("Failed to queue request log", "error", err)
+		}
 
 		c.Next()
 	}

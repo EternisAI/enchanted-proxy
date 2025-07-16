@@ -11,9 +11,13 @@ import (
 
 // GenerateNanoID creates a new nanoid with custom alphabet (no confusing characters).
 func GenerateNanoID() (string, error) {
+	return GenerateNanoIDWithLength(10)
+}
+
+// GenerateNanoIDWithLength creates a new nanoid with specified length.
+func GenerateNanoIDWithLength(length int) (string, error) {
 	// Custom alphabet excluding 0/O/1/I for clarity
 	alphabet := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	length := 10
 
 	bytes := make([]byte, length)
 	if _, err := rand.Read(bytes); err != nil {
@@ -25,6 +29,21 @@ func GenerateNanoID() (string, error) {
 	}
 
 	return string(bytes), nil
+}
+
+// GenerateCodeWithPrefix creates a code with a prefix followed by random characters.
+func GenerateCodeWithPrefix(prefix string, totalLength int) (string, error) {
+	if len(prefix) >= totalLength {
+		return prefix, nil
+	}
+
+	remainingLength := totalLength - len(prefix)
+	suffix, err := GenerateNanoIDWithLength(remainingLength)
+	if err != nil {
+		return "", err
+	}
+
+	return prefix + suffix, nil
 }
 
 // HashCode creates SHA256 hash of the invite code.

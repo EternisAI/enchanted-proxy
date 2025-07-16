@@ -152,7 +152,7 @@ func (v *JWTTokenValidator) ValidateToken(tokenString string) (string, error) {
 	if claims.Email != "" {
 		return claims.Email, nil
 	}
-	
+
 	if claims.UserId != "" {
 		return claims.UserId, nil
 	}
