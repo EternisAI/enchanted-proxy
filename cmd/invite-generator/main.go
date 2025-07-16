@@ -51,7 +51,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
-	defer db.DB.Close()
+	defer db.DB.Close() // nolint:errcheck
 
 	service := invitecode.NewService(db.Queries)
 
