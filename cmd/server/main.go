@@ -168,7 +168,7 @@ type graphqlServerInput struct {
 	telegramService *telegram.Service
 }
 
-// Legacy token validator setup - keeping for reference but not used in GraphQL
+// Legacy token validator setup - keeping for reference but not used in GraphQL.
 func NewTokenValidator(config *config.Config, logger *log.Logger) (auth.TokenValidator, error) {
 	switch config.ValidatorType {
 	case "firebase":

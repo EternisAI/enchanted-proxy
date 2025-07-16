@@ -8,12 +8,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// Handler handles HTTP requests for Telegram operations
+// Handler handles HTTP requests for Telegram operations.
 type Handler struct {
 	service *Service
 }
 
-// NewHandler creates a new Telegram handler instance
+// NewHandler creates a new Telegram handler instance.
 func NewHandler(service *Service) *Handler {
 	return &Handler{
 		service: service,
@@ -21,7 +21,7 @@ func NewHandler(service *Service) *Handler {
 }
 
 // SendMessage handles sending a message to a Telegram chat
-// POST /telegram/send
+// POST /telegram/send.
 func (h *Handler) SendMessage(c *gin.Context) {
 	var req SendMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -63,7 +63,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 }
 
 // CreateChat handles creating a new chat mapping
-// POST /telegram/chat
+// POST /telegram/chat.
 func (h *Handler) CreateChat(c *gin.Context) {
 	var req CreateChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -114,7 +114,7 @@ func (h *Handler) CreateChat(c *gin.Context) {
 }
 
 // GetChatURL handles generating a Telegram bot URL for a chat
-// GET /telegram/chat-url?chat_uuid=<uuid>&bot_name=<name>
+// GET /telegram/chat-url?chat_uuid=<uuid>&bot_name=<name>.
 func (h *Handler) GetChatURL(c *gin.Context) {
 	chatUUID := c.Query("chat_uuid")
 	botName := c.DefaultQuery("bot_name", TelegramBotName)
@@ -142,7 +142,7 @@ func (h *Handler) GetChatURL(c *gin.Context) {
 }
 
 // Subscribe handles starting a WebSocket subscription for a chat
-// POST /telegram/subscribe
+// POST /telegram/subscribe.
 func (h *Handler) Subscribe(c *gin.Context) {
 	var req SubscribeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -184,7 +184,7 @@ func (h *Handler) Subscribe(c *gin.Context) {
 }
 
 // PostMessage handles posting a message via GraphQL mutation
-// POST /telegram/post-message
+// POST /telegram/post-message.
 func (h *Handler) PostMessage(c *gin.Context) {
 	var req struct {
 		ChatUUID string `json:"chat_uuid" binding:"required"`
@@ -223,7 +223,7 @@ func (h *Handler) PostMessage(c *gin.Context) {
 }
 
 // Status handles health check for the Telegram service
-// GET /telegram/status
+// GET /telegram/status.
 func (h *Handler) Status(c *gin.Context) {
 	status := gin.H{
 		"service": "telegram",
@@ -239,7 +239,7 @@ func (h *Handler) Status(c *gin.Context) {
 }
 
 // GetMessages handles retrieving messages for a specific chat UUID
-// GET /telegram/messages/{uuid}
+// GET /telegram/messages/{uuid}.
 func (h *Handler) GetMessages(c *gin.Context) {
 	chatUUID := c.Param("uuid")
 	since := c.Query("since")
@@ -273,7 +273,7 @@ func (h *Handler) GetMessages(c *gin.Context) {
 }
 
 // StartPolling handles starting the Telegram polling service
-// POST /telegram/start-polling
+// POST /telegram/start-polling.
 func (h *Handler) StartPolling(c *gin.Context) {
 	// This could be enhanced to manage the polling lifecycle
 	go func() {

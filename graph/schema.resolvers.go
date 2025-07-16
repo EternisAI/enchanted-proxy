@@ -168,14 +168,16 @@ func (r *subscriptionResolver) TelegramMessageAdded(ctx context.Context, chatUUI
 		})
 	}
 
-	// Clean up when context is cancelled
+	// Clean up when context is canceled
 	go func() {
 		<-ctx.Done()
-		r.Logger.Info("Subscription context cancelled", "chatUUID", chatUUID, "subscriptionID", subscriptionID)
+		r.Logger.Info("Subscription context canceled", "chatUUID", chatUUID, "subscriptionID", subscriptionID)
 
 		// Unsubscribe from NATS or unregister callback
 		if natsSub != nil {
-			natsSub.Unsubscribe()
+			if err := natsSub.Unsubscribe(); err != nil {
+				r.Logger.Error("Failed to unsubscribe from NATS", "error", err)
+			}
 		}
 		if callbackID != "" && r.TelegramService != nil {
 			r.TelegramService.UnregisterMessageCallback(chatUUID, callbackID)

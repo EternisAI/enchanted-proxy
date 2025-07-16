@@ -22,7 +22,7 @@ import (
 
 var ErrSubscriptionNilTextMessage = errors.New("subscription stopped due to nil text message")
 
-// Service handles Telegram bot operations
+// Service handles Telegram bot operations.
 type Service struct {
 	Logger       *log.Logger
 	Token        string
@@ -36,7 +36,7 @@ type Service struct {
 	callbacksMu      sync.RWMutex
 }
 
-// NewService creates a new Telegram service instance
+// NewService creates a new Telegram service instance.
 func NewService(input TelegramServiceInput) *Service {
 	logger, ok := input.Logger.(*log.Logger)
 	if !ok {
@@ -72,7 +72,7 @@ func NewService(input TelegramServiceInput) *Service {
 	}
 }
 
-// Start begins polling for Telegram updates
+// Start begins polling for Telegram updates.
 func (s *Service) Start(ctx context.Context) error {
 	if s.Token == "" {
 		return fmt.Errorf("telegram token not set")
@@ -109,7 +109,9 @@ func (s *Service) Start(ctx context.Context) error {
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
 				s.Logger.Error("failed to read response body", "error", err)
-				resp.Body.Close()
+				if err := resp.Body.Close(); err != nil {
+					s.Logger.Error("failed to close response body", "error", err)
+				}
 				time.Sleep(time.Second * 5)
 				continue
 			}
@@ -215,7 +217,7 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 }
 
-// CreateChat creates a mapping between chat ID and UUID
+// CreateChat creates a mapping between chat ID and UUID.
 func (s *Service) CreateChat(ctx context.Context, chatID int, chatUUID string) (int, error) {
 	if s.queries == nil {
 		return 0, fmt.Errorf("database queries not available")
@@ -235,7 +237,7 @@ func (s *Service) CreateChat(ctx context.Context, chatID int, chatUUID string) (
 	return chatID, nil
 }
 
-// GetChatUUID returns the UUID for a given chat ID
+// GetChatUUID returns the UUID for a given chat ID.
 func (s *Service) GetChatUUID(chatID int) (string, bool) {
 	if s.queries == nil {
 		s.Logger.Error("Database queries not available")
@@ -255,7 +257,7 @@ func (s *Service) GetChatUUID(chatID int) (string, bool) {
 	return chat.ChatUuid, true
 }
 
-// GetChatIDByUUID returns the chat ID for a given UUID
+// GetChatIDByUUID returns the chat ID for a given UUID.
 func (s *Service) GetChatIDByUUID(chatUUID string) (int, bool) {
 	if s.queries == nil {
 		s.Logger.Error("Database queries not available")
@@ -275,7 +277,7 @@ func (s *Service) GetChatIDByUUID(chatUUID string) (int, bool) {
 	return int(chat.ChatID), true
 }
 
-// SendMessage sends a message to a Telegram chat
+// SendMessage sends a message to a Telegram chat.
 func (s *Service) SendMessage(ctx context.Context, chatID int, message string) error {
 	url := fmt.Sprintf("%s/bot%s/sendMessage", TelegramAPIBase, s.Token)
 	body := map[string]any{
@@ -327,7 +329,7 @@ func (s *Service) SendMessage(ctx context.Context, chatID int, message string) e
 	return nil
 }
 
-// Subscribe is a placeholder for internal GraphQL subscription handling
+// Subscribe is a placeholder for internal GraphQL subscription handling.
 func (s *Service) Subscribe(ctx context.Context, chatUUID string) error {
 	if s.Logger == nil {
 		return fmt.Errorf("logger is nil")
@@ -342,7 +344,7 @@ func (s *Service) Subscribe(ctx context.Context, chatUUID string) error {
 	return nil
 }
 
-// PostMessage is a placeholder for internal GraphQL mutation handling
+// PostMessage is a placeholder for internal GraphQL mutation handling.
 func (s *Service) PostMessage(ctx context.Context, chatUUID string, message string) (interface{}, error) {
 	// TODO: This should be handled internally since this service IS the GraphQL server
 	// For now, just log that a message post was requested
@@ -356,7 +358,7 @@ func (s *Service) PostMessage(ctx context.Context, chatUUID string, message stri
 	}, nil
 }
 
-// RegisterMessageCallback registers a callback function for messages in a specific chat UUID
+// RegisterMessageCallback registers a callback function for messages in a specific chat UUID.
 func (s *Service) RegisterMessageCallback(chatUUID string, callback func(Message, string)) string {
 	s.callbacksMu.Lock()
 	defer s.callbacksMu.Unlock()
@@ -379,7 +381,7 @@ func (s *Service) RegisterMessageCallback(chatUUID string, callback func(Message
 	return callbackID
 }
 
-// UnregisterMessageCallback removes a callback for a specific chat UUID
+// UnregisterMessageCallback removes a callback for a specific chat UUID.
 func (s *Service) UnregisterMessageCallback(chatUUID string, callbackID string) {
 	s.callbacksMu.Lock()
 	defer s.callbacksMu.Unlock()
@@ -390,7 +392,7 @@ func (s *Service) UnregisterMessageCallback(chatUUID string, callbackID string) 
 	s.Logger.Info("Unregistered message callback", "chatUUID", chatUUID, "callbackID", callbackID)
 }
 
-// notifyCallbacks calls all registered callbacks for a chat UUID
+// notifyCallbacks calls all registered callbacks for a chat UUID.
 func (s *Service) notifyCallbacks(chatUUID string, message Message) {
 	s.callbacksMu.RLock()
 	callbacks := s.messageCallbacks[chatUUID]
@@ -411,12 +413,12 @@ func (s *Service) notifyCallbacks(chatUUID string, message Message) {
 	}
 }
 
-// GetChatURL generates a Telegram bot URL for a specific chat UUID
+// GetChatURL generates a Telegram bot URL for a specific chat UUID.
 func GetChatURL(botName string, chatUUID string) string {
 	return fmt.Sprintf("https://t.me/%s?start=%s", botName, chatUUID)
 }
 
-// SubscribePoller continuously polls for subscription updates
+// SubscribePoller continuously polls for subscription updates.
 func SubscribePoller(telegramService *Service, logger *log.Logger, chatUUID string) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
