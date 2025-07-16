@@ -3,7 +3,9 @@ package pg
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
+	"github.com/eternisai/enchanted-proxy/pkg/config"
 	pgdb "github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc"
 	_ "github.com/lib/pq"
 )
@@ -19,6 +21,11 @@ func InitDatabase(databaseURL string) (*Database, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+
+	db.SetMaxOpenConns(config.AppConfig.DBMaxOpenConns)
+	db.SetMaxIdleConns(config.AppConfig.DBMaxIdleConns)
+	db.SetConnMaxIdleTime(time.Duration(config.AppConfig.DBConnMaxIdleTime) * time.Minute)
+	db.SetConnMaxLifetime(time.Duration(config.AppConfig.DBConnMaxLifetime) * time.Minute)
 
 	// Test the connection
 	if err := db.Ping(); err != nil {

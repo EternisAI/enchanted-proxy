@@ -36,6 +36,20 @@ type Config struct {
 	RateLimitEnabled        bool
 	RateLimitRequestsPerDay int64
 	RateLimitLogOnly        bool // If true, only log violations, don't block.
+
+	// Database Connection Pool
+	DBMaxOpenConns    int
+	DBMaxIdleConns    int
+	DBConnMaxIdleTime int // in minutes
+	DBConnMaxLifetime int // in minutes
+
+	// Worker Pool
+	RequestTrackingWorkerPoolSize int
+	RequestTrackingBufferSize     int
+	RequestTrackingTimeoutSeconds int
+
+	// Server
+	ServerShutdownTimeoutSeconds int
 }
 
 var AppConfig *Config
@@ -91,6 +105,20 @@ func LoadConfig() {
 		RateLimitEnabled:        getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
 		RateLimitRequestsPerDay: getEnvAsInt64("RATE_LIMIT_REQUESTS_PER_DAY", 100),
 		RateLimitLogOnly:        getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
+
+		// Database Connection Pool
+		DBMaxOpenConns:    getEnvAsInt("DB_MAX_OPEN_CONNS", 15),
+		DBMaxIdleConns:    getEnvAsInt("DB_MAX_IDLE_CONNS", 5),
+		DBConnMaxIdleTime: getEnvAsInt("DB_CONN_MAX_IDLE_TIME_MINUTES", 1),
+		DBConnMaxLifetime: getEnvAsInt("DB_CONN_MAX_LIFETIME_MINUTES", 30),
+
+		// Worker Pool
+		RequestTrackingWorkerPoolSize: getEnvAsInt("REQUEST_TRACKING_WORKER_POOL_SIZE", 10),
+		RequestTrackingBufferSize:     getEnvAsInt("REQUEST_TRACKING_BUFFER_SIZE", 1000),
+		RequestTrackingTimeoutSeconds: getEnvAsInt("REQUEST_TRACKING_TIMEOUT_SECONDS", 30),
+
+		// Server
+		ServerShutdownTimeoutSeconds: getEnvAsInt("SERVER_SHUTDOWN_TIMEOUT_SECONDS", 30),
 	}
 
 	// Validate required configs
@@ -130,6 +158,17 @@ func getEnvAsInt64(key string, defaultValue int64) int64 {
 			return parsed
 		} else {
 			log.Printf("Warning: Failed to parse environment variable %s='%s' as int64, using default %d: %v", key, value, defaultValue, err)
+		}
+	}
+	return defaultValue
+}
+
+func getEnvAsInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			return parsed
+		} else {
+			log.Printf("Warning: Failed to parse environment variable %s='%s' as int, using default %d: %v", key, value, defaultValue, err)
 		}
 	}
 	return defaultValue
