@@ -92,21 +92,6 @@ func main() {
 	requestTrackingService := request_tracking.NewService(db.Queries, logger)
 	mcpService := mcp.NewService()
 
-	// Start periodic materialized view refresh for request tracking.
-	go func() {
-		ticker := time.NewTicker(30 * time.Minute)
-		defer ticker.Stop()
-		logger.Info("🔄 Starting materialized view refresh routine (every 30 minutes)")
-
-		for range ticker.C {
-			if err := requestTrackingService.RefreshMaterializedView(context.Background()); err != nil {
-				logger.Error("Failed to refresh materialized view", "error", err)
-			} else {
-				logger.Debug("📊 Materialized view refreshed successfully")
-			}
-		}
-	}()
-
 	// Initialize handlers
 	oauthHandler := oauth.NewHandler(oauthService)
 	composioHandler := composio.NewHandler(composioService)
