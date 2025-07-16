@@ -165,10 +165,6 @@ func (s *Service) GetUserRequestCountSince(ctx context.Context, userID string, s
 	return s.queries.GetUserRequestCountInTimeWindow(ctx, params)
 }
 
-func (s *Service) RefreshMaterializedView(ctx context.Context) error {
-	return s.queries.RefreshUserRequestCountsView(ctx)
-}
-
 // GetProviderFromBaseURL maps base URLs to provider names.
 func GetProviderFromBaseURL(baseURL string) string {
 	baseURL = strings.TrimRight(baseURL, "/")
