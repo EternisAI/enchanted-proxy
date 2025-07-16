@@ -102,7 +102,6 @@ func main() {
 			expiresAt, // expires_at
 			true,      // is_active
 		)
-
 		if err != nil {
 			log.Fatalf("Failed to create invite code: %v", err)
 		}
