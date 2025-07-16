@@ -128,7 +128,6 @@ func (s *Service) Start(ctx context.Context) error {
 				ErrorCode   int      `json:"error_code"`
 			}
 
-			s.Logger.Info("Received updates", "body", string(body))
 			if err := json.Unmarshal(body, &result); err != nil {
 				s.Logger.Error("Failed to decode response", "error", err)
 				time.Sleep(time.Second * 5)
@@ -293,8 +292,6 @@ func (s *Service) SendMessage(ctx context.Context, chatID int, message string) e
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-
-	s.Logger.Info("Sending message to Telegram", "url", url, "body", body)
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
