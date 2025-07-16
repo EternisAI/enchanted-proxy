@@ -10,9 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/charmbracelet/log"
@@ -409,42 +407,6 @@ func (s *Service) notifyCallbacks(chatUUID string, message Message) {
 				}()
 				cb(message, chatUUID)
 			}(callback)
-		}
-	}
-}
-
-// GetChatURL generates a Telegram bot URL for a specific chat UUID.
-func GetChatURL(botName string, chatUUID string) string {
-	return fmt.Sprintf("https://t.me/%s?start=%s", botName, chatUUID)
-}
-
-// SubscribePoller continuously polls for subscription updates.
-func SubscribePoller(telegramService *Service, logger *log.Logger, chatUUID string) {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	appCtx, appCancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer appCancel()
-
-	for {
-		select {
-		case <-ticker.C:
-			err := telegramService.Subscribe(appCtx, chatUUID)
-			if err == nil {
-				// Subscription ended normally
-			} else if errors.Is(err, ErrSubscriptionNilTextMessage) {
-				// Expected error, continue
-			} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				if appCtx.Err() != nil {
-					return
-				}
-			} else {
-				logger.Error("Subscription error", "error", err)
-			}
-
-		case <-appCtx.Done():
-			logger.Info("Stopping Telegram subscription poller due to application shutdown signal")
-			return
 		}
 	}
 }

@@ -234,7 +234,7 @@ func main() {
 	logger.Info("✅ Servers exited")
 }
 
-// Helper function to get keys from map for logging
+// Helper function to get keys from map for logging.
 func getKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
