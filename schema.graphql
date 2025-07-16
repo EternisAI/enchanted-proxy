@@ -1,0 +1,57 @@
+"""
+Telegram Message represents a message from Telegram
+"""
+type Message {
+  id: ID!
+  text: String!
+  chatId: Int!
+  chatUUID: String!
+  from: User!
+  date: Int!
+  messageId: Int!
+  role: String!
+  createdAt: String!
+}
+
+"""
+Telegram User represents a user who sent a message
+"""
+type User {
+  id: Int!
+  firstName: String!
+  lastName: String
+  username: String
+}
+
+"""
+Telegram Chat represents a Telegram chat
+"""
+type Chat {
+  id: Int!
+  type: String!
+  title: String
+  username: String
+  firstName: String
+  lastName: String
+}
+
+type Query {
+  """
+  Health check for the GraphQL API
+  """
+  health: String!
+}
+
+type Mutation {
+  """
+  Send a message to a Telegram chat identified by chatUUID
+  """
+  sendTelegramMessage(chatUUID: ID!, text: String!): Boolean!
+}
+
+type Subscription {
+  """
+  Subscribe to new messages for a specific chat UUID
+  """
+  telegramMessageAdded(chatUUID: ID!): Message!
+} 

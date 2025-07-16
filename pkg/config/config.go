@@ -36,6 +36,10 @@ type Config struct {
 	RateLimitEnabled        bool
 	RateLimitRequestsPerDay int64
 	RateLimitLogOnly        bool // If true, only log violations, don't block.
+
+	// Telegram
+	TelegramToken string
+	NatsURL       string
 }
 
 var AppConfig *Config
@@ -91,6 +95,10 @@ func LoadConfig() {
 		RateLimitEnabled:        getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
 		RateLimitRequestsPerDay: getEnvAsInt64("RATE_LIMIT_REQUESTS_PER_DAY", 100),
 		RateLimitLogOnly:        getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
+
+		// Telegram
+		TelegramToken: getEnvOrDefault("TELEGRAM_TOKEN", ""),
+		NatsURL:       getEnvOrDefault("NATS_URL", ""),
 	}
 
 	// Validate required configs
@@ -112,6 +120,10 @@ func LoadConfig() {
 
 	if AppConfig.ReplicateAPIToken == "" {
 		log.Println("Warning: Replicate API token is missing. Please set REPLICATE_API_TOKEN environment variable.")
+	}
+
+	if AppConfig.TelegramToken != "" {
+		log.Println("Telegram service enabled with token")
 	}
 
 	log.Println("Firebase project ID: ", AppConfig.FirebaseProjectID)
