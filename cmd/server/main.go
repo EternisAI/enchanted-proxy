@@ -118,11 +118,10 @@ func main() {
 	// Debug/test endpoint (no auth required)
 	router.POST("/wa", waHandler)
 
-	// MCP API routes (uses Google OAuth validation)
-	router.Any("/mcp", mcp.MCPAuthMiddleware(), mcpHandler.HandleMCPAny)
-
-	// All other routes use Firebase/JWT auth
+	// All routes use Firebase/JWT auth
 	router.Use(firebaseAuth.RequireAuth())
+
+	router.Any("/mcp", mcpHandler.HandleMCPAny)
 
 	// OAuth API routes
 	auth := router.Group("/auth")
