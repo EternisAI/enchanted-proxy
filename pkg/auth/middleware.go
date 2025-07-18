@@ -8,8 +8,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Define a custom type for context keys to avoid collisions
+type contextKey string
+
 const (
-	UserUUIDKey = "user_uuid"
+	// UserUUIDKey is the context key for user UUID
+	UserUUIDKey contextKey = "user_uuid"
 )
 
 type FirebaseAuthMiddleware struct {
@@ -58,7 +62,7 @@ func (f *FirebaseAuthMiddleware) RequireAuth() gin.HandlerFunc {
 		}
 
 		// Attach user UUID to context
-		c.Set(UserUUIDKey, userUUID)
+		c.Set(string(UserUUIDKey), userUUID)
 		c.Next()
 	}
 }
@@ -103,7 +107,7 @@ func (f *FirebaseAuthMiddleware) RequireAuthHTTP() func(http.Handler) http.Handl
 
 // GetUserUUID extracts the user UUID from the Gin context.
 func GetUserUUID(c *gin.Context) (string, bool) {
-	userUUID, exists := c.Get(UserUUIDKey)
+	userUUID, exists := c.Get(string(UserUUIDKey))
 	if !exists {
 		return "", false
 	}
