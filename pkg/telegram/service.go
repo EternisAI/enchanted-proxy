@@ -138,7 +138,6 @@ func (s *Service) Start(ctx context.Context) error {
 				s.Logger.Error("Telegram API returned error",
 					"error_code", result.ErrorCode,
 					"description", result.Description,
-					"body", string(body),
 				)
 				time.Sleep(time.Second * 5)
 				continue

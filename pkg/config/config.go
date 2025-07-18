@@ -54,6 +54,9 @@ type Config struct {
 
 	// Server
 	ServerShutdownTimeoutSeconds int
+
+	// CORS
+	CORSAllowedOrigins string
 }
 
 var AppConfig *Config
@@ -126,6 +129,9 @@ func LoadConfig() {
 
 		// Server
 		ServerShutdownTimeoutSeconds: getEnvAsInt("SERVER_SHUTDOWN_TIMEOUT_SECONDS", 30),
+
+		// CORS
+		CORSAllowedOrigins: getEnvOrDefault("CORS_ALLOWED_ORIGINS", "http://localhost:3000"),
 	}
 
 	// Validate required configs

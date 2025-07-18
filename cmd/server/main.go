@@ -164,6 +164,7 @@ func main() {
 			logger:          logger,
 			natsClient:      natsClient,
 			telegramService: telegramService,
+			firebaseAuth:    firebaseAuth,
 		})
 
 		graphqlServer = &http.Server{
@@ -381,16 +382,33 @@ type graphqlServerInput struct {
 	logger          *log.Logger
 	natsClient      *nats.Conn
 	telegramService *telegram.Service
+	firebaseAuth    *auth.FirebaseAuthMiddleware
 }
 
 func setupGraphQLServer(input graphqlServerInput) *chi.Mux {
 	router := chi.NewRouter()
+
+	// Configure CORS with configurable origins
+	allowedOrigins := []string{"http://localhost:3000"} // Default for development
+	if config.AppConfig.CORSAllowedOrigins != "" {
+		// Split comma-separated origins from environment variable
+		origins := strings.Split(config.AppConfig.CORSAllowedOrigins, ",")
+		for i, origin := range origins {
+			origins[i] = strings.TrimSpace(origin)
+		}
+		allowedOrigins = origins
+	}
+
 	router.Use(cors.New(cors.Options{
 		AllowCredentials: true,
-		AllowedOrigins:   []string{"*"},
+		AllowedOrigins:   allowedOrigins,
 		AllowedHeaders:   []string{"Authorization", "Content-Type", "Accept"},
+		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
 		Debug:            false,
 	}).Handler)
+
+	// Add authentication middleware to protect all GraphQL endpoints
+	router.Use(input.firebaseAuth.RequireAuthHTTP())
 
 	// Create the GraphQL resolver with dependencies
 	resolver := &graph.Resolver{
