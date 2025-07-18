@@ -273,11 +273,10 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	// Debug/test endpoint (no auth required)
 	router.POST("/wa", waHandler)
 
-	// MCP API routes (uses Google OAuth validation)
-	router.Any("/mcp", mcp.MCPAuthMiddleware(), input.mcpHandler.HandleMCPAny)
-
-	// All other routes use Firebase/JWT auth
+	// All routes use Firebase/JWT auth
 	router.Use(input.firebaseAuth.RequireAuth())
+
+	router.Any("/mcp", input.mcpHandler.HandleMCPAny)
 
 	// OAuth API routes
 	auth := router.Group("/auth")
