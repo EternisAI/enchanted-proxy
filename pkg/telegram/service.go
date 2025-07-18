@@ -20,6 +20,12 @@ import (
 
 var ErrSubscriptionNilTextMessage = errors.New("subscription stopped due to nil text message")
 
+// callbackEntry stores a callback function with its ID.
+type callbackEntry struct {
+	id       string
+	callback func(Message, string)
+}
+
 // Service handles Telegram bot operations.
 type Service struct {
 	Logger       *log.Logger
@@ -30,7 +36,7 @@ type Service struct {
 	queries      pgdb.Querier
 
 	// Message callbacks for direct notification when NATS is not available
-	messageCallbacks map[string][]func(Message, string) // chatUUID -> callbacks
+	messageCallbacks map[string][]callbackEntry // chatUUID -> callbacks with IDs
 	callbacksMu      sync.RWMutex
 }
 
@@ -66,7 +72,7 @@ func NewService(input TelegramServiceInput) *Service {
 		LastMessages:     []Message{},
 		NatsClient:       natsClient,
 		queries:          queries,
-		messageCallbacks: make(map[string][]func(Message, string)),
+		messageCallbacks: make(map[string][]callbackEntry),
 	}
 }
 
@@ -359,29 +365,39 @@ func (s *Service) RegisterMessageCallback(chatUUID string, callback func(Message
 	callbackID := fmt.Sprintf("callback_%d", time.Now().UnixNano())
 
 	if s.messageCallbacks[chatUUID] == nil {
-		s.messageCallbacks[chatUUID] = make([]func(Message, string), 0)
+		s.messageCallbacks[chatUUID] = make([]callbackEntry, 0)
 	}
 
-	// Wrap the callback to include the callback ID
-	wrappedCallback := func(msg Message, uuid string) {
-		callback(msg, uuid)
+	// Create a callback entry with ID
+	entry := callbackEntry{
+		id:       callbackID,
+		callback: callback,
 	}
 
-	s.messageCallbacks[chatUUID] = append(s.messageCallbacks[chatUUID], wrappedCallback)
+	s.messageCallbacks[chatUUID] = append(s.messageCallbacks[chatUUID], entry)
 	s.Logger.Info("Registered message callback", "chatUUID", chatUUID, "callbackID", callbackID)
 
 	return callbackID
 }
 
-// UnregisterMessageCallback removes a callback for a specific chat UUID.
+// UnregisterMessageCallback removes a specific callback for a chat UUID.
 func (s *Service) UnregisterMessageCallback(chatUUID string, callbackID string) {
 	s.callbacksMu.Lock()
 	defer s.callbacksMu.Unlock()
 
-	// For simplicity, we'll clear all callbacks for the chatUUID
-	// In a production system, you'd want to track callback IDs more precisely
-	delete(s.messageCallbacks, chatUUID)
-	s.Logger.Info("Unregistered message callback", "chatUUID", chatUUID, "callbackID", callbackID)
+	if callbacks, exists := s.messageCallbacks[chatUUID]; exists {
+		for i, entry := range callbacks {
+			if entry.id == callbackID {
+				s.messageCallbacks[chatUUID] = append(callbacks[:i], callbacks[i+1:]...)
+				s.Logger.Info("Unregistered message callback", "chatUUID", chatUUID, "callbackID", callbackID)
+				break
+			}
+		}
+
+		if len(s.messageCallbacks[chatUUID]) == 0 {
+			delete(s.messageCallbacks, chatUUID)
+		}
+	}
 }
 
 // notifyCallbacks calls all registered callbacks for a chat UUID.
@@ -392,7 +408,7 @@ func (s *Service) notifyCallbacks(chatUUID string, message Message) {
 
 	if len(callbacks) > 0 {
 		s.Logger.Info("Notifying message callbacks", "chatUUID", chatUUID, "callbacks", len(callbacks))
-		for _, callback := range callbacks {
+		for _, entry := range callbacks {
 			go func(cb func(Message, string)) {
 				defer func() {
 					if r := recover(); r != nil {
@@ -400,7 +416,7 @@ func (s *Service) notifyCallbacks(chatUUID string, message Message) {
 					}
 				}()
 				cb(message, chatUUID)
-			}(callback)
+			}(entry.callback)
 		}
 	}
 }
