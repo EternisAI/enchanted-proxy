@@ -111,14 +111,3 @@ func GetUserUUID(c *gin.Context) (string, bool) {
 	uuid, ok := userUUID.(string)
 	return uuid, ok
 }
-
-// GetUserUUIDFromHTTPContext extracts the user UUID from the HTTP request context.
-func GetUserUUIDFromHTTPContext(ctx context.Context) (string, bool) {
-	userUUID := ctx.Value(UserUUIDKey)
-	if userUUID == nil {
-		return "", false
-	}
-
-	uuid, ok := userUUID.(string)
-	return uuid, ok
-}
