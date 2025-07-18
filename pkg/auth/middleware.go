@@ -8,11 +8,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Define a custom type for context keys to avoid collisions
+// Define a custom type for context keys to avoid collisions.
 type contextKey string
 
 const (
-	// UserUUIDKey is the context key for user UUID
+	// UserUUIDKey is the context key for user UUID.
 	UserUUIDKey contextKey = "user_uuid"
 )
 

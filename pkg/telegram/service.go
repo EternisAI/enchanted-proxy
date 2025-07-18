@@ -148,7 +148,7 @@ func (s *Service) Start(ctx context.Context) error {
 
 				// Look up chatUUID for logging
 				chatID := update.Message.Chat.ID
-				chatUUID, hasMapping := s.GetChatUUID(chatID)
+				chatUUID, hasMapping := s.GetChatUUID(ctx, chatID)
 
 				s.Logger.Info("Received message",
 					"message_id", update.Message.MessageID,
@@ -179,7 +179,7 @@ func (s *Service) Start(ctx context.Context) error {
 					}
 
 					// Publish to NATS or notify callbacks if we have a chat mapping
-					if chatUUID, exists := s.GetChatUUID(chatID); exists {
+					if chatUUID, exists := s.GetChatUUID(ctx, chatID); exists {
 						if s.NatsClient != nil {
 							// Publish to NATS if available
 							subject := fmt.Sprintf("telegram.chat.%s", chatUUID)
@@ -234,13 +234,12 @@ func (s *Service) CreateChat(ctx context.Context, chatID int, chatUUID string) (
 }
 
 // GetChatUUID returns the UUID for a given chat ID.
-func (s *Service) GetChatUUID(chatID int) (string, bool) {
+func (s *Service) GetChatUUID(ctx context.Context, chatID int) (string, bool) {
 	if s.queries == nil {
 		s.Logger.Error("Database queries not available")
 		return "", false
 	}
 
-	ctx := context.Background()
 	chat, err := s.queries.GetTelegramChatByChatID(ctx, int64(chatID))
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -254,13 +253,12 @@ func (s *Service) GetChatUUID(chatID int) (string, bool) {
 }
 
 // GetChatIDByUUID returns the chat ID for a given UUID.
-func (s *Service) GetChatIDByUUID(chatUUID string) (int, bool) {
+func (s *Service) GetChatIDByUUID(ctx context.Context, chatUUID string) (int, bool) {
 	if s.queries == nil {
 		s.Logger.Error("Database queries not available")
 		return 0, false
 	}
 
-	ctx := context.Background()
 	chat, err := s.queries.GetTelegramChatByChatUUID(ctx, chatUUID)
 	if err != nil {
 		if err == sql.ErrNoRows {
