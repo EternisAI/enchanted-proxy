@@ -8,12 +8,10 @@ CREATE TABLE IF NOT EXISTS telegram_chats (
 );
 
 -- Indexes for efficient queries
-CREATE INDEX IF NOT EXISTS idx_telegram_chats_chat_id ON telegram_chats (chat_id);
 CREATE INDEX IF NOT EXISTS idx_telegram_chats_chat_uuid ON telegram_chats (chat_uuid);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_chats_chat_id_unique ON telegram_chats (chat_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_chats_chat_id ON telegram_chats (chat_id);
 
 -- +goose Down
-DROP INDEX IF EXISTS idx_telegram_chats_chat_id_unique;
 DROP INDEX IF EXISTS idx_telegram_chats_chat_uuid;
 DROP INDEX IF EXISTS idx_telegram_chats_chat_id;
 DROP TABLE IF EXISTS telegram_chats; 
