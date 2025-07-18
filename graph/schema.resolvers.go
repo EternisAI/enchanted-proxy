@@ -27,7 +27,7 @@ func (r *mutationResolver) SendTelegramMessage(ctx context.Context, chatUUID str
 	}
 
 	// Look up the Telegram chat ID from the chatUUID
-	chatID, exists := r.TelegramService.GetChatIDByUUID(chatUUID)
+	chatID, exists := r.TelegramService.GetChatIDByUUID(ctx, chatUUID)
 	if !exists {
 		return false, fmt.Errorf("no chat found for UUID %s", chatUUID)
 	}
