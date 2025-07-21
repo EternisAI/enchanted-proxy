@@ -37,9 +37,9 @@ import (
 )
 
 var allowedBaseURLs = map[string]string{
-	"https://openrouter.ai/api/v1":                  os.Getenv("OPENROUTER_API_KEY"),
-	"https://api.openai.com/v1":                     os.Getenv("OPENAI_API_KEY"),
-	"https://audio-processing.model.tinfoil.sh/v1/": os.Getenv("TINFOIL_API_KEY"),
+	"https://openrouter.ai/api/v1":     os.Getenv("OPENROUTER_API_KEY"),
+	"https://api.openai.com/v1":        os.Getenv("OPENAI_API_KEY"),
+	"https://inference.tinfoil.sh/v1/": os.Getenv("TINFOIL_API_KEY"),
 }
 
 func getAPIKey(baseURL string, config *config.Config) string {
@@ -48,7 +48,7 @@ func getAPIKey(baseURL string, config *config.Config) string {
 		return config.OpenRouterAPIKey
 	case "https://api.openai.com/v1":
 		return config.OpenAIAPIKey
-	case "https://audio-processing.model.tinfoil.sh/v1":
+	case "https://inference.tinfoil.sh/v1":
 		return config.TinfoilAPIKey
 	}
 	return ""
