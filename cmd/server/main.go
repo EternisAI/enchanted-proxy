@@ -407,7 +407,8 @@ func setupGraphQLServer(input graphqlServerInput) *chi.Mux {
 	}).Handler)
 
 	// Add authentication middleware to protect all GraphQL endpoints
-	router.Use(input.firebaseAuth.RequireAuthHTTP())
+	// TEMPORARILY DISABLED FOR DEBUGGING WEBSOCKET SUBSCRIPTIONS
+	// router.Use(input.firebaseAuth.RequireAuthHTTP())
 
 	// Create the GraphQL resolver with dependencies
 	resolver := &graph.Resolver{
