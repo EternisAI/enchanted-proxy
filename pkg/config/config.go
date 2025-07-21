@@ -37,6 +37,10 @@ type Config struct {
 	RateLimitRequestsPerDay int64
 	RateLimitLogOnly        bool // If true, only log violations, don't block.
 
+	// Telegram
+	TelegramToken string
+	NatsURL       string
+
 	// Database Connection Pool
 	DBMaxOpenConns    int
 	DBMaxIdleConns    int
@@ -50,6 +54,9 @@ type Config struct {
 
 	// Server
 	ServerShutdownTimeoutSeconds int
+
+	// CORS
+	CORSAllowedOrigins string
 }
 
 var AppConfig *Config
@@ -106,6 +113,9 @@ func LoadConfig() {
 		RateLimitRequestsPerDay: getEnvAsInt64("RATE_LIMIT_REQUESTS_PER_DAY", 100),
 		RateLimitLogOnly:        getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
 
+		// Telegram
+		TelegramToken: getEnvOrDefault("TELEGRAM_TOKEN", ""),
+		NatsURL:       getEnvOrDefault("NATS_URL", ""),
 		// Database Connection Pool
 		DBMaxOpenConns:    getEnvAsInt("DB_MAX_OPEN_CONNS", 15),
 		DBMaxIdleConns:    getEnvAsInt("DB_MAX_IDLE_CONNS", 5),
@@ -119,6 +129,9 @@ func LoadConfig() {
 
 		// Server
 		ServerShutdownTimeoutSeconds: getEnvAsInt("SERVER_SHUTDOWN_TIMEOUT_SECONDS", 30),
+
+		// CORS
+		CORSAllowedOrigins: getEnvOrDefault("CORS_ALLOWED_ORIGINS", "http://localhost:3000"),
 	}
 
 	// Validate required configs
@@ -140,6 +153,10 @@ func LoadConfig() {
 
 	if AppConfig.ReplicateAPIToken == "" {
 		log.Println("Warning: Replicate API token is missing. Please set REPLICATE_API_TOKEN environment variable.")
+	}
+
+	if AppConfig.TelegramToken != "" {
+		log.Println("Telegram service enabled with token")
 	}
 
 	log.Println("Firebase project ID: ", AppConfig.FirebaseProjectID)

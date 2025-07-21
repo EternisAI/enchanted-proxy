@@ -13,3 +13,7 @@ test:
 
 sqlc:
 	sqlc generate
+
+deadcode:
+	@echo "=== Checking for transitively dead functions ==="
+	@go run golang.org/x/tools/cmd/deadcode@latest -test ./...

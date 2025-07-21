@@ -13,11 +13,16 @@ type Querier interface {
 	CountInviteCodesByRedeemedBy(ctx context.Context, redeemedBy *string) (int64, error)
 	CreateInviteCode(ctx context.Context, arg CreateInviteCodeParams) (InviteCode, error)
 	CreateRequestLog(ctx context.Context, arg CreateRequestLogParams) error
+	CreateTelegramChat(ctx context.Context, arg CreateTelegramChatParams) (TelegramChat, error)
+	DeleteTelegramChat(ctx context.Context, chatID int64) error
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
 	GetInviteCodeByCodeHash(ctx context.Context, codeHash string) (InviteCode, error)
 	GetInviteCodeByID(ctx context.Context, id int64) (InviteCode, error)
+	GetTelegramChatByChatID(ctx context.Context, chatID int64) (TelegramChat, error)
+	GetTelegramChatByChatUUID(ctx context.Context, chatUuid string) (TelegramChat, error)
 	GetUserRequestCountInLastDay(ctx context.Context, userID string) (int64, error)
 	GetUserRequestCountInTimeWindow(ctx context.Context, arg GetUserRequestCountInTimeWindowParams) (int64, error)
+	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
 	RefreshUserRequestCountsView(ctx context.Context) error
 	ResetInviteCode(ctx context.Context, codeHash string) error
 	SoftDeleteInviteCode(ctx context.Context, id int64) error

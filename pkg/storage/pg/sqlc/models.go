@@ -33,6 +33,14 @@ type RequestLog struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+type TelegramChat struct {
+	ID        int64     `json:"id"`
+	ChatID    int64     `json:"chatId"`
+	ChatUuid  string    `json:"chatUuid"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 type UserRequestCountsDaily struct {
 	UserID       string    `json:"userId"`
 	DayBucket    time.Time `json:"dayBucket"`
