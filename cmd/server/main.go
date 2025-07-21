@@ -123,27 +123,31 @@ func main() {
 
 	// Initialize Telegram service if token is provided
 	var telegramService *telegram.Service
-	if config.AppConfig.TelegramToken != "" {
-		telegramInput := telegram.TelegramServiceInput{
-			Logger:     logger,
-			Token:      config.AppConfig.TelegramToken,
-			Store:      db,
-			Queries:    db.Queries,
-			NatsClient: natsClient,
-		}
-		telegramService = telegram.NewService(telegramInput)
-
-		// Start Telegram polling in background
-		go func() {
-			ctx := context.Background()
-			if err := telegramService.Start(ctx); err != nil {
-				logger.Error("Telegram service failed", "error", err)
+	if config.AppConfig.EnableTelegramServer {
+		if config.AppConfig.TelegramToken != "" {
+			telegramInput := telegram.TelegramServiceInput{
+				Logger:     logger,
+				Token:      config.AppConfig.TelegramToken,
+				Store:      db,
+				Queries:    db.Queries,
+				NatsClient: natsClient,
 			}
-		}()
+			telegramService = telegram.NewService(telegramInput)
 
-		logger.Info("Telegram service initialized and started")
+			// Start Telegram polling in background
+			go func() {
+				ctx := context.Background()
+				if err := telegramService.Start(ctx); err != nil {
+					logger.Error("Telegram service failed", "error", err)
+				}
+			}()
+
+			logger.Info("Telegram service initialized and started")
+		} else {
+			logger.Warn("No Telegram token provided, Telegram service disabled")
+		}
 	} else {
-		logger.Warn("No Telegram token provided, Telegram service disabled")
+		logger.Info("Telegram service disabled")
 	}
 
 	// Initialize REST API router (original proxy functionality)

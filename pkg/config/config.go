@@ -38,8 +38,9 @@ type Config struct {
 	RateLimitLogOnly        bool // If true, only log violations, don't block.
 
 	// Telegram
-	TelegramToken string
-	NatsURL       string
+	EnableTelegramServer bool
+	TelegramToken        string
+	NatsURL              string
 
 	// Database Connection Pool
 	DBMaxOpenConns    int
@@ -114,8 +115,10 @@ func LoadConfig() {
 		RateLimitLogOnly:        getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
 
 		// Telegram
-		TelegramToken: getEnvOrDefault("TELEGRAM_TOKEN", ""),
-		NatsURL:       getEnvOrDefault("NATS_URL", ""),
+		EnableTelegramServer: getEnvOrDefault("ENABLE_TELEGRAM_SERVER", "true") == "true",
+		TelegramToken:        getEnvOrDefault("TELEGRAM_TOKEN", ""),
+		NatsURL:              getEnvOrDefault("NATS_URL", ""),
+
 		// Database Connection Pool
 		DBMaxOpenConns:    getEnvAsInt("DB_MAX_OPEN_CONNS", 15),
 		DBMaxIdleConns:    getEnvAsInt("DB_MAX_IDLE_CONNS", 5),
