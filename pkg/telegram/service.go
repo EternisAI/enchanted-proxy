@@ -76,14 +76,57 @@ func NewService(input TelegramServiceInput) *Service {
 	}
 }
 
+// GetBotInfo retrieves information about the bot.
+func (s *Service) GetBotInfo(ctx context.Context) (*User, error) {
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/getMe", s.Token)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		OK          bool   `json:"ok"`
+		Result      User   `json:"result"`
+		Description string `json:"description"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if !result.OK {
+		return nil, fmt.Errorf("telegram API error: %s", result.Description)
+	}
+
+	return &result.Result, nil
+}
+
 // Start begins polling for Telegram updates.
 func (s *Service) Start(ctx context.Context) error {
 	if s.Token == "" {
 		return fmt.Errorf("telegram token not set")
 	}
 
+	// Get and log bot information
+	botInfo, err := s.GetBotInfo(ctx)
+	if err != nil {
+		s.Logger.Warn("Failed to get bot info", "error", err)
+	} else {
+		s.Logger.Info("Starting telegram service",
+			"bot_username", botInfo.Username,
+			"bot_first_name", botInfo.FirstName,
+			"bot_id", botInfo.ID,
+		)
+	}
+
 	lastUpdateID := 0
-	s.Logger.Info("Starting telegram service")
 
 	for {
 		select {
@@ -171,13 +214,23 @@ func (s *Service) Start(ctx context.Context) error {
 
 					// Check for /start command with UUID
 					if _, err := fmt.Sscanf(update.Message.Text, "/start %s", &chatUUID); err == nil {
-						s.Logger.Info("Creating chat", "chat_id", chatID, "uuid", chatUUID)
+						username := update.Message.From.Username
+						if username == "" {
+							username = fmt.Sprintf("%s %s", update.Message.From.FirstName, update.Message.From.LastName)
+						}
+						s.Logger.Info("User starting chat",
+							"chat_id", chatID,
+							"uuid", chatUUID,
+							"username", username,
+							"user_id", update.Message.From.ID,
+						)
 						_, err := s.CreateChat(ctx, chatID, chatUUID)
 						if err != nil {
 							s.Logger.Error("Failed to create chat", "error", err)
 							continue
 						}
-						err = s.SendMessage(ctx, chatID, "Send any message to start the conversation")
+						welcomeMsg := fmt.Sprintf("Welcome %s! Send any message to start the conversation", username)
+						err = s.SendMessage(ctx, chatID, welcomeMsg)
 						if err != nil {
 							s.Logger.Error("Failed to send message", "error", err)
 							continue
