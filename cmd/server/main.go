@@ -378,7 +378,16 @@ func proxyHandler(c *gin.Context) {
 		r.Header.Del("X-BASE-URL") // Remove our custom header before forwarding
 	}
 
-	proxy.ServeHTTP(c.Writer, c.Request)
+	// Some cancelled requests by clients could cause panic.
+	// We handle that gracefully.
+	// See: https://github.com/gin-gonic/gin/issues/2279
+	select {
+	case <-c.Request.Context().Done():
+		log.Printf("🚫 Client canceled request to %s", target.String())
+		return
+	default:
+		proxy.ServeHTTP(c.Writer, c.Request)
+	}
 }
 
 type graphqlServerInput struct {
