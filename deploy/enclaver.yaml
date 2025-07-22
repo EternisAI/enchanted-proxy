@@ -1,0 +1,78 @@
+version: v1
+name: enchanted-proxy/server
+target: public.ecr.aws/f5z1z8p0/enchanted-proxy/server:${version}
+sources:
+  app: public.ecr.aws/f5z1z8p0/enchanted-proxy/base/server:${version}@${digest}
+  supervisor: public.ecr.aws/f5z1z8p0/odyn:v0.5.0-eternis.1@sha256:adf222a24daea6ca5bcb1d1296079efb17860c23a19af9b83e09640119ad8d5f
+  wrapper: public.ecr.aws/f5z1z8p0/enclaver-wrapper-base:v0.5.0-eternis.1@sha256:1300cc911bbaac45fc6474cfd99e95af75ad34fab82701e700a2e51c50c16f5e
+defaults:
+  cpu_count: 2
+  memory_mb: 2048
+api:
+  listen_port: 9900
+ingress:
+# TLS ingress Proxy API endpoint
+- listen_port: 8180
+# TLS ingress Telegram API endpoint
+- listen_port: 8181
+# Prometheus Node Exporter metrics API
+- listen_port: 9100
+# TLS ingress proxy status endpoint
+- listen_port: 9101
+egress:
+  allow:
+  # API client enpdoints
+  - api.telegram.org
+  - backend.composio.dev
+  # MCP API client endpoints
+  - api.perplexity.ai
+  - api.replicate.com
+  - www.googleapis.com
+  # OAuth API client endpoints
+  - api.twitter.com
+  - oauth2.googleapis.com
+  - slack.com
+  # Proxied API endpoints
+  - api.openai.com
+  - inference.tinfoil.sh
+  - openrouter.ai
+  # aws-0-us-east-2.pooler.supabase.com
+  - 3.13.175.194
+  - 3.139.14.59
+env:
+- COMPOSIO_API_KEY
+- COMPOSIO_TWITTER_CONFIG
+- CORS_ALLOWED_ORIGINS
+- DATABASE_URL
+- DB_CONN_MAX_IDLE_TIME_MINUTES
+- DB_CONN_MAX_LIFETIME_MINUTES
+- DB_MAX_IDLE_CONNS
+- DB_MAX_OPEN_CONNS
+- FIREBASE_CRED_JSON
+- FIREBASE_PROJECT_ID
+- GIN_MODE
+- GOOGLE_CLIENT_ID
+- GOOGLE_CLIENT_SECRET
+- JWT_JWKS_URL
+- NATS_URL
+- OPENAI_API_KEY
+- OPENROUTER_API_KEY
+- PERPLEXITY_API_KEY
+- PORT
+- RATE_LIMIT_ENABLED
+- RATE_LIMIT_LOG_ONLY
+- RATE_LIMIT_REQUESTS_PER_DAY
+- REPLICATE_API_TOKEN
+- REQUEST_TRACKING_BUFFER_SIZE
+- REQUEST_TRACKING_TIMEOUT_SECONDS
+- REQUEST_TRACKING_WORKER_POOL_SIZE
+- SERVER_SHUTDOWN_TIMEOUT_SECONDS
+- SLACK_CLIENT_ID
+- SLACK_CLIENT_SECRET
+- TELEGRAM_TOKEN
+- TINFOIL_API_KEY
+- TWITTER_CLIENT_ID
+- VALIDATOR_TYPE
+files:
+- /var/run/secrets/tls/tls.crt
+- /var/run/secrets/tls/tls.key

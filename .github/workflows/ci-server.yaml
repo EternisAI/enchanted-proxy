@@ -1,0 +1,252 @@
+name: '[CI] Server'
+
+on:
+  push:
+    branches:
+    - main
+    - production
+    - ci/test
+    tags:
+    - v*.*.*
+    paths:
+    - '!*'
+    - go.mod
+    - go.sum
+    - cmd/server/**
+    - deploy/**
+    - graph/**
+    - pkg/**
+
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow_ref }}-${{ github.ref_type == 'tag' && 'refs/heads/production' || github.ref }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' && github.ref_name != 'production' }}
+
+jobs:
+  build:
+    name: Build Enclave Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    outputs:
+      tag: ${{ steps.enclave-meta.outputs.version }}
+      digest: ${{ steps.push-enclave-image.outputs.digest }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+    - name: Get App Image Ref
+      id: app-image
+      run: |
+        IMAGE="$(yq -r .sources.app deploy/enclaver.yaml)"
+        IMAGE="${IMAGE%:*}"
+        test -n "$IMAGE"
+        echo "ref=$IMAGE" | tee -a "$GITHUB_OUTPUT"
+
+    - name: Get Enclave Image Ref
+      id: enclave-image
+      run: |
+        IMAGE="$(yq -r .target deploy/enclaver.yaml)"
+        IMAGE="${IMAGE%:*}"
+        test -n "$IMAGE"
+        echo "ref=$IMAGE" | tee -a "$GITHUB_OUTPUT"
+
+    - name: Docker Meta (App Image)
+      id: app-meta
+      uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+      with:
+        images: |
+          ${{ steps.app-image.outputs.ref }}
+        tags: |
+          type=sha
+
+    - name: Docker Meta (Enclave Image)
+      id: enclave-meta
+      uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+      with:
+        images: |
+          ${{ steps.enclave-image.outputs.ref }}
+        tags: |
+          type=sha
+          type=semver,pattern={{raw}}
+
+    - name: Install Cosign
+      uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+
+    - name: Get Cosign OIDC Token
+      id: cosign-token
+      run: |
+        OIDC_TOKEN="$(
+          curl -sSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sigstore" | jq -r .value
+        )"
+        test -n "$OIDC_TOKEN"
+        echo "::add-mask::$OIDC_TOKEN"
+        echo "token=$OIDC_TOKEN" >> $GITHUB_OUTPUT
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d116df # v4.2.1
+      with:
+        aws-region: us-east-1
+        role-to-assume: arn:aws:iam::314146293458:role/github-ci-enchanted-proxy
+
+    - name: Log in to AWS Public ECR
+      uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
+      with:
+        registry-type: public
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+    - name: Build App Image
+      id: build-app-image
+      uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+      with:
+        context: .
+        file: cmd/server/Dockerfile.enclave
+        tags: ${{ steps.app-meta.outputs.tags }}
+        labels: ${{ steps.app-meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        push: true
+        build-args: |
+          ENCLAVE_BUILD_ID="${{ github.sha }}"
+          ENCLAVE_BUILD_VERSION="${{ steps.app-meta.outputs.version }}"
+          ENCLAVE_PROVENANCE_PATH="enchanted-proxy/server"
+
+    - name: Cosign App Image
+      run: >-
+        cosign sign --yes --identity-token "$COSIGN_OIDC_TOKEN"
+        "${{ steps.app-image.outputs.ref }}@${{ steps.build-app-image.outputs.digest }}"
+      env:
+        COSIGN_OIDC_TOKEN: ${{ steps.cosign-token.outputs.token }}
+
+    - name: Verify Enclaver Odyn Image
+      run: |
+        ODYN_IMAGE="$(yq -r .sources.supervisor deploy/enclaver.yaml)"
+        test -n "$ODYN_IMAGE"
+        ODYN_IMAGE_TAG="${ODYN_IMAGE#*:}"
+        ODYN_IMAGE_TAG="${ODYN_IMAGE_TAG%@*}"
+        if [ "${ODYN_IMAGE_TAG:0:1}" == "v" ]; then
+          IDENTITY="https://github.com/${{ github.repository_owner }}/enclaver/.github/workflows/release.yaml@refs/tags/$ODYN_IMAGE_TAG"
+        elif [ "${ODYN_IMAGE_TAG:0:3}" == "sha" ]; then
+          IDENTITY="https://github.com/${{ github.repository_owner }}/enclaver/.github/workflows/release.yaml@refs/heads/eternis"
+        else
+          exit 1
+        fi
+        cosign verify "$ODYN_IMAGE" \
+          --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+          --certificate-identity "$IDENTITY"
+
+    - name: Verify Enclaver Wrapper Base Image
+      run: |
+        WRAPPER_BASE_IMAGE="$(yq -r .sources.wrapper deploy/enclaver.yaml)"
+        test -n "$WRAPPER_BASE_IMAGE"
+        WRAPPER_BASE_IMAGE_TAG="${WRAPPER_BASE_IMAGE#*:}"
+        WRAPPER_BASE_IMAGE_TAG="${WRAPPER_BASE_IMAGE_TAG%@*}"
+        if [ "${WRAPPER_BASE_IMAGE_TAG:0:1}" == "v" ]; then
+          IDENTITY="https://github.com/${{ github.repository_owner }}/enclaver/.github/workflows/release.yaml@refs/tags/$WRAPPER_BASE_IMAGE_TAG"
+        elif [ "${WRAPPER_BASE_IMAGE_TAG:0:3}" == "sha" ]; then
+          IDENTITY="https://github.com/${{ github.repository_owner }}/enclaver/.github/workflows/release.yaml@refs/heads/eternis"
+        else
+          exit 1
+        fi
+        cosign verify "$WRAPPER_BASE_IMAGE" \
+          --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+          --certificate-identity "$IDENTITY"
+
+    - name: Verify Enclaver CLI Image
+      id: enclaver-cli
+      run: |
+        CLI_IMAGE="public.ecr.aws/f5z1z8p0/enclaver:v0.5.0-eternis.1@sha256:79bfa2fc31f9434a436c6a8c22ebcf9f6cb3da105bbd0414821e6624715a3fb3"
+        cosign verify "$CLI_IMAGE" \
+          --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+          --certificate-identity "https://github.com/${{ github.repository_owner }}/enclaver/.github/workflows/release.yaml@refs/tags/v0.5.0-eternis.1"
+        echo "image=$CLI_IMAGE" | tee -a "$GITHUB_OUTPUT"
+
+    - name: Prepare Enclaver Manifest
+      run: |
+        sed -i -e 's/\${version}/${{ steps.app-meta.outputs.version }}/g' deploy/enclaver.yaml
+        sed -i -e 's/\${digest}/${{ steps.build-app-image.outputs.digest }}/g' deploy/enclaver.yaml
+
+    - name: Build Enclave Image
+      id: build-enclave-image
+      run: |
+        docker create --name enclaver "${{ steps.enclaver-cli.outputs.image }}"
+        docker cp enclaver:/usr/local/bin/enclaver /usr/local/bin/enclaver
+        enclaver build -f deploy/enclaver.yaml | tail -n '+4' > "${{ runner.temp }}/measurements.json"
+
+        IMAGE="$(yq -r .target deploy/enclaver.yaml)"
+        echo "image=$IMAGE" | tee -a "$GITHUB_OUTPUT"
+
+        DIGEST="$(docker image inspect "$IMAGE" | jq -r .[0].Id)"
+        echo "digest=$DIGEST" | tee -a "$GITHUB_OUTPUT"
+
+        PCR0="$(jq -r .Measurements.PCR0 "${{ runner.temp }}/measurements.json")"
+        test -n "$PCR0"
+        echo "pcr0=$PCR0" | tee -a "$GITHUB_OUTPUT"
+
+        PCR1="$(jq -r .Measurements.PCR1 "${{ runner.temp }}/measurements.json")"
+        test -n "$PCR1"
+        echo "pcr1=$PCR1" | tee -a "$GITHUB_OUTPUT"
+
+        PCR2="$(jq -r .Measurements.PCR2 "${{ runner.temp }}/measurements.json")"
+        test -n "$PCR2"
+        echo "pcr2=$PCR2" | tee -a "$GITHUB_OUTPUT"
+
+    - name: Tag and Push Enclave Image
+      id: push-enclave-image
+      run: |
+        for tag in ${{ steps.enclave-meta.outputs.tags }}
+        do
+          docker tag "${{ steps.build-enclave-image.outputs.image }}" "$tag"
+          docker push "$tag"
+        done
+        DIGEST="$(skopeo inspect "docker://$tag" | jq -r .Digest)"
+        test -n "$DIGEST"
+        echo "digest=$DIGEST" | tee -a "$GITHUB_OUTPUT"
+
+    - name: Cosign Enclave Image
+      run: >-
+        cosign sign --yes --identity-token "$COSIGN_OIDC_TOKEN"
+        -a awsNitroEnclavePCR0="${{ steps.build-enclave-image.outputs.pcr0 }}"
+        -a awsNitroEnclavePCR1="${{ steps.build-enclave-image.outputs.pcr1 }}"
+        -a awsNitroEnclavePCR2="${{ steps.build-enclave-image.outputs.pcr2 }}"
+        "${{ steps.build-enclave-image.outputs.image }}@${{ steps.push-enclave-image.outputs.digest }}"
+      env:
+        COSIGN_OIDC_TOKEN: ${{ steps.cosign-token.outputs.token }}
+
+    - name: Upload Enclave Measurements
+      run: >-
+        aws s3 cp --sse AES256 --endpoint-url https://s3.us-east-1.amazonaws.com
+        --cache-control max-age=86400 --content-type "application/json"
+        "${{ runner.temp }}/measurements.json"
+        "s3://provenance.eternis.ai/enchanted-proxy/server/${SHA:0:2}/${SHA:2:2}/${SHA:4:2}/$SHA"
+      env:
+        SHA: ${{ github.sha }}
+
+  deploy:
+    name: Trigger Deployment
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - name: Authenticate
+      run: >-
+        echo "${{ secrets.DEPLOYMENT_PAT }}" | gh auth login --with-token
+
+    - name: Trigger Deployment Workflow
+      run: >-
+        gh workflow run
+        enchanted-proxy.yaml
+        --repo EternisAI/gitops-apps
+        --ref main
+        --field component=server
+        --field actor="${{ github.actor }}"
+        --field actor_id=${{ github.actor_id }}
+        --field ref_type=branch
+        --field ref_name=main
+        --field tag="${{ needs.build.outputs.tag }}"
+        --field digest="${{ needs.build.outputs.digest }}"

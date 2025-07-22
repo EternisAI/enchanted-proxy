@@ -1,0 +1,55 @@
+# Build stage
+FROM golang:1.24.5-alpine3.22@sha256:48ee313931980110b5a91bbe04abdf640b9a67ca5dea3a620f01bacf50593396 AS builder
+
+# Set working directory
+WORKDIR /app
+
+# Install git and other dependencies needed for building
+RUN apk add --no-cache git ca-certificates tzdata
+
+# Copy go mod files first for better caching
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the server binary
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server cmd/server/main.go
+
+# Fetch Prometheus Node Exporter
+FROM quay.io/prometheus/node-exporter:v1.9.1@sha256:d00a542e409ee618a4edc67da14dd48c5da66726bbd5537ab2af9c1dfc442c8a AS node_exporter
+
+# Build procfusion
+FROM rust:1.88.0-alpine3.22@sha256:63985230b69fbd90528857dabf261379eb47f285ccc69f577d17c3dfde721deb AS procfusion
+WORKDIR /root
+RUN apk add --no-cache git musl-dev
+# v0.2.2
+ARG PROCFUSION_COMMIT_SHA=8ad0f381b4608853a4ff370fb93aa3eb56eeede4
+ENV PROCFUSION_COMMIT_SHA=${PROCFUSION_COMMIT_SHA}
+RUN git clone --depth 1 https://github.com/linkdd/procfusion.git && \
+    cd procfusion && \
+    git fetch --depth 1 origin "$PROCFUSION_COMMIT_SHA" && \
+    git checkout "$PROCFUSION_COMMIT_SHA"
+RUN cargo build --release --manifest-path /root/procfusion/Cargo.toml
+
+# Runtime stage
+FROM envoyproxy/envoy:v1.34.3@sha256:2e42b6a1e48d92e3c022e58d99bc2134c4b34495c3fb13d38ff9481660d94c9b
+RUN apt -qq update && \
+    apt install -y --no-install-recommends \
+        ca-certificates dnsmasq iproute2 netcat-openbsd \
+    && apt clean && find /var/lib/apt/lists -type f -size +0 -delete
+COPY deploy/envoy.yaml /etc/envoy/envoy.yaml
+COPY deploy/hosts /etc/hosts.enclave
+COPY deploy/procfusion.toml /etc/procfusion/config.toml
+COPY deploy/server.sh /usr/local/bin/server.sh
+COPY --from=node_exporter /bin/node_exporter /usr/local/bin/node_exporter
+#COPY --from=procfusion /root/procfusion-v0.2.2-x86_64-unknown-linux-musl/procfusion /usr/local/bin/procfusion
+COPY --from=procfusion /root/procfusion/target/release/procfusion /usr/local/bin/procfusion
+COPY --from=builder /app/server /usr/local/bin/server
+ENTRYPOINT ["procfusion", "/etc/procfusion/config.toml"]
+CMD []
+ARG ENCLAVE_BUILD_ID ENCLAVE_BUILD_VERSION ENCLAVE_PROVENANCE_PATH
+ENV ENCLAVE_BUILD_ID=$ENCLAVE_BUILD_ID ENCLAVE_BUILD_VERSION=$ENCLAVE_BUILD_VERSION ENCLAVE_PROVENANCE_PATH=$ENCLAVE_PROVENANCE_PATH
