@@ -30,7 +30,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      packages: write
     outputs:
       tag: ${{ steps.enclave-meta.outputs.version }}
       digest: ${{ steps.push-enclave-image.outputs.digest }}
@@ -101,6 +100,13 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
+    - name: Verify Attestation Proxy Image
+      run: |
+        IMAGE="$(grep 'FROM .*attestation-proxy' cmd/server/Dockerfile.enclave | cut -f2 -d' ')"
+        cosign verify "$IMAGE" \
+          --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+          --certificate-identity "https://github.com/${{ github.repository_owner }}/attestation-proxy/.github/workflows/ci-server.yaml@refs/heads/main"
+
     - name: Build App Image
       id: build-app-image
       uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
@@ -113,9 +119,9 @@ jobs:
         cache-to: type=gha,mode=max
         push: true
         build-args: |
-          ENCLAVE_BUILD_ID="${{ github.sha }}"
-          ENCLAVE_BUILD_VERSION="${{ steps.app-meta.outputs.version }}"
-          ENCLAVE_PROVENANCE_PATH="enchanted-proxy/server"
+          ENCLAVE_BUILD_ID=${{ github.sha }}
+          ENCLAVE_BUILD_VERSION=${{ steps.app-meta.outputs.version }}
+          ENCLAVE_PROVENANCE_PATH=enchanted-proxy/server
 
     - name: Cosign App Image
       run: >-

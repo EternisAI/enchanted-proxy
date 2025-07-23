@@ -35,6 +35,9 @@ RUN git clone --depth 1 https://github.com/linkdd/procfusion.git && \
     git checkout "$PROCFUSION_COMMIT_SHA"
 RUN cargo build --release --manifest-path /root/procfusion/Cargo.toml
 
+# Fetch attestation-proxy
+FROM public.ecr.aws/f5z1z8p0/attestation-proxy/server:sha-042634d@sha256:4cf287618a63ea6bce2519819d58775bcbd9bf6ff6908c0988330631730f92a0 AS attestation_proxy
+
 # Runtime stage
 FROM envoyproxy/envoy:v1.34.3@sha256:2e42b6a1e48d92e3c022e58d99bc2134c4b34495c3fb13d38ff9481660d94c9b
 RUN apt -qq update && \
@@ -46,8 +49,8 @@ COPY deploy/hosts /etc/hosts.enclave
 COPY deploy/procfusion.toml /etc/procfusion/config.toml
 COPY deploy/server.sh /usr/local/bin/server.sh
 COPY --from=node_exporter /bin/node_exporter /usr/local/bin/node_exporter
-#COPY --from=procfusion /root/procfusion-v0.2.2-x86_64-unknown-linux-musl/procfusion /usr/local/bin/procfusion
 COPY --from=procfusion /root/procfusion/target/release/procfusion /usr/local/bin/procfusion
+COPY --from=attestation_proxy /server /usr/local/bin/attestation-proxy
 COPY --from=builder /app/server /usr/local/bin/server
 ENTRYPOINT ["procfusion", "/etc/procfusion/config.toml"]
 CMD []

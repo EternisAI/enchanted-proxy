@@ -1,3 +1,6 @@
+[processes.attestation]
+command = "attestation-proxy -c /var/run/secrets/tls/tls.crt -k /var/run/secrets/tls/tls.key"
+
 [processes.dnsmasq]
 command = "dnsmasq -dhR -H /etc/hosts.enclave -a 127.0.0.1 -A /./127.0.0.1"
 
