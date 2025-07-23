@@ -18,12 +18,12 @@ import (
 	"github.com/99designs/gqlgen/graphql/handler/extension"
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/99designs/gqlgen/graphql/playground"
-	"github.com/charmbracelet/log"
 	"github.com/eternisai/enchanted-proxy/graph"
 	"github.com/eternisai/enchanted-proxy/pkg/auth"
 	"github.com/eternisai/enchanted-proxy/pkg/composio"
 	"github.com/eternisai/enchanted-proxy/pkg/config"
 	"github.com/eternisai/enchanted-proxy/pkg/invitecode"
+	"github.com/eternisai/enchanted-proxy/pkg/logger"
 	"github.com/eternisai/enchanted-proxy/pkg/mcp"
 	"github.com/eternisai/enchanted-proxy/pkg/oauth"
 	"github.com/eternisai/enchanted-proxy/pkg/request_tracking"
@@ -54,58 +54,64 @@ func getAPIKey(baseURL string, config *config.Config) string {
 	return ""
 }
 
-func waHandler(c *gin.Context) {
-	body, err := c.GetRawData()
-	if err != nil {
-		log.Printf("Error reading request body: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"status": false, "error": "Failed to read body"})
-		return
-	}
+func waHandler(logger *logger.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		log := logger.WithContext(c.Request.Context()).WithComponent("wa_handler")
 
-	log.Printf("WA Handler - Request body: %s", string(body))
-	c.JSON(http.StatusOK, gin.H{"status": true})
+		body, err := c.GetRawData()
+		if err != nil {
+			log.Error("failed to read request body", slog.String("error", err.Error()))
+			c.JSON(http.StatusBadRequest, gin.H{"status": false, "error": "Failed to read body"})
+			return
+		}
+
+		log.Debug("wa handler request received", slog.String("body", string(body)))
+		c.JSON(http.StatusOK, gin.H{"status": true})
+	}
 }
 
 func main() {
 	config.LoadConfig()
 
-	logger := log.NewWithOptions(os.Stdout, log.Options{
-		ReportCaller:    true,
-		ReportTimestamp: true,
-		Level:           log.DebugLevel,
-		TimeFormat:      time.Kitchen,
-	})
+	loggerConfig := logger.FromConfig(config.AppConfig.LogLevel, config.AppConfig.LogFormat)
+	logger := logger.New(loggerConfig)
+	log := logger.WithComponent("main")
 
 	// Set Gin mode
-	logger.Info("Setting Gin mode", "mode", config.AppConfig.GinMode)
+	log.Info("setting gin mode", slog.String("mode", config.AppConfig.GinMode))
 	gin.SetMode(config.AppConfig.GinMode)
 
 	// Initialize database
+	log.Info("initializing database connection")
 	db, err := pg.InitDatabase(config.AppConfig.DatabaseURL)
 	if err != nil {
-		logger.Fatal("Failed to initialize database", "error", err)
+		log.Error("failed to initialize database", slog.String("error", err.Error()))
+		os.Exit(1)
 	}
+	log.Info("database connection established")
 
 	tokenValidator, err := NewTokenValidator(config.AppConfig, logger)
 	if err != nil {
-		logger.Fatal("Failed to initialize token validator", "error", err)
+		log.Error("failed to initialize token validator", slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 
 	firebaseAuth, err := auth.NewFirebaseAuthMiddleware(tokenValidator)
 	if err != nil {
-		logger.Fatal("Failed to initialize Firebase auth middleware", "error", err)
+		log.Error("failed to initialize firebase auth middleware", slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 
 	// Initialize services
-	oauthService := oauth.NewService()
-	composioService := composio.NewService()
+	oauthService := oauth.NewService(logger.WithComponent("oauth"))
+	composioService := composio.NewService(logger.WithComponent("composio"))
 	inviteCodeService := invitecode.NewService(db.Queries)
-	requestTrackingService := request_tracking.NewService(db.Queries, logger)
+	requestTrackingService := request_tracking.NewService(db.Queries, logger.WithComponent("request_tracking"))
 	mcpService := mcp.NewService()
 
 	// Initialize handlers
-	oauthHandler := oauth.NewHandler(oauthService)
-	composioHandler := composio.NewHandler(composioService)
+	oauthHandler := oauth.NewHandler(oauthService, logger.WithComponent("oauth"))
+	composioHandler := composio.NewHandler(composioService, logger.WithComponent("composio"))
 	inviteCodeHandler := invitecode.NewHandler(inviteCodeService)
 	mcpHandler := mcp.NewHandler(mcpService)
 
@@ -114,10 +120,10 @@ func main() {
 	if config.AppConfig.NatsURL != "" {
 		nc, err := nats.Connect(config.AppConfig.NatsURL)
 		if err != nil {
-			logger.Warn("Failed to connect to NATS", "error", err, "url", config.AppConfig.NatsURL)
+			log.Warn("failed to connect to nats", slog.String("error", err.Error()), slog.String("url", config.AppConfig.NatsURL))
 		} else {
 			natsClient = nc
-			logger.Info("Connected to NATS", "url", config.AppConfig.NatsURL)
+			log.Info("connected to nats", slog.String("url", config.AppConfig.NatsURL))
 		}
 	}
 
@@ -126,7 +132,7 @@ func main() {
 	if config.AppConfig.EnableTelegramServer {
 		if config.AppConfig.TelegramToken != "" {
 			telegramInput := telegram.TelegramServiceInput{
-				Logger:     logger,
+				Logger:     logger.WithComponent("telegram"),
 				Token:      config.AppConfig.TelegramToken,
 				Store:      db,
 				Queries:    db.Queries,
@@ -138,16 +144,16 @@ func main() {
 			go func() {
 				ctx := context.Background()
 				if err := telegramService.Start(ctx); err != nil {
-					logger.Error("Telegram service failed", "error", err)
+					log.Error("telegram service failed", slog.String("error", err.Error()))
 				}
 			}()
 
-			logger.Info("Telegram service initialized and started")
+			log.Info("telegram service initialized and started")
 		} else {
-			logger.Warn("No Telegram token provided, Telegram service disabled")
+			log.Warn("no telegram token provided, telegram service disabled")
 		}
 	} else {
-		logger.Info("Telegram service disabled")
+		log.Info("telegram service disabled")
 	}
 
 	// Initialize REST API router (original proxy functionality)
@@ -177,9 +183,9 @@ func main() {
 		}
 
 		go func() {
-			logger.Info("Starting GraphQL server for Telegram", "port", "8081")
+			log.Info("starting graphql server for telegram", slog.String("port", "8081"))
 			if err := graphqlServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				logger.Error("GraphQL server error", "error", err)
+				log.Error("graphql server error", slog.String("error", err.Error()))
 			}
 		}()
 	}
@@ -192,8 +198,8 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("🔁 proxy listening on " + restPort)
-		logger.Info("✅ allowed base URLs", "paths", getKeys(allowedBaseURLs))
+		log.Info("proxy listening", slog.String("port", restPort))
+		log.Info("allowed base urls configured", slog.Any("paths", getKeys(allowedBaseURLs)))
 
 		// Log rate limiting configuration
 		if config.AppConfig.RateLimitEnabled {
@@ -201,15 +207,16 @@ func main() {
 			if config.AppConfig.RateLimitLogOnly {
 				mode = "LOG-ONLY"
 			}
-			logger.Info("🛡️ rate limiting enabled",
-				"limit", config.AppConfig.RateLimitRequestsPerDay,
-				"mode", mode)
+			log.Info("rate limiting enabled",
+				slog.Int64("limit", config.AppConfig.RateLimitRequestsPerDay),
+				slog.String("mode", mode))
 		} else {
-			logger.Info("⚠️ rate limiting disabled")
+			log.Info("rate limiting disabled")
 		}
 
 		if err := restServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatal("REST server error", "error", err)
+			log.Error("rest server error", slog.String("error", err.Error()))
+			os.Exit(1)
 		}
 	}()
 
@@ -217,26 +224,26 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	logger.Info("🛑 Shutting down servers...")
+	log.Info("shutting down servers")
 
 	// Shutdown the request tracking service worker pool
 	requestTrackingService.Shutdown()
-	logger.Info("✅ Request tracking service shutdown complete")
+	log.Info("request tracking service shutdown complete")
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.AppConfig.ServerShutdownTimeoutSeconds)*time.Second)
 	defer cancel()
 
 	// Shutdown both servers
 	if err := restServer.Shutdown(ctx); err != nil {
-		logger.Error("REST server forced to shutdown", "error", err)
+		log.Error("rest server forced to shutdown", slog.String("error", err.Error()))
 	}
 	if graphqlServer != nil {
 		if err := graphqlServer.Shutdown(ctx); err != nil {
-			logger.Error("GraphQL server forced to shutdown", "error", err)
+			log.Error("graphql server forced to shutdown", slog.String("error", err.Error()))
 		}
 	}
 
-	logger.Info("✅ Servers exited")
+	log.Info("servers exited")
 }
 
 // Helper function to get keys from map for logging.
@@ -249,7 +256,7 @@ func getKeys(m map[string]string) []string {
 }
 
 type restServerInput struct {
-	logger                 *log.Logger
+	logger                 *logger.Logger
 	firebaseAuth           *auth.FirebaseAuthMiddleware
 	requestTrackingService *request_tracking.Service
 	oauthHandler           *oauth.Handler
@@ -259,7 +266,11 @@ type restServerInput struct {
 }
 
 func setupRESTServer(input restServerInput) *gin.Engine {
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.Recovery())
+
+	// Add request logging middleware.
+	router.Use(logger.RequestLoggingMiddleware(input.logger))
 
 	// Add CORS middleware
 	router.Use(func(c *gin.Context) {
@@ -276,7 +287,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	})
 
 	// Debug/test endpoint (no auth required)
-	router.POST("/wa", waHandler)
+	router.POST("/wa", waHandler(input.logger))
 
 	// All routes use Firebase/JWT auth
 	router.Use(input.firebaseAuth.RequireAuth())
@@ -320,78 +331,90 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	proxy := router.Group("/")
 	proxy.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger))
 	{
-		proxy.POST("/chat/completions", proxyHandler)
-		proxy.POST("/embeddings", proxyHandler)
-		proxy.POST("/audio/speech", proxyHandler)
-		proxy.POST("/audio/transcriptions", proxyHandler)
-		proxy.POST("/audio/translations", proxyHandler)
+		proxy.POST("/chat/completions", proxyHandler(input.logger))
+		proxy.POST("/embeddings", proxyHandler(input.logger))
+		proxy.POST("/audio/speech", proxyHandler(input.logger))
+		proxy.POST("/audio/transcriptions", proxyHandler(input.logger))
+		proxy.POST("/audio/translations", proxyHandler(input.logger))
 	}
 
 	return router
 }
 
-func proxyHandler(c *gin.Context) {
-	// Extract X-BASE-URL from header
-	baseURL := c.GetHeader("X-BASE-URL")
-	if baseURL == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "X-BASE-URL header is required"})
-		return
-	}
+func proxyHandler(logger *logger.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		log := logger.WithContext(c.Request.Context()).WithComponent("proxy")
 
-	// Check if base URL is in our allowed dictionary
-	apiKey := getAPIKey(baseURL, config.AppConfig)
-	if apiKey == "" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized base URL"})
-		return
-	}
-
-	// Parse the target URL
-	target, err := url.Parse(baseURL)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid URL format"})
-		return
-	}
-
-	// Create reverse proxy for this specific target
-	proxy := httputil.NewSingleHostReverseProxy(target)
-
-	orig := proxy.Director
-	proxy.Director = func(r *http.Request) {
-		orig(r)
-		log.Printf("🔁 Forwarding request to %s", target.String()+r.RequestURI)
-		log.Printf("📤 Forwarding %s %s%s to %s", r.Method, r.Host, r.RequestURI, target.String()+r.RequestURI)
-
-		r.Host = target.Host
-
-		// Set Authorization header with Bearer token
-		r.Header.Set("Authorization", "Bearer "+apiKey)
-
-		// Handle User-Agent header
-		if userAgent := r.Header.Get("User-Agent"); strings.Contains(userAgent, "OpenAI/Go") {
-		} else {
-			r.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+		// Extract X-BASE-URL from header
+		baseURL := c.GetHeader("X-BASE-URL")
+		if baseURL == "" {
+			log.Warn("missing base url header")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "X-BASE-URL header is required"})
+			return
 		}
 
-		// Clean up proxy headers
-		r.Header.Del("X-Forwarded-For")
-		r.Header.Del("X-Real-Ip")
-		r.Header.Del("X-BASE-URL") // Remove our custom header before forwarding
-	}
+		// Check if base URL is in our allowed dictionary
+		apiKey := getAPIKey(baseURL, config.AppConfig)
+		if apiKey == "" {
+			log.Warn("unauthorized base url", slog.String("base_url", baseURL))
+			c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized base URL"})
+			return
+		}
 
-	// Some cancelled requests by clients could cause panic.
-	// We handle that gracefully.
-	// See: https://github.com/gin-gonic/gin/issues/2279
-	select {
-	case <-c.Request.Context().Done():
-		log.Printf("🚫 Client canceled request to %s", target.String())
-		return
-	default:
-		proxy.ServeHTTP(c.Writer, c.Request)
+		// Parse the target URL
+		target, err := url.Parse(baseURL)
+		if err != nil {
+			log.Error("invalid url format", slog.String("base_url", baseURL), slog.String("error", err.Error()))
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid URL format"})
+			return
+		}
+
+		// Create reverse proxy for this specific target
+		proxy := httputil.NewSingleHostReverseProxy(target)
+
+		orig := proxy.Director
+		proxy.Director = func(r *http.Request) {
+			orig(r)
+			targetURL := target.String() + r.RequestURI
+			log.Info("forwarding request",
+				slog.String("method", r.Method),
+				slog.String("target_url", targetURL),
+				slog.String("original_host", r.Host),
+				slog.String("request_uri", r.RequestURI),
+			)
+
+			r.Host = target.Host
+
+			// Set Authorization header with Bearer token
+			r.Header.Set("Authorization", "Bearer "+apiKey)
+
+			// Handle User-Agent header
+			if userAgent := r.Header.Get("User-Agent"); strings.Contains(userAgent, "OpenAI/Go") {
+			} else {
+				r.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+			}
+
+			// Clean up proxy headers
+			r.Header.Del("X-Forwarded-For")
+			r.Header.Del("X-Real-Ip")
+			r.Header.Del("X-BASE-URL") // Remove our custom header before forwarding
+		}
+
+		// Some canceled requests by clients could cause panic.
+		// We handle that gracefully.
+		// See: https://github.com/gin-gonic/gin/issues/2279
+		select {
+		case <-c.Request.Context().Done():
+			log.Info("client canceled request", slog.String("target_url", target.String()))
+			return
+		default:
+			proxy.ServeHTTP(c.Writer, c.Request)
+		}
 	}
 }
 
 type graphqlServerInput struct {
-	logger          *log.Logger
+	logger          *logger.Logger
 	natsClient      *nats.Conn
 	telegramService *telegram.Service
 	firebaseAuth    *auth.FirebaseAuthMiddleware
@@ -453,16 +476,12 @@ func setupGraphQLServer(input graphqlServerInput) *chi.Mux {
 
 		if resp != nil && resp.Errors != nil && len(resp.Errors) > 0 {
 			oc := graphql.GetOperationContext(ctx)
-			input.logger.Error(
-				"gql error",
-				"operation_name",
-				oc.OperationName,
-				"raw_query",
-				oc.RawQuery,
-				"variables",
-				oc.Variables,
-				"errors",
-				resp.Errors,
+			input.logger.WithComponent("graphql").Error(
+				"graphql operation error",
+				slog.String("operation_name", oc.OperationName),
+				slog.String("raw_query", oc.RawQuery),
+				slog.Any("variables", oc.Variables),
+				slog.Any("errors", resp.Errors),
 			)
 		}
 
@@ -482,18 +501,20 @@ func gqlSchema(resolver *graph.Resolver) graphql.ExecutableSchema {
 	return graph.NewExecutableSchema(config)
 }
 
-func NewTokenValidator(cfg *config.Config, logger *log.Logger) (auth.TokenValidator, error) {
+func NewTokenValidator(cfg *config.Config, logger *logger.Logger) (auth.TokenValidator, error) {
+	log := logger.WithComponent("auth")
+
 	switch cfg.ValidatorType {
 	case "firebase":
 		if cfg.FirebaseProjectID == "" {
-			logger.Error("firebase project ID is required")
+			log.Error("firebase project id is required")
 			return nil, errors.New("firebase project ID is required")
 		}
 
-		logger.Info("creating Firebase token validator", "project_id", cfg.FirebaseProjectID)
+		log.Info("creating firebase token validator", slog.String("project_id", cfg.FirebaseProjectID))
 		tokenValidator, err := auth.NewFirebaseTokenValidator(context.Background(), cfg.FirebaseCredJSON)
 		if err != nil {
-			logger.Error("Failed to create Firebase token validator", slog.Any("error", err))
+			log.Error("failed to create firebase token validator", slog.String("error", err.Error()))
 			return nil, err
 		}
 		return tokenValidator, nil
@@ -501,13 +522,13 @@ func NewTokenValidator(cfg *config.Config, logger *log.Logger) (auth.TokenValida
 	case "jwk":
 		tokenValidator, err := auth.NewTokenValidator(cfg.JWTJWKSURL)
 		if err != nil {
-			logger.Error("Failed to create JWT token validator", slog.Any("error", err))
+			log.Error("failed to create jwt token validator", slog.String("error", err.Error()))
 			return nil, err
 		}
 		return tokenValidator, nil
 
 	default:
-		logger.Error("Invalid validator type", "validator_type", cfg.ValidatorType)
+		log.Error("invalid validator type", slog.String("validator_type", cfg.ValidatorType))
 		return nil, errors.New("validator type must be either 'firebase' or 'jwt'")
 	}
 }

@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/pkg/config"
+	"github.com/eternisai/enchanted-proxy/pkg/logger"
 )
 
 const (
@@ -18,15 +19,15 @@ const (
 )
 
 type Service struct {
-	logger     *log.Logger
+	logger     *logger.Logger
 	httpClient *http.Client
 	apiKey     string
 }
 
-// NewComposioService creates a new instance of ComposioService.
-func NewService() *Service {
+// NewService creates a new instance of Composio Service.
+func NewService(logger *logger.Logger) *Service {
 	return &Service{
-		logger: log.New(log.Writer(), "[Composio] ", log.LstdFlags),
+		logger: logger,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -45,7 +46,9 @@ func (s *Service) getComposioConfig(toolkitSlug string) (string, error) {
 
 // CreateConnectedAccount creates a new connected account and returns the redirect URL.
 func (s *Service) CreateConnectedAccount(userID, toolkitSlug, callbackURL string) (*CreateConnectedAccountResponse, error) {
-	s.logger.Printf("Creating connected account for user %s with toolkit %s", userID, toolkitSlug)
+	s.logger.Info("creating composio connected account",
+		slog.String("user_id", userID),
+		slog.String("toolkit_slug", toolkitSlug))
 
 	if s.apiKey == "" {
 		return nil, fmt.Errorf("composio API key is not configured")
@@ -93,7 +96,7 @@ func (s *Service) CreateConnectedAccount(userID, toolkitSlug, callbackURL string
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
-			s.logger.Printf("failed to close response body: %v", closeErr)
+			s.logger.Warn("failed to close response body", slog.String("error", closeErr.Error()))
 		}
 	}()
 
@@ -150,7 +153,7 @@ func (s *Service) GetConnectedAccount(accountID string) (*ConnectedAccountDetail
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
-			s.logger.Printf("failed to close response body: %v", closeErr)
+			s.logger.Warn("failed to close response body", slog.String("error", closeErr.Error()))
 		}
 	}()
 
@@ -206,7 +209,7 @@ func (s *Service) RefreshToken(accountID string) (*ComposioRefreshTokenResponse,
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
-			s.logger.Printf("failed to close response body: %v", closeErr)
+			s.logger.Warn("failed to close response body", slog.String("error", closeErr.Error()))
 		}
 	}()
 
