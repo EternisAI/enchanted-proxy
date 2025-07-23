@@ -3,13 +3,14 @@ package request_tracking
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/charmbracelet/log"
 	"github.com/eternisai/enchanted-proxy/pkg/config"
+	"github.com/eternisai/enchanted-proxy/pkg/logger"
 	pgdb "github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc"
 )
 
@@ -19,7 +20,7 @@ type Service struct {
 	workerPool sync.WaitGroup
 	shutdown   chan struct{}
 	closed     atomic.Bool
-	logger     *log.Logger
+	logger     *logger.Logger
 }
 
 type logRequest struct {
@@ -27,7 +28,7 @@ type logRequest struct {
 	info RequestInfo
 }
 
-func NewService(queries pgdb.Querier, logger *log.Logger) *Service {
+func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
 	s := &Service{
 		queries:  queries,
 		logChan:  make(chan logRequest, config.AppConfig.RequestTrackingBufferSize),
@@ -81,11 +82,11 @@ func (s *Service) processLogRequest(ctx context.Context, info RequestInfo) {
 	}
 
 	if err := s.queries.CreateRequestLog(ctx, params); err != nil {
-		s.logger.Error("Failed to insert request log",
-			"user_id", info.UserID,
-			"endpoint", info.Endpoint,
-			"provider", info.Provider,
-			"error", err)
+		s.logger.Error("failed to insert request log",
+			slog.String("user_id", info.UserID),
+			slog.String("endpoint", info.Endpoint),
+			slog.String("provider", info.Provider),
+			slog.String("error", err.Error()))
 	}
 }
 
@@ -93,8 +94,8 @@ func (s *Service) processLogRequest(ctx context.Context, info RequestInfo) {
 func (s *Service) LogRequestAsync(ctx context.Context, info RequestInfo) error {
 	if s.closed.Load() {
 		s.logger.Warn("Request tracking service is shutting down, dropping request",
-			"user_id", info.UserID,
-			"endpoint", info.Endpoint)
+			slog.String("user_id", info.UserID),
+			slog.String("endpoint", info.Endpoint))
 		return fmt.Errorf("service shutting down")
 	}
 
@@ -110,8 +111,8 @@ func (s *Service) LogRequestAsync(ctx context.Context, info RequestInfo) error {
 		return ctx.Err()
 	default:
 		s.logger.Warn("Request log queue is full, dropping request",
-			"user_id", info.UserID,
-			"endpoint", info.Endpoint)
+			slog.String("user_id", info.UserID),
+			slog.String("endpoint", info.Endpoint))
 		return fmt.Errorf("log queue is full, dropping request")
 	}
 }

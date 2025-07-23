@@ -58,6 +58,10 @@ type Config struct {
 
 	// CORS
 	CORSAllowedOrigins string
+
+	// Logging
+	LogLevel  string
+	LogFormat string
 }
 
 var AppConfig *Config
@@ -70,7 +74,7 @@ func LoadConfig() {
 
 	AppConfig = &Config{
 		Port:    getEnvOrDefault("PORT", "8080"),
-		GinMode: getEnvOrDefault("GIN_MODE", "debug"),
+		GinMode: getEnvOrDefault("GIN_MODE", "release"),
 
 		// Firebase
 		FirebaseProjectID: getEnvOrDefault("FIREBASE_PROJECT_ID", "enchanted-login-8fdb9"),
@@ -135,6 +139,10 @@ func LoadConfig() {
 
 		// CORS
 		CORSAllowedOrigins: getEnvOrDefault("CORS_ALLOWED_ORIGINS", "http://localhost:3000"),
+
+		// Logging
+		LogLevel:  getEnvOrDefault("LOG_LEVEL", "debug"),
+		LogFormat: getEnvOrDefault("LOG_FORMAT", "text"),
 	}
 
 	// Validate required configs

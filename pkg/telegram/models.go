@@ -1,5 +1,7 @@
 package telegram
 
+import "github.com/eternisai/enchanted-proxy/pkg/logger"
+
 const (
 	// TelegramAPIBase is the base url for the telegram api.
 	TelegramAPIBase = "https://api.telegram.org"
@@ -52,7 +54,7 @@ type GetUpdatesResponse struct {
 
 // TelegramServiceInput contains the dependencies needed to create a TelegramService.
 type TelegramServiceInput struct {
-	Logger     interface{} // Using interface{} to avoid import conflicts
+	Logger     *logger.Logger
 	Token      string
 	Store      interface{} // Will be the database store
 	Queries    interface{} // Database queries interface

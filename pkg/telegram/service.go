@@ -8,12 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/log"
+	"github.com/eternisai/enchanted-proxy/pkg/logger"
 	pgdb "github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc"
 	"github.com/nats-io/nats.go"
 )
@@ -28,7 +28,7 @@ type callbackEntry struct {
 
 // Service handles Telegram bot operations.
 type Service struct {
-	Logger       *log.Logger
+	Logger       *logger.Logger
 	Token        string
 	Client       *http.Client
 	LastMessages []Message
@@ -42,15 +42,6 @@ type Service struct {
 
 // NewService creates a new Telegram service instance.
 func NewService(input TelegramServiceInput) *Service {
-	logger, ok := input.Logger.(*log.Logger)
-	if !ok {
-		logger = log.NewWithOptions(os.Stdout, log.Options{
-			ReportCaller:    true,
-			ReportTimestamp: true,
-			Level:           log.DebugLevel,
-		})
-	}
-
 	var natsClient *nats.Conn
 	if input.NatsClient != nil {
 		if nc, ok := input.NatsClient.(*nats.Conn); ok {
@@ -66,7 +57,7 @@ func NewService(input TelegramServiceInput) *Service {
 	}
 
 	return &Service{
-		Logger:           logger,
+		Logger:           input.Logger,
 		Token:            input.Token,
 		Client:           &http.Client{Timeout: time.Second * 45}, // Increased to 45 seconds to allow for 30s Telegram timeout + network overhead
 		LastMessages:     []Message{},
@@ -89,7 +80,7 @@ func (s *Service) GetBotInfo(ctx context.Context) (*User, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	var result struct {
 		OK          bool   `json:"ok"`
@@ -117,12 +108,12 @@ func (s *Service) Start(ctx context.Context) error {
 	// Get and log bot information
 	botInfo, err := s.GetBotInfo(ctx)
 	if err != nil {
-		s.Logger.Warn("Failed to get bot info", "error", err)
+		s.Logger.Warn("failed to get bot info", slog.String("error", err.Error()))
 	} else {
-		s.Logger.Info("Starting telegram service",
-			"bot_username", botInfo.Username,
-			"bot_first_name", botInfo.FirstName,
-			"bot_id", botInfo.ID,
+		s.Logger.Info("starting telegram service",
+			slog.String("bot_username", botInfo.Username),
+			slog.String("bot_first_name", botInfo.FirstName),
+			slog.Int("bot_id", botInfo.ID),
 		)
 	}
 
@@ -141,23 +132,23 @@ func (s *Service) Start(ctx context.Context) error {
 
 			req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 			if err != nil {
-				s.Logger.Error("Failed to create request", "error", err)
+				s.Logger.Error("failed to create request", slog.String("error", err.Error()))
 				time.Sleep(time.Second * 5)
 				continue
 			}
 
 			resp, err := s.Client.Do(req)
 			if err != nil {
-				s.Logger.Error("Failed to send request", "error", err)
+				s.Logger.Error("failed to send request", slog.String("error", err.Error()))
 				time.Sleep(time.Second * 5)
 				continue
 			}
 
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
-				s.Logger.Error("failed to read response body", "error", err)
+				s.Logger.Error("failed to read response body", slog.String("error", err.Error()))
 				if err := resp.Body.Close(); err != nil {
-					s.Logger.Error("failed to close response body", "error", err)
+					s.Logger.Error("failed to close response body", slog.String("error", err.Error()))
 				}
 				time.Sleep(time.Second * 5)
 				continue
@@ -165,7 +156,7 @@ func (s *Service) Start(ctx context.Context) error {
 
 			err = resp.Body.Close()
 			if err != nil {
-				s.Logger.Error("failed to close response body", "error", err)
+				s.Logger.Error("failed to close response body", slog.String("error", err.Error()))
 				time.Sleep(time.Second * 5)
 				continue
 			}
@@ -178,15 +169,15 @@ func (s *Service) Start(ctx context.Context) error {
 			}
 
 			if err := json.Unmarshal(body, &result); err != nil {
-				s.Logger.Error("Failed to decode response", "error", err)
+				s.Logger.Error("failed to decode response", slog.String("error", err.Error()))
 				time.Sleep(time.Second * 5)
 				continue
 			}
 
 			if !result.OK {
-				s.Logger.Error("Telegram API returned error",
-					"error_code", result.ErrorCode,
-					"description", result.Description,
+				s.Logger.Error("telegram API returned error",
+					slog.Int("error_code", result.ErrorCode),
+					slog.String("description", result.Description),
 				)
 				time.Sleep(time.Second * 5)
 				continue
@@ -199,13 +190,13 @@ func (s *Service) Start(ctx context.Context) error {
 				chatID := update.Message.Chat.ID
 				chatUUID, hasMapping := s.GetChatUUID(ctx, chatID)
 
-				s.Logger.Info("Received message",
-					"message_id", update.Message.MessageID,
-					"from", update.Message.From.Username,
-					"chat_id", chatID,
-					"chat_uuid", chatUUID,
-					"has_mapping", hasMapping,
-					"text", update.Message.Text,
+				s.Logger.Info("received message",
+					slog.Int("message_id", update.Message.MessageID),
+					slog.String("from", update.Message.From.Username),
+					slog.Int("chat_id", chatID),
+					slog.String("chat_uuid", chatUUID),
+					slog.Bool("has_mapping", hasMapping),
+					slog.String("text", update.Message.Text),
 				)
 
 				if update.Message.Text != "" {
@@ -218,21 +209,21 @@ func (s *Service) Start(ctx context.Context) error {
 						if username == "" {
 							username = fmt.Sprintf("%s %s", update.Message.From.FirstName, update.Message.From.LastName)
 						}
-						s.Logger.Info("User starting chat",
-							"chat_id", chatID,
-							"uuid", chatUUID,
-							"username", username,
-							"user_id", update.Message.From.ID,
+						s.Logger.Info("user starting chat",
+							slog.Int("chat_id", chatID),
+							slog.String("uuid", chatUUID),
+							slog.String("username", username),
+							slog.Int("user_id", update.Message.From.ID),
 						)
 						_, err := s.CreateChat(ctx, chatID, chatUUID)
 						if err != nil {
-							s.Logger.Error("Failed to create chat", "error", err)
+							s.Logger.Error("failed to create chat", slog.String("error", err.Error()))
 							continue
 						}
 						welcomeMsg := fmt.Sprintf("Welcome %s! Send any message to start the conversation", username)
 						err = s.SendMessage(ctx, chatID, welcomeMsg)
 						if err != nil {
-							s.Logger.Error("Failed to send message", "error", err)
+							s.Logger.Error("failed to send message", slog.String("error", err.Error()))
 							continue
 						}
 					}
@@ -244,23 +235,23 @@ func (s *Service) Start(ctx context.Context) error {
 							subject := fmt.Sprintf("telegram.chat.%s", chatUUID)
 							messageBytes, err := json.Marshal(update.Message)
 							if err != nil {
-								s.Logger.Error("Failed to marshal message", "error", err)
+								s.Logger.Error("failed to marshal message", slog.String("error", err.Error()))
 								continue
 							}
 
 							err = s.NatsClient.Publish(subject, messageBytes)
 							if err != nil {
-								s.Logger.Error("Failed to publish message to NATS", "error", err)
+								s.Logger.Error("failed to publish message to NATS", slog.String("error", err.Error()))
 								continue
 							}
-							s.Logger.Info("Published message to NATS", "subject", subject, "chatUUID", chatUUID)
+							s.Logger.Info("published message to NATS", slog.String("subject", subject), slog.String("chatUUID", chatUUID))
 						} else {
 							// Fallback: notify registered callbacks directly
-							s.Logger.Info("NATS not available, using direct callbacks", "chatUUID", chatUUID)
+							s.Logger.Info("NATS not available, using direct callbacks", slog.String("chatUUID", chatUUID))
 							s.notifyCallbacks(chatUUID, update.Message)
 						}
 					} else {
-						s.Logger.Debug("No chat mapping found for chatID, skipping message notification", "chat_id", chatID)
+						s.Logger.Debug("no chat mapping found for chatID, skipping message notification", slog.Int("chat_id", chatID))
 					}
 				}
 			}
@@ -288,14 +279,14 @@ func (s *Service) CreateChat(ctx context.Context, chatID int, chatUUID string) (
 		return 0, fmt.Errorf("failed to create chat mapping: %w", err)
 	}
 
-	s.Logger.Info("Chat mapping created", "chat_id", chatID, "uuid", chatUUID)
+	s.Logger.Info("chat mapping created", slog.Int("chat_id", chatID), slog.String("uuid", chatUUID))
 	return chatID, nil
 }
 
 // GetChatUUID returns the UUID for a given chat ID.
 func (s *Service) GetChatUUID(ctx context.Context, chatID int) (string, bool) {
 	if s.queries == nil {
-		s.Logger.Error("Database queries not available")
+		s.Logger.Error("database queries not available")
 		return "", false
 	}
 
@@ -304,7 +295,7 @@ func (s *Service) GetChatUUID(ctx context.Context, chatID int) (string, bool) {
 		if err == sql.ErrNoRows {
 			return "", false
 		}
-		s.Logger.Error("Failed to get chat UUID", "error", err, "chat_id", chatID)
+		s.Logger.Error("failed to get chat UUID", slog.String("error", err.Error()), slog.Int("chat_id", chatID))
 		return "", false
 	}
 
@@ -314,7 +305,7 @@ func (s *Service) GetChatUUID(ctx context.Context, chatID int) (string, bool) {
 // GetChatIDByUUID returns the chat ID for a given UUID.
 func (s *Service) GetChatIDByUUID(ctx context.Context, chatUUID string) (int, bool) {
 	if s.queries == nil {
-		s.Logger.Error("Database queries not available")
+		s.Logger.Error("database queries not available")
 		return 0, false
 	}
 
@@ -323,7 +314,7 @@ func (s *Service) GetChatIDByUUID(ctx context.Context, chatUUID string) (int, bo
 		if err == sql.ErrNoRows {
 			return 0, false
 		}
-		s.Logger.Error("Failed to get chat ID", "error", err, "chat_uuid", chatUUID)
+		s.Logger.Error("failed to get chat ID", slog.String("error", err.Error()), slog.String("chat_uuid", chatUUID))
 		return 0, false
 	}
 
@@ -356,7 +347,7 @@ func (s *Service) SendMessage(ctx context.Context, chatID int, message string) e
 	defer func() {
 		err := resp.Body.Close()
 		if err != nil {
-			s.Logger.Warn("Failed to close response body", "error", err)
+			s.Logger.Warn("failed to close response body", slog.String("error", err.Error()))
 		}
 	}()
 
@@ -388,7 +379,7 @@ func (s *Service) Subscribe(ctx context.Context, chatUUID string) error {
 
 	// TODO: This should be handled internally since this service IS the GraphQL server
 	// For now, just log that subscription was requested
-	s.Logger.Info("Telegram subscription requested for chat UUID", "chat_uuid", chatUUID)
+	s.Logger.Info("telegram subscription requested for chat UUID", slog.String("chat_uuid", chatUUID))
 
 	// This would be handled by the internal GraphQL subscription system
 	// For now, return nil to indicate success
@@ -399,7 +390,7 @@ func (s *Service) Subscribe(ctx context.Context, chatUUID string) error {
 func (s *Service) PostMessage(ctx context.Context, chatUUID string, message string) (interface{}, error) {
 	// TODO: This should be handled internally since this service IS the GraphQL server
 	// For now, just log that a message post was requested
-	s.Logger.Info("Telegram post message requested", "chat_uuid", chatUUID, "message", message)
+	s.Logger.Info("telegram post message requested", slog.String("chat_uuid", chatUUID), slog.String("message", message))
 
 	// This would be handled by the internal GraphQL mutation system
 	// For now, return a success response
@@ -428,7 +419,7 @@ func (s *Service) RegisterMessageCallback(chatUUID string, callback func(Message
 	}
 
 	s.messageCallbacks[chatUUID] = append(s.messageCallbacks[chatUUID], entry)
-	s.Logger.Info("Registered message callback", "chatUUID", chatUUID, "callbackID", callbackID)
+	s.Logger.Info("registered message callback", slog.String("chatUUID", chatUUID), slog.String("callbackID", callbackID))
 
 	return callbackID
 }
@@ -442,7 +433,7 @@ func (s *Service) UnregisterMessageCallback(chatUUID string, callbackID string) 
 		for i, entry := range callbacks {
 			if entry.id == callbackID {
 				s.messageCallbacks[chatUUID] = append(callbacks[:i], callbacks[i+1:]...)
-				s.Logger.Info("Unregistered message callback", "chatUUID", chatUUID, "callbackID", callbackID)
+				s.Logger.Info("unregistered message callback", slog.String("chatUUID", chatUUID), slog.String("callbackID", callbackID))
 				break
 			}
 		}
@@ -460,12 +451,12 @@ func (s *Service) notifyCallbacks(chatUUID string, message Message) {
 	s.callbacksMu.RUnlock()
 
 	if len(callbacks) > 0 {
-		s.Logger.Info("Notifying message callbacks", "chatUUID", chatUUID, "callbacks", len(callbacks))
+		s.Logger.Info("notifying message callbacks", slog.String("chatUUID", chatUUID), slog.Int("callbacks", len(callbacks)))
 		for _, entry := range callbacks {
 			go func(cb func(Message, string)) {
 				defer func() {
 					if r := recover(); r != nil {
-						s.Logger.Error("Callback panic recovered", "error", r)
+						s.Logger.Error("callback panic recovered", slog.String("error", fmt.Sprintf("%v", r)))
 					}
 				}()
 				cb(message, chatUUID)

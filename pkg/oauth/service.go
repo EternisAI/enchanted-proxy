@@ -6,22 +6,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/pkg/config"
+	"github.com/eternisai/enchanted-proxy/pkg/logger"
 )
 
 type Service struct {
-	logger *log.Logger
+	logger *logger.Logger
 }
 
-func NewService() *Service {
+func NewService(logger *logger.Logger) *Service {
 	return &Service{
-		logger: log.New(log.Writer(), "[OAuth] ", log.LstdFlags),
+		logger: logger,
 	}
 }
 
@@ -84,10 +85,10 @@ func (s *Service) ExchangeToken(req TokenExchangeRequest) (*TokenResponse, error
 	if oauthConfig.ClientSecret != "" {
 		data.Set("client_secret", oauthConfig.ClientSecret)
 	}
-	fmt.Println("Data: ", data.Encode())
+	s.logger.Debug("oauth request data prepared", slog.String("data", data.Encode()))
 	// Track time before request for accurate expiry calculation
 	timeBeforeTokenRequest := time.Now()
-	fmt.Println("Time before token request: ", timeBeforeTokenRequest)
+	s.logger.Debug("initiating oauth token request", slog.Time("request_time", timeBeforeTokenRequest))
 	// Create and execute request
 	ctx := context.Background()
 	httpReq, err := http.NewRequestWithContext(
@@ -97,7 +98,7 @@ func (s *Service) ExchangeToken(req TokenExchangeRequest) (*TokenResponse, error
 		strings.NewReader(data.Encode()),
 	)
 	if err != nil {
-		fmt.Println("Error creating token request: ", err)
+		s.logger.Error("failed to create oauth token request", slog.String("error", err.Error()))
 		return nil, fmt.Errorf("failed to create token request: %w", err)
 	}
 
@@ -107,18 +108,20 @@ func (s *Service) ExchangeToken(req TokenExchangeRequest) (*TokenResponse, error
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		fmt.Println("Error sending token request: ", err)
+		s.logger.Error("failed to send oauth token request", slog.String("error", err.Error()))
 		return nil, fmt.Errorf("failed to send token request: %w", err)
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
-			s.logger.Printf("failed to close token response body: %v", closeErr)
+			s.logger.Warn("failed to close token response body", slog.String("error", closeErr.Error()))
 		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		fmt.Println("Failed to obtain token: ", resp.StatusCode, string(body))
+		s.logger.Error("oauth token request failed",
+			slog.Int("status_code", resp.StatusCode),
+			slog.String("response_body", string(body)))
 		return nil, fmt.Errorf("failed to obtain token: %d: %s", resp.StatusCode, body)
 	}
 
@@ -142,7 +145,7 @@ func (s *Service) ExchangeToken(req TokenExchangeRequest) (*TokenResponse, error
 		body, _ := io.ReadAll(resp.Body)
 
 		// Print raw response for debugging
-		fmt.Printf("Raw slack token response: %s\n", string(body))
+		s.logger.Debug("received slack token response", slog.String("response_body", string(body)))
 
 		// Reset the reader for JSON decoding
 		resp.Body = io.NopCloser(bytes.NewBuffer(body))
@@ -178,7 +181,7 @@ func (s *Service) ExchangeToken(req TokenExchangeRequest) (*TokenResponse, error
 			ExpiresIn    int    `json:"expires_in,omitempty"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&stdResp); err != nil {
-			fmt.Println("Error parsing token response: ", err)
+			s.logger.Error("failed to parse oauth token response", slog.String("error", err.Error()))
 			return nil, fmt.Errorf("failed to parse token response: %w", err)
 		}
 		tokenResp.AccessToken = stdResp.AccessToken
