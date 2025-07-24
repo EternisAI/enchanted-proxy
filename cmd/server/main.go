@@ -372,6 +372,16 @@ func proxyHandler(logger *logger.Logger) gin.HandlerFunc {
 		// Create reverse proxy for this specific target
 		proxy := httputil.NewSingleHostReverseProxy(target)
 
+		// Add error handler for upstream failures
+		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			log.Error("upstream request failed",
+				slog.String("target_url", target.String()+r.RequestURI),
+				slog.String("error", err.Error()),
+				slog.String("method", r.Method),
+			)
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		}
+
 		orig := proxy.Director
 		proxy.Director = func(r *http.Request) {
 			orig(r)
