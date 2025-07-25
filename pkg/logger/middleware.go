@@ -13,8 +13,12 @@ func RequestLoggingMiddleware(logger *Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 
-		// Generate request ID and add to context.
-		requestID := GenerateRequestID()
+		// Reuse the request ID from the request headers if present.
+		requestID := c.Request.Header.Get("x-request-id")
+		if requestID == "" {
+			// Generate request ID and add to context.
+			requestID = GenerateRequestID()
+		}
 		ctx := WithRequestID(c.Request.Context(), requestID)
 		ctx = WithOperation(ctx, "http_request")
 		c.Request = c.Request.WithContext(ctx)
