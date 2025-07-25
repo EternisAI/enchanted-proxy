@@ -2,8 +2,8 @@ package logger
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
+
+	"github.com/google/uuid"
 )
 
 // WithRequestID adds a request ID to the context.
@@ -23,7 +23,6 @@ func WithOperation(ctx context.Context, operation string) context.Context {
 
 // GenerateRequestID generates a new request ID.
 func GenerateRequestID() string {
-	bytes := make([]byte, 8)
-	rand.Read(bytes) //nolint:errcheck
-	return hex.EncodeToString(bytes)
+	requestID := uuid.New()
+	return requestID.String()
 }
