@@ -6,6 +6,8 @@ Operating within an AWS Nitro Enclave, the proxy offers strong guarantees of dat
 
 This architecture, built on AWS Nitro Enclaves, is designed to give users confidence that their personal data and AI interactions remain confidential and protected at all times, leveraging the latest advancements in cloud hardware security.
 
+You can read instructions on verifying the security guarantees provided by the live AWS Nitro Enclave deployments of this project in the [following document](docs/attestation.md).
+
 ## License
 
 BSD
