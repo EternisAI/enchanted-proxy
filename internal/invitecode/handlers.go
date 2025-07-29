@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/eternisai/enchanted-proxy/pkg/auth"
+	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/gin-gonic/gin"
 )
 

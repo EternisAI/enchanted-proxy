@@ -5,7 +5,8 @@
       "Bash(mv:*)",
       "Bash(rm:*)",
       "Bash(make:*)",
-      "Bash(timeout 5s make run)"
+      "Bash(timeout 5s make run)",
+      "Bash(deadcode:*)"
     ],
     "deny": []
   }

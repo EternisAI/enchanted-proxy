@@ -41,7 +41,7 @@ The following log levels can be used when appropriate:
 ### HTTP Requests
 
 ```go
-// pkg/oauth/handlers.go
+// internal/oauth/handlers.go
 log := h.logger.WithContext(c.Request.Context()).WithComponent("oauth_handler")
 log.Info("oauth token exchange requested",
     slog.String("platform", req.Platform),

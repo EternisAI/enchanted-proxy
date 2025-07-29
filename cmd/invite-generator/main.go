@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eternisai/enchanted-proxy/pkg/config"
-	"github.com/eternisai/enchanted-proxy/pkg/invitecode"
-	"github.com/eternisai/enchanted-proxy/pkg/storage/pg"
+	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/invitecode"
+	"github.com/eternisai/enchanted-proxy/internal/storage/pg"
 	"github.com/joho/godotenv"
 )
 

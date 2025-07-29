@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eternisai/enchanted-proxy/pkg/config"
-	"github.com/eternisai/enchanted-proxy/pkg/mcp/perplexity"
-	"github.com/eternisai/enchanted-proxy/pkg/mcp/replicate"
-	"github.com/eternisai/enchanted-proxy/pkg/mcp/utils"
+	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/mcp/perplexity"
+	"github.com/eternisai/enchanted-proxy/internal/mcp/replicate"
+	"github.com/eternisai/enchanted-proxy/internal/mcp/utils"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )

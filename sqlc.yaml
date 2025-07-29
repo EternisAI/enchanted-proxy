@@ -2,12 +2,12 @@ version: "2"
 
 sql:
   - engine: "postgresql"
-    schema: "./pkg/storage/pg/migrations"
-    queries: "./pkg/storage/pg/queries/"
+    schema: "./internal/storage/pg/migrations"
+    queries: "./internal/storage/pg/queries/"
     gen:
       go:
         package: "pgdb"
-        out: "./pkg/storage/pg/sqlc"
+        out: "./internal/storage/pg/sqlc"
         emit_json_tags: true
         emit_prepared_queries: false
         emit_interface: true

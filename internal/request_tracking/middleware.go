@@ -4,9 +4,9 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/eternisai/enchanted-proxy/pkg/auth"
-	"github.com/eternisai/enchanted-proxy/pkg/config"
-	"github.com/eternisai/enchanted-proxy/pkg/logger"
+	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 )
 
