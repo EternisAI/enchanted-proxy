@@ -41,7 +41,7 @@ RUN cargo build --release --manifest-path /root/procfusion/Cargo.toml
 FROM public.ecr.aws/f5z1z8p0/attestation-proxy/server:sha-042634d@sha256:4cf287618a63ea6bce2519819d58775bcbd9bf6ff6908c0988330631730f92a0 AS attestation_proxy
 
 # Runtime stage
-FROM envoyproxy/envoy:v1.34.3@sha256:2e42b6a1e48d92e3c022e58d99bc2134c4b34495c3fb13d38ff9481660d94c9b
+FROM envoyproxy/envoy:v1.34.4@sha256:3da51b4deded479faf5ecdf6f82557aedb084ef2291551376847c9120292ede5
 RUN apt -qq update && \
     apt install -y --no-install-recommends \
         ca-certificates dnsmasq iproute2 netcat-openbsd \
