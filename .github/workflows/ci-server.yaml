@@ -292,6 +292,7 @@ jobs:
   deploy:
     name: Trigger Deployment
     runs-on: ubuntu-latest
+    if: always()
     needs:
     - check
     - build
@@ -304,7 +305,7 @@ jobs:
     - name: Get Image Meta
       id: meta
       run: |
-        if [[ -n "${{ needs.build.outputs.digest }}" ]]; then
+        if [[ "${{ needs.build.result }}" == "success" ]]; then
           tag="${{ needs.check.outputs.tag }}"
           digest="${{ needs.build.outputs.digest }}"
         else
