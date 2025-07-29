@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	pgdb "github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc"
+	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 )
 
 type Service struct {

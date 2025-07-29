@@ -16,7 +16,7 @@ RUN go mod download
 # Copy source code
 COPY graph ./graph
 COPY cmd ./cmd
-COPY pkg ./pkg
+COPY internal ./internal
 
 # Build the server binary
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server cmd/server/main.go

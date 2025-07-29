@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	pgdb "github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc"
+	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 )
 
 // GenerateNanoID creates a new nanoid with custom alphabet (no confusing characters).

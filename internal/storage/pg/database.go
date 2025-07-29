@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eternisai/enchanted-proxy/pkg/config"
-	pgdb "github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc"
+	"github.com/eternisai/enchanted-proxy/internal/config"
+	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	_ "github.com/lib/pq"
 )
 

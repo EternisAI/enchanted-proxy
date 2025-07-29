@@ -4,8 +4,8 @@ import (
 	"sync"
 
 	"github.com/eternisai/enchanted-proxy/graph/model"
-	"github.com/eternisai/enchanted-proxy/pkg/logger"
-	"github.com/eternisai/enchanted-proxy/pkg/telegram"
+	"github.com/eternisai/enchanted-proxy/internal/logger"
+	"github.com/eternisai/enchanted-proxy/internal/telegram"
 	"github.com/nats-io/nats.go"
 )
 

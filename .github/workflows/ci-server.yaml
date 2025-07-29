@@ -15,7 +15,7 @@ on:
     - cmd/server/**
     - deploy/**
     - graph/**
-    - pkg/**
+    - internal/**
 
   workflow_dispatch:
 

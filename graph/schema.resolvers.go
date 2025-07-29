@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/graph/model"
-	"github.com/eternisai/enchanted-proxy/pkg/telegram"
+	"github.com/eternisai/enchanted-proxy/internal/telegram"
 	"github.com/google/uuid"
 	nats "github.com/nats-io/nats.go"
 )

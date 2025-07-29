@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/eternisai/enchanted-proxy/pkg/config"
-	"github.com/eternisai/enchanted-proxy/pkg/logger"
+	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/logger"
 )
 
 const (

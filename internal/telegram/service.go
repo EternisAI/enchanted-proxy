@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eternisai/enchanted-proxy/pkg/logger"
-	pgdb "github.com/eternisai/enchanted-proxy/pkg/storage/pg/sqlc"
+	"github.com/eternisai/enchanted-proxy/internal/logger"
+	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/nats-io/nats.go"
 )
 

@@ -24,7 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Key Components:**
 
-1. **Authentication Layer** (pkg/auth/)
+1. **Authentication Layer** (internal/auth/)
    - Firebase token validation via `firebase_validator.go:FirebaseTokenValidator`
    - JWT token validation via `jwt_validator.go:TokenValidator` 
    - Auth middleware in `middleware.go:RequireAuth()` validates Bearer tokens and injects user UUID into context
@@ -35,28 +35,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - Injects appropriate API keys (OpenAI/OpenRouter) into forwarded requests
    - Uses `httputil.ReverseProxy` for request forwarding
 
-3. **OAuth Feature** (pkg/oauth/)
+3. **OAuth Feature** (internal/oauth/)
    - Feature-based package with models, handlers, and service
    - Supports Google, Slack, Twitter OAuth flows
    - Token exchange and refresh functionality
    - Platform-specific response parsing (especially Slack's non-standard format)
 
-4. **Composio Feature** (pkg/composio/)
+4. **Composio Feature** (internal/composio/)
    - Feature-based package with models, handlers, and service
    - Connected account management
    - Token refresh for third-party integrations
 
-5. **Invite Code Feature** (pkg/invitecode/)
+5. **Invite Code Feature** (internal/invitecode/)
    - Feature-based package with models, handlers, and service
    - Invite code system with whitelist functionality
    - Database integration with PostgreSQL/GORM
 
-6. **Database Layer** (pkg/config/database.go)
+6. **Database Layer** (internal/config/database.go)
    - PostgreSQL with GORM
    - Auto-migration for invite code models
 
 **Configuration:**
-- Environment-based config in `pkg/config/config.go`
+- Environment-based config in `internal/config/config.go`
 - Supports both Firebase and JWT validation modes via `VALIDATOR_TYPE`
 - Database connection via `DATABASE_URL`
 
@@ -69,9 +69,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Key Files:**
 - `cmd/server/main.go:proxyHandler()` - Main proxy logic
-- `pkg/auth/middleware.go:RequireAuth()` - Token validation
-- `pkg/config/config.go` - Environment configuration
-- `pkg/oauth/handlers.go` - OAuth flow endpoints
-- `pkg/oauth/service.go:ExchangeToken()` - OAuth token exchange logic
-- `pkg/composio/service.go` - Composio API integration
-- `pkg/invitecode/service.go` - Invite code management
+- `internal/auth/middleware.go:RequireAuth()` - Token validation
+- `internal/config/config.go` - Environment configuration
+- `internal/oauth/handlers.go` - OAuth flow endpoints
+- `internal/oauth/service.go:ExchangeToken()` - OAuth token exchange logic
+- `internal/composio/service.go` - Composio API integration
+- `internal/invitecode/service.go` - Invite code management

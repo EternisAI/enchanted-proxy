@@ -1,6 +1,6 @@
 package telegram
 
-import "github.com/eternisai/enchanted-proxy/pkg/logger"
+import "github.com/eternisai/enchanted-proxy/internal/logger"
 
 const (
 	// TelegramAPIBase is the base url for the telegram api.
