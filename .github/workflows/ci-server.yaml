@@ -292,11 +292,11 @@ jobs:
   deploy:
     name: Trigger Deployment
     runs-on: ubuntu-latest
-    if: always()
     needs:
     - check
     - build
     - repush
+    if: ${{ !cancelled() }}
     steps:
     - name: Authenticate
       run: >-
@@ -305,11 +305,11 @@ jobs:
     - name: Get Image Meta
       id: meta
       run: |
+        tag="${{ needs.check.outputs.tag }}"
+        digest="${{ needs.check.outputs.digest }}"
         if [[ "${{ needs.build.result }}" == "success" ]]; then
-          tag="${{ needs.check.outputs.tag }}"
           digest="${{ needs.build.outputs.digest }}"
-        else
-          test "${{ github.ref_type }}" == "tag"
+        elif [[ "${{ needs.repush.result }}" == "success" ]]; then
           tag="${{ github.ref_name }}"
           digest="${{ needs.repush.outputs.digest }}"
         fi
