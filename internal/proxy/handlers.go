@@ -1,11 +1,14 @@
 package proxy
 
 import (
+	"bytes"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -14,7 +17,17 @@ import (
 
 func ProxyHandler(logger *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		start := time.Now()
 		log := logger.WithContext(c.Request.Context()).WithComponent("proxy")
+
+		var requestBody []byte
+		var model string
+		if c.Request.Body != nil {
+			requestBody, _ = io.ReadAll(c.Request.Body)
+			c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
+
+			model = extractModelFromRequestBody(c.Request.URL.Path, requestBody)
+		}
 
 		// Extract X-BASE-URL from header
 		baseURL := c.GetHeader("X-BASE-URL")
@@ -40,6 +53,18 @@ func ProxyHandler(logger *logger.Logger) gin.HandlerFunc {
 			return
 		}
 
+		logArgs := []any{
+			slog.String("target_url", target.String()+c.Request.RequestURI),
+			slog.String("model", model),
+			slog.Int64("request_size", c.Request.ContentLength),
+		}
+
+		if log.Enabled(c.Request.Context(), slog.LevelDebug) {
+			logArgs = append(logArgs, slog.String("request_body", logRequestBody(requestBody, 300)))
+		}
+
+		log.Info("proxy request started", logArgs...)
+
 		// Create reverse proxy for this specific target
 		proxy := httputil.NewSingleHostReverseProxy(target)
 
@@ -49,21 +74,28 @@ func ProxyHandler(logger *logger.Logger) gin.HandlerFunc {
 				slog.String("target_url", target.String()+r.RequestURI),
 				slog.String("error", err.Error()),
 				slog.String("method", r.Method),
+				slog.Duration("time_to_error", time.Since(start)),
 			)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		}
+
+		proxy.ModifyResponse = func(resp *http.Response) error {
+			upstreamLatency := time.Since(start)
+			isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
+
+			log.Info("proxy response received",
+				slog.Int("status_code", resp.StatusCode),
+				slog.String("content_type", resp.Header.Get("Content-Type")),
+				slog.Bool("is_streaming", isStreaming),
+				slog.Duration("upstream_latency", upstreamLatency),
+				slog.String("response_id", resp.Header.Get("X-Request-ID")),
+			)
+			return nil
 		}
 
 		orig := proxy.Director
 		proxy.Director = func(r *http.Request) {
 			orig(r)
-			targetURL := target.String() + r.RequestURI
-			log.Info("forwarding request",
-				slog.String("method", r.Method),
-				slog.String("target_url", targetURL),
-				slog.String("original_host", r.Host),
-				slog.String("request_uri", r.RequestURI),
-			)
-
 			r.Host = target.Host
 
 			// Set Authorization header with Bearer token
