@@ -23,7 +23,12 @@ func ProxyHandler(logger *logger.Logger) gin.HandlerFunc {
 		var requestBody []byte
 		var model string
 		if c.Request.Body != nil {
-			requestBody, _ = io.ReadAll(c.Request.Body)
+			requestBody, err := io.ReadAll(c.Request.Body)
+			if err != nil {
+				log.Error("failed to read request body", slog.String("error", err.Error()))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read request body"})
+				return
+			}
 			c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
 
 			model = extractModelFromRequestBody(c.Request.URL.Path, requestBody)
@@ -56,7 +61,7 @@ func ProxyHandler(logger *logger.Logger) gin.HandlerFunc {
 		logArgs := []any{
 			slog.String("target_url", target.String()+c.Request.RequestURI),
 			slog.String("model", model),
-			slog.Int64("request_size", c.Request.ContentLength),
+			slog.Int64("request_size", max(0, c.Request.ContentLength)),
 		}
 
 		if log.Enabled(c.Request.Context(), slog.LevelDebug) {
@@ -102,8 +107,7 @@ func ProxyHandler(logger *logger.Logger) gin.HandlerFunc {
 			r.Header.Set("Authorization", "Bearer "+apiKey)
 
 			// Handle User-Agent header
-			if userAgent := r.Header.Get("User-Agent"); strings.Contains(userAgent, "OpenAI/Go") {
-			} else {
+			if userAgent := r.Header.Get("User-Agent"); !strings.Contains(userAgent, "OpenAI/Go") {
 				r.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 			}
 
