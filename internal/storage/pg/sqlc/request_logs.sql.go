@@ -7,19 +7,23 @@ package pgdb
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
 const createRequestLog = `-- name: CreateRequestLog :exec
-INSERT INTO request_logs (user_id, endpoint, model, provider) 
-VALUES ($1, $2, $3, $4)
+INSERT INTO request_logs (user_id, endpoint, model, provider, prompt_tokens, completion_tokens, total_tokens) 
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type CreateRequestLogParams struct {
-	UserID   string  `json:"userId"`
-	Endpoint string  `json:"endpoint"`
-	Model    *string `json:"model"`
-	Provider string  `json:"provider"`
+	UserID           string        `json:"userId"`
+	Endpoint         string        `json:"endpoint"`
+	Model            *string       `json:"model"`
+	Provider         string        `json:"provider"`
+	PromptTokens     sql.NullInt32 `json:"promptTokens"`
+	CompletionTokens sql.NullInt32 `json:"completionTokens"`
+	TotalTokens      sql.NullInt32 `json:"totalTokens"`
 }
 
 func (q *Queries) CreateRequestLog(ctx context.Context, arg CreateRequestLogParams) error {
@@ -28,6 +32,9 @@ func (q *Queries) CreateRequestLog(ctx context.Context, arg CreateRequestLogPara
 		arg.Endpoint,
 		arg.Model,
 		arg.Provider,
+		arg.PromptTokens,
+		arg.CompletionTokens,
+		arg.TotalTokens,
 	)
 	return err
 }
@@ -65,11 +72,34 @@ func (q *Queries) GetUserRequestCountInTimeWindow(ctx context.Context, arg GetUs
 	return count, err
 }
 
+const getUserTokenUsageInLastDay = `-- name: GetUserTokenUsageInLastDay :one
+SELECT COALESCE(SUM(total_tokens_used), 0)::BIGINT as total_tokens
+FROM user_token_usage_daily 
+WHERE user_id = $1 
+  AND day_bucket = DATE_TRUNC('day', NOW())
+`
+
+func (q *Queries) GetUserTokenUsageInLastDay(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserTokenUsageInLastDay, userID)
+	var total_tokens int64
+	err := row.Scan(&total_tokens)
+	return total_tokens, err
+}
+
 const refreshUserRequestCountsView = `-- name: RefreshUserRequestCountsView :exec
 REFRESH MATERIALIZED VIEW CONCURRENTLY user_request_counts_daily
 `
 
 func (q *Queries) RefreshUserRequestCountsView(ctx context.Context) error {
 	_, err := q.db.ExecContext(ctx, refreshUserRequestCountsView)
+	return err
+}
+
+const refreshUserTokenUsageView = `-- name: RefreshUserTokenUsageView :exec
+REFRESH MATERIALIZED VIEW CONCURRENTLY user_token_usage_daily
+`
+
+func (q *Queries) RefreshUserTokenUsageView(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, refreshUserTokenUsageView)
 	return err
 }

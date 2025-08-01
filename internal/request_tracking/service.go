@@ -2,6 +2,7 @@ package request_tracking
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -74,11 +75,25 @@ func (s *Service) processLogRequest(ctx context.Context, info RequestInfo) {
 		model = &info.Model
 	}
 
+	var promptTokens, completionTokens, totalTokens sql.NullInt32
+	if info.PromptTokens != nil {
+		promptTokens = sql.NullInt32{Int32: int32(*info.PromptTokens), Valid: true}
+	}
+	if info.CompletionTokens != nil {
+		completionTokens = sql.NullInt32{Int32: int32(*info.CompletionTokens), Valid: true}
+	}
+	if info.TotalTokens != nil {
+		totalTokens = sql.NullInt32{Int32: int32(*info.TotalTokens), Valid: true}
+	}
+
 	params := pgdb.CreateRequestLogParams{
-		UserID:   info.UserID,
-		Endpoint: info.Endpoint,
-		Model:    model,
-		Provider: info.Provider,
+		UserID:           info.UserID,
+		Endpoint:         info.Endpoint,
+		Model:            model,
+		Provider:         info.Provider,
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		TotalTokens:      totalTokens,
 	}
 
 	if err := s.queries.CreateRequestLog(ctx, params); err != nil {
@@ -143,10 +158,13 @@ func (s *Service) handleLogRequest(lr logRequest) {
 }
 
 type RequestInfo struct {
-	UserID   string
-	Endpoint string
-	Model    string
-	Provider string
+	UserID           string
+	Endpoint         string
+	Model            string
+	Provider         string
+	PromptTokens     *int
+	CompletionTokens *int
+	TotalTokens      *int
 }
 
 func (s *Service) CheckRateLimit(ctx context.Context, userID string, maxRequestsPerDay int64) (bool, error) {
@@ -164,6 +182,24 @@ func (s *Service) GetUserRequestCountSince(ctx context.Context, userID string, s
 		CreatedAt: since,
 	}
 	return s.queries.GetUserRequestCountInTimeWindow(ctx, params)
+}
+
+// LogRequestWithTokensAsync queues a log request with token data to be processed by the worker pool.
+func (s *Service) LogRequestWithTokensAsync(ctx context.Context, info RequestInfo, tokenData *TokenUsage) error {
+	if tokenData != nil {
+		info.PromptTokens = &tokenData.PromptTokens
+		info.CompletionTokens = &tokenData.CompletionTokens
+		info.TotalTokens = &tokenData.TotalTokens
+	}
+
+	return s.LogRequestAsync(ctx, info)
+}
+
+// TokenUsage represents token usage data from API responses.
+type TokenUsage struct {
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
 }
 
 // GetProviderFromBaseURL maps base URLs to provider names.

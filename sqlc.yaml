@@ -54,6 +54,16 @@ sql:
               pointer: true
           - column: "user_request_counts_daily.day_bucket"
             go_type: "time.Time"
+          - column: "user_token_usage_daily.day_bucket"
+            go_type: "time.Time"
+          - column: "user_token_usage_daily.request_count"
+            go_type: "int64"
+          - column: "user_token_usage_daily.total_prompt_tokens"
+            go_type: "int64"
+          - column: "user_token_usage_daily.total_completion_tokens"
+            go_type: "int64"
+          - column: "user_token_usage_daily.total_tokens_used"
+            go_type: "int64"
           - db_type: "text"
             nullable: true
             go_type:

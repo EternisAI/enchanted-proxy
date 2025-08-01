@@ -64,6 +64,12 @@ func main() {
 	logger := logger.New(loggerConfig)
 	log := logger.WithComponent("main")
 
+	log.Info("logger initialized",
+		slog.String("log_level", config.AppConfig.LogLevel),
+		slog.String("log_format", config.AppConfig.LogFormat),
+		slog.String("effective_level", loggerConfig.Level.String()),
+	)
+
 	// Set Gin mode
 	log.Info("setting gin mode", slog.String("mode", config.AppConfig.GinMode))
 	gin.SetMode(config.AppConfig.GinMode)
@@ -318,11 +324,11 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	proxyGroup := router.Group("/")
 	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger))
 	{
-		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger))
-		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger))
-		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger))
-		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger))
-		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger))
+		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService))
+		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService))
+		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService))
+		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService))
+		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 	}
 
 	return router
