@@ -5,6 +5,7 @@
 package pgdb
 
 import (
+	"database/sql"
 	"time"
 )
 
@@ -25,12 +26,15 @@ type InviteCode struct {
 }
 
 type RequestLog struct {
-	ID        int64     `json:"id"`
-	UserID    string    `json:"userId"`
-	Endpoint  string    `json:"endpoint"`
-	Model     *string   `json:"model"`
-	Provider  string    `json:"provider"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID               int64         `json:"id"`
+	UserID           string        `json:"userId"`
+	Endpoint         string        `json:"endpoint"`
+	Model            *string       `json:"model"`
+	Provider         string        `json:"provider"`
+	CreatedAt        time.Time     `json:"createdAt"`
+	PromptTokens     sql.NullInt32 `json:"promptTokens"`
+	CompletionTokens sql.NullInt32 `json:"completionTokens"`
+	TotalTokens      sql.NullInt32 `json:"totalTokens"`
 }
 
 type TelegramChat struct {
@@ -45,4 +49,13 @@ type UserRequestCountsDaily struct {
 	UserID       string    `json:"userId"`
 	DayBucket    time.Time `json:"dayBucket"`
 	RequestCount int64     `json:"requestCount"`
+}
+
+type UserTokenUsageDaily struct {
+	UserID                string    `json:"userId"`
+	DayBucket             time.Time `json:"dayBucket"`
+	RequestCount          int64     `json:"requestCount"`
+	TotalPromptTokens     int64     `json:"totalPromptTokens"`
+	TotalCompletionTokens int64     `json:"totalCompletionTokens"`
+	TotalTokensUsed       int64     `json:"totalTokensUsed"`
 }

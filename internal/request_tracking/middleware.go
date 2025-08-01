@@ -48,17 +48,6 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger) 
 			slog.String("base_url", baseURL),
 			slog.String("method", c.Request.Method))
 
-		info := RequestInfo{
-			UserID:   userID,
-			Endpoint: endpoint,
-			Model:    "", // Not extracting model initially.
-			Provider: provider,
-		}
-
-		if err := trackingService.LogRequestAsync(c.Request.Context(), info); err != nil {
-			log.Error("failed to queue request log", slog.String("error", err.Error()))
-		}
-
 		c.Next()
 	}
 }
