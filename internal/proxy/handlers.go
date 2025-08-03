@@ -7,6 +7,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -19,6 +20,37 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"github.com/gin-gonic/gin"
 )
+
+var proxyTransport *http.Transport
+
+func initProxyTransport() {
+	if proxyTransport == nil {
+		// Adds connection pooling.
+		proxyTransport = &http.Transport{
+			MaxIdleConns:        config.AppConfig.ProxyMaxIdleConns,
+			MaxIdleConnsPerHost: config.AppConfig.ProxyMaxIdleConnsPerHost,
+			IdleConnTimeout:     time.Duration(config.AppConfig.ProxyIdleConnTimeout) * time.Second,
+			DisableKeepAlives:   false,
+			DisableCompression:  false,
+			ForceAttemptHTTP2:   true,
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+	}
+}
+
+func createReverseProxyWithPooling(target *url.URL) *httputil.ReverseProxy {
+	// Runs only once.
+	initProxyTransport()
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = proxyTransport
+	return proxy
+}
 
 func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -80,7 +112,7 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 		log.Info("proxy request started", logArgs...)
 
 		// Create reverse proxy for this specific target
-		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy := createReverseProxyWithPooling(target)
 
 		// Add error handler for upstream failures
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
