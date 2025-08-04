@@ -48,6 +48,12 @@ type Config struct {
 	DBConnMaxIdleTime int // in minutes
 	DBConnMaxLifetime int // in minutes
 
+	// HTTP Transport Connection Pool
+	ProxyMaxIdleConns        int
+	ProxyMaxIdleConnsPerHost int
+	ProxyMaxConnsPerHost     int
+	ProxyIdleConnTimeout     int // in seconds
+
 	// Worker Pool
 	RequestTrackingWorkerPoolSize int
 	RequestTrackingBufferSize     int
@@ -128,6 +134,12 @@ func LoadConfig() {
 		DBMaxIdleConns:    getEnvAsInt("DB_MAX_IDLE_CONNS", 5),
 		DBConnMaxIdleTime: getEnvAsInt("DB_CONN_MAX_IDLE_TIME_MINUTES", 1),
 		DBConnMaxLifetime: getEnvAsInt("DB_CONN_MAX_LIFETIME_MINUTES", 30),
+
+		// HTTP Transport Connection Pool
+		ProxyMaxIdleConns:        getEnvAsInt("PROXY_MAX_IDLE_CONNS", 100),
+		ProxyMaxIdleConnsPerHost: getEnvAsInt("PROXY_MAX_IDLE_CONNS_PER_HOST", 50),
+		ProxyMaxConnsPerHost:     getEnvAsInt("PROXY_MAX_CONNS_PER_HOST", 100),
+		ProxyIdleConnTimeout:     getEnvAsInt("PROXY_IDLE_CONN_TIMEOUT_SECONDS", 90),
 
 		// Worker Pool
 		RequestTrackingWorkerPoolSize: getEnvAsInt("REQUEST_TRACKING_WORKER_POOL_SIZE", 10),

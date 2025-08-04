@@ -3,14 +3,15 @@ package proxy
 import (
 	"bufio"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
@@ -19,6 +20,41 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"github.com/gin-gonic/gin"
 )
+
+var (
+	proxyTransport *http.Transport
+	transportOnce  sync.Once
+)
+
+func initProxyTransport() {
+	transportOnce.Do(func() {
+		// Adds connection pooling.
+		proxyTransport = &http.Transport{
+			MaxIdleConns:        config.AppConfig.ProxyMaxIdleConns,
+			MaxIdleConnsPerHost: config.AppConfig.ProxyMaxIdleConnsPerHost,
+			MaxConnsPerHost:     config.AppConfig.ProxyMaxConnsPerHost,
+			IdleConnTimeout:     time.Duration(config.AppConfig.ProxyIdleConnTimeout) * time.Second,
+			DisableKeepAlives:   false,
+			DisableCompression:  true,
+			ForceAttemptHTTP2:   true,
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+	})
+}
+
+func createReverseProxyWithPooling(target *url.URL) *httputil.ReverseProxy {
+	// Runs only once.
+	initProxyTransport()
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = proxyTransport
+	return proxy
+}
 
 func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -80,7 +116,7 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 		log.Info("proxy request started", logArgs...)
 
 		// Create reverse proxy for this specific target
-		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy := createReverseProxyWithPooling(target)
 
 		// Add error handler for upstream failures
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -116,6 +152,10 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			if userAgent := r.Header.Get("User-Agent"); !strings.Contains(userAgent, "OpenAI/Go") {
 				r.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 			}
+
+			// Disable gzip compression to avoid decompression overhead for now.
+			// TODO: @pottekkat check if we need to decompress and re-compress the response.
+			r.Header.Set("Accept-Encoding", "identity")
 
 			// Clean up proxy headers
 			r.Header.Del("X-Forwarded-For")
@@ -158,25 +198,20 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 
 		var reader io.Reader = originalBody
 
-		// Decompress gzipped responses if needed.
-		if strings.Contains(resp.Header.Get("Content-Encoding"), "gzip") {
-			gzReader, err := gzip.NewReader(originalBody)
-			if err != nil {
-				log.Error("failed to create gzip reader for streaming response", slog.String("error", err.Error()))
-				return
-			}
-			defer gzReader.Close() //nolint:errcheck
-			reader = gzReader
-			// Remove Content-Encoding header since we're decompressing.
-			// TODO: @pottekkat recompress the response body before sending it to the client.
-			resp.Header.Del("Content-Encoding")
-		}
-
 		scanner := bufio.NewScanner(reader)
-		var responseBodyBuilder strings.Builder
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 64KB initial, 1MB max.
 		var tokenUsage *Usage
+		var firstChunk string
 
+		ctx := c.Request.Context()
 		for scanner.Scan() {
+			select {
+			case <-ctx.Done():
+				log.Debug("client disconnected, stopping stream processing")
+				return
+			default:
+			}
+
 			line := scanner.Text()
 
 			// Pipe the line to the client immediately.
@@ -185,8 +220,9 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 				return
 			}
 
-			responseBodyBuilder.WriteString(line)
-			responseBodyBuilder.WriteByte('\n')
+			if firstChunk == "" && log.Enabled(ctx, slog.LevelDebug) && strings.HasPrefix(line, "data: ") && !strings.Contains(line, "[DONE]") {
+				firstChunk = line
+			}
 
 			// Extract the token usage from second to last chunk which contains a usage field.
 			// See: https://openrouter.ai/docs/use-cases/usage-accounting#streaming-with-usage-information
@@ -199,8 +235,7 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 			log.Error("scanner error while processing SSE stream", slog.String("error", err.Error()))
 		}
 
-		responseBody := responseBodyBuilder.String()
-		logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, []byte(responseBody), c.Request.Context())
+		logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, []byte(firstChunk), c.Request.Context())
 
 		logRequestToDatabase(c, trackingService, model, tokenUsage)
 	}()
@@ -216,15 +251,6 @@ func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model s
 	if resp.Body != nil {
 		responseBody, _ = io.ReadAll(resp.Body)
 		resp.Body = io.NopCloser(bytes.NewReader(responseBody))
-
-		if strings.Contains(resp.Header.Get("Content-Encoding"), "gzip") && len(responseBody) > 0 {
-			if gzReader, err := gzip.NewReader(bytes.NewReader(responseBody)); err == nil {
-				if decompressed, err := io.ReadAll(gzReader); err == nil {
-					responseBody = decompressed
-				}
-				defer gzReader.Close() //nolint:errcheck
-			}
-		}
 	}
 
 	var tokenUsage *Usage
