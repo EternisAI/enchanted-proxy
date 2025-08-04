@@ -35,7 +35,7 @@ func initProxyTransport() {
 			MaxConnsPerHost:     config.AppConfig.ProxyMaxConnsPerHost,
 			IdleConnTimeout:     time.Duration(config.AppConfig.ProxyIdleConnTimeout) * time.Second,
 			DisableKeepAlives:   false,
-			DisableCompression:  false,
+			DisableCompression:  true,
 			ForceAttemptHTTP2:   true,
 			DialContext: (&net.Dialer{
 				Timeout:   10 * time.Second,
