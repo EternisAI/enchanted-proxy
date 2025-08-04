@@ -137,8 +137,8 @@ func LoadConfig() {
 
 		// HTTP Transport Connection Pool
 		ProxyMaxIdleConns:        getEnvAsInt("PROXY_MAX_IDLE_CONNS", 100),
-		ProxyMaxIdleConnsPerHost: getEnvAsInt("PROXY_MAX_IDLE_CONNS_PER_HOST", 20),
-		ProxyMaxConnsPerHost:     getEnvAsInt("PROXY_MAX_CONNS_PER_HOST", 200),
+		ProxyMaxIdleConnsPerHost: getEnvAsInt("PROXY_MAX_IDLE_CONNS_PER_HOST", 50),
+		ProxyMaxConnsPerHost:     getEnvAsInt("PROXY_MAX_CONNS_PER_HOST", 100),
 		ProxyIdleConnTimeout:     getEnvAsInt("PROXY_IDLE_CONN_TIMEOUT_SECONDS", 90),
 
 		// Worker Pool
