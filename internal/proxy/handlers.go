@@ -38,10 +38,10 @@ func initProxyTransport() {
 			DisableCompression:  true,
 			ForceAttemptHTTP2:   true,
 			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
+				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
-			TLSHandshakeTimeout:   10 * time.Second,
+			TLSHandshakeTimeout:   30 * time.Second,
 			ResponseHeaderTimeout: 30 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 		}
