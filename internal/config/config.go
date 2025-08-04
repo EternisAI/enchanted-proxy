@@ -51,6 +51,7 @@ type Config struct {
 	// HTTP Transport Connection Pool
 	ProxyMaxIdleConns        int
 	ProxyMaxIdleConnsPerHost int
+	ProxyMaxConnsPerHost     int
 	ProxyIdleConnTimeout     int // in seconds
 
 	// Worker Pool
@@ -137,6 +138,7 @@ func LoadConfig() {
 		// HTTP Transport Connection Pool
 		ProxyMaxIdleConns:        getEnvAsInt("PROXY_MAX_IDLE_CONNS", 100),
 		ProxyMaxIdleConnsPerHost: getEnvAsInt("PROXY_MAX_IDLE_CONNS_PER_HOST", 20),
+		ProxyMaxConnsPerHost:     getEnvAsInt("PROXY_MAX_CONNS_PER_HOST", 200),
 		ProxyIdleConnTimeout:     getEnvAsInt("PROXY_IDLE_CONN_TIMEOUT_SECONDS", 90),
 
 		// Worker Pool
