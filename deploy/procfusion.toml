@@ -2,7 +2,7 @@
 command = "attestation-proxy -c /var/run/secrets/tls/tls.crt -k /var/run/secrets/tls/tls.key"
 
 [processes.dnsmasq]
-command = "dnsmasq -dhR -H /etc/hosts.enclave -a 127.0.0.1 -A /./127.0.0.1"
+command = "dnsmasq -dhR -H /etc/hosts.enclave -A /./127.0.0.1 -A /./::1"
 
 [processes.envoy]
 command = "envoy -l warning --component-log-level misc:error --concurrency 4 -c /etc/envoy/envoy.yaml"
