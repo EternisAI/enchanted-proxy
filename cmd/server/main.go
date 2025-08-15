@@ -26,6 +26,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/oauth"
 	"github.com/eternisai/enchanted-proxy/internal/proxy"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
+	"github.com/eternisai/enchanted-proxy/internal/search"
 	"github.com/eternisai/enchanted-proxy/internal/storage/pg"
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
 	"github.com/gin-gonic/gin"
@@ -39,7 +40,6 @@ var allowedBaseURLs = map[string]string{
 	"https://openrouter.ai/api/v1":     os.Getenv("OPENROUTER_API_KEY"),
 	"https://api.openai.com/v1":        os.Getenv("OPENAI_API_KEY"),
 	"https://inference.tinfoil.sh/v1/": os.Getenv("TINFOIL_API_KEY"),
-	"https://serpapi.com":              os.Getenv("SERPAPI_API_KEY"),
 }
 
 func waHandler(logger *logger.Logger) gin.HandlerFunc {
@@ -102,12 +102,14 @@ func main() {
 	inviteCodeService := invitecode.NewService(db.Queries)
 	requestTrackingService := request_tracking.NewService(db.Queries, logger.WithComponent("request_tracking"))
 	mcpService := mcp.NewService()
+	searchService := search.NewService(logger.WithComponent("search"))
 
 	// Initialize handlers
 	oauthHandler := oauth.NewHandler(oauthService, logger.WithComponent("oauth"))
 	composioHandler := composio.NewHandler(composioService, logger.WithComponent("composio"))
 	inviteCodeHandler := invitecode.NewHandler(inviteCodeService)
 	mcpHandler := mcp.NewHandler(mcpService)
+	searchHandler := search.NewHandler(searchService, logger.WithComponent("search"))
 
 	// Initialize NATS for Telegram
 	var natsClient *nats.Conn
@@ -159,6 +161,7 @@ func main() {
 		composioHandler:        composioHandler,
 		inviteCodeHandler:      inviteCodeHandler,
 		mcpHandler:             mcpHandler,
+		searchHandler:          searchHandler,
 	})
 
 	// Initialize GraphQL server for Telegram
@@ -257,6 +260,7 @@ type restServerInput struct {
 	composioHandler        *composio.Handler
 	inviteCodeHandler      *invitecode.Handler
 	mcpHandler             *mcp.Handler
+	searchHandler          *search.Handler
 }
 
 func setupRESTServer(input restServerInput) *gin.Engine {
@@ -319,6 +323,13 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		{
 			rateLimit.GET("/status", request_tracking.RateLimitStatusHandler(input.requestTrackingService))
 		}
+
+		// Search API routes (protected)
+		search := api.Group("/search")
+		{
+			search.GET("", input.searchHandler.SearchHandler)        // GET /api/v1/search?q=query
+			search.POST("", input.searchHandler.PostSearchHandler)  // POST /api/v1/search
+		}
 	}
 
 	// Protected proxy routes
@@ -331,10 +342,6 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService))
-		
-		// SerpAPI search endpoints
-		proxyGroup.GET("/search.json", proxy.ProxyHandler(input.logger, input.requestTrackingService))
-		proxyGroup.POST("/search.json", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 	}
 
 	return router

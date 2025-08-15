@@ -50,8 +50,6 @@ func getAPIKey(baseURL string, config *config.Config) string {
 		return config.OpenAIAPIKey
 	case "https://inference.tinfoil.sh/v1":
 		return config.TinfoilAPIKey
-	case "https://serpapi.com":
-		return config.SerpAPIKey
 	default:
 		return ""
 	}
