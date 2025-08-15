@@ -145,8 +145,16 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			orig(r)
 			r.Host = target.Host
 
-			// Set Authorization header with Bearer token
-			r.Header.Set("Authorization", "Bearer "+apiKey)
+			// Handle authentication based on service type
+			if baseURL == "https://serpapi.com" {
+				// SerpAPI uses query parameter authentication
+				q := r.URL.Query()
+				q.Set("api_key", apiKey)
+				r.URL.RawQuery = q.Encode()
+			} else {
+				// Standard Bearer token authentication for AI services
+				r.Header.Set("Authorization", "Bearer "+apiKey)
+			}
 
 			// Handle User-Agent header
 			if userAgent := r.Header.Get("User-Agent"); !strings.Contains(userAgent, "OpenAI/Go") {

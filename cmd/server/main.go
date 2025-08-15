@@ -39,6 +39,7 @@ var allowedBaseURLs = map[string]string{
 	"https://openrouter.ai/api/v1":     os.Getenv("OPENROUTER_API_KEY"),
 	"https://api.openai.com/v1":        os.Getenv("OPENAI_API_KEY"),
 	"https://inference.tinfoil.sh/v1/": os.Getenv("TINFOIL_API_KEY"),
+	"https://serpapi.com":              os.Getenv("SERPAPI_API_KEY"),
 }
 
 func waHandler(logger *logger.Logger) gin.HandlerFunc {
@@ -324,11 +325,16 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	proxyGroup := router.Group("/")
 	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger))
 	{
+		// AI service endpoints
 		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService))
+		
+		// SerpAPI search endpoints
+		proxyGroup.GET("/search.json", proxy.ProxyHandler(input.logger, input.requestTrackingService))
+		proxyGroup.POST("/search.json", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 	}
 
 	return router

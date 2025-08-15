@@ -36,6 +36,7 @@ egress:
   - api.openai.com
   - inference.tinfoil.sh
   - openrouter.ai
+  - serpapi.com
   # aws-0-us-east-2.pooler.supabase.com
   - 3.13.175.194
   - 3.139.14.59
@@ -69,6 +70,7 @@ env:
 - REQUEST_TRACKING_BUFFER_SIZE
 - REQUEST_TRACKING_TIMEOUT_SECONDS
 - REQUEST_TRACKING_WORKER_POOL_SIZE
+- SERPAPI_API_KEY
 - SERVER_SHUTDOWN_TIMEOUT_SECONDS
 - SLACK_CLIENT_ID
 - SLACK_CLIENT_SECRET
