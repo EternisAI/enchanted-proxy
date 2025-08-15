@@ -327,7 +327,6 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		// Search API routes (protected)
 		search := api.Group("/search")
 		{
-			search.GET("", input.searchHandler.SearchHandler)        // GET /api/v1/search?q=query
 			search.POST("", input.searchHandler.PostSearchHandler)  // POST /api/v1/search
 		}
 	}
