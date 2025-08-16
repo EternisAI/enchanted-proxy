@@ -147,14 +147,10 @@ func (s *Service) buildSerpAPIURL(req SearchRequest) (string, error) {
 	params.Set("engine", "duckduckgo")
 	params.Set("q", req.Query)
 
-	// Set count (results per page) - always use default of 10
-	count := 10
-	params.Set("s", fmt.Sprintf("%d", count))
-
 	// Always use US English settings
-	params.Set("kl", "us-en")    // Language: US English
-	params.Set("safe_search", "0") // Safe search: moderate
-	params.Set("region", "us-en")  // Region: US English
+	params.Set("kl", "us-en")     // Language/locale: US English (covers region)
+	params.Set("safe", "-1")      // Safe search: moderate (-1=moderate, 1=strict, -2=off)
+	params.Set("no_cache", "true") // Zero trace: prevent caching for privacy
 
 	// Set time filter if provided
 	if req.TimeFilter != "" {

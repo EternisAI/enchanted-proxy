@@ -68,17 +68,25 @@ func (h *Handler) PostSearchHandler(c *gin.Context) {
 	}
 
 	log.Info("processing search request",
-		slog.String("query", searchReq.Query),
 		slog.String("engine", searchReq.Engine),
+		slog.String("user_id", userID))
+	
+	// Log query at debug level for troubleshooting (if needed)
+	log.Debug("search query details",
+		slog.String("query", searchReq.Query),
 		slog.String("user_id", userID))
 
 	// Perform search
 	result, err := h.service.SearchDuckDuckGo(c.Request.Context(), searchReq)
 	if err != nil {
 		log.Error("search request failed",
-			slog.String("query", searchReq.Query),
 			slog.String("engine", searchReq.Engine),
 			slog.String("error", err.Error()),
+			slog.String("user_id", userID))
+		
+		// Log query at debug level for troubleshooting
+		log.Debug("failed search query details",
+			slog.String("query", "[REDACTED]"),
 			slog.String("user_id", userID))
 		
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -88,7 +96,6 @@ func (h *Handler) PostSearchHandler(c *gin.Context) {
 	}
 
 	log.Info("search request completed",
-		slog.String("query", searchReq.Query),
 		slog.Int("results_count", len(result.OrganicResults)),
 		slog.String("processing_time", result.ProcessingTime),
 		slog.String("user_id", userID))
