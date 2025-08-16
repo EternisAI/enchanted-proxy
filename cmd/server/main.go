@@ -324,11 +324,8 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 			rateLimit.GET("/status", request_tracking.RateLimitStatusHandler(input.requestTrackingService))
 		}
 
-		// Search API routes (protected)
-		search := api.Group("/search")
-		{
-			search.POST("", input.searchHandler.PostSearchHandler)  // POST /api/v1/search
-		}
+		// Search API route (protected)
+		api.POST("/search", input.searchHandler.PostSearchHandler)  // POST /api/v1/search
 	}
 
 	// Protected proxy routes

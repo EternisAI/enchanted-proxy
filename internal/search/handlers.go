@@ -55,9 +55,6 @@ func (h *Handler) PostSearchHandler(c *gin.Context) {
 	if searchReq.Engine == "" {
 		searchReq.Engine = "duckduckgo"
 	}
-	if searchReq.Count <= 0 || searchReq.Count > 30 {
-		searchReq.Count = 10
-	}
 
 	// Validate engine
 	if searchReq.Engine != "duckduckgo" {
@@ -73,7 +70,6 @@ func (h *Handler) PostSearchHandler(c *gin.Context) {
 	log.Info("processing search request",
 		slog.String("query", searchReq.Query),
 		slog.String("engine", searchReq.Engine),
-		slog.Int("count", searchReq.Count),
 		slog.String("user_id", userID))
 
 	// Perform search

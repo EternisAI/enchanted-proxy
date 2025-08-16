@@ -35,7 +35,6 @@ func NewService(logger *logger.Logger) *Service {
 type SearchRequest struct {
 	Query      string `json:"query" binding:"required"`
 	Engine     string `json:"engine,omitempty"`     // default: "duckduckgo"
-	Count      int    `json:"count,omitempty"`      // default: 10
 	TimeFilter string `json:"time_filter,omitempty"` // "d", "w", "m", "y"
 }
 
@@ -148,11 +147,8 @@ func (s *Service) buildSerpAPIURL(req SearchRequest) (string, error) {
 	params.Set("engine", "duckduckgo")
 	params.Set("q", req.Query)
 
-	// Set count (results per page)
-	count := req.Count
-	if count <= 0 || count > 30 {
-		count = 10 // Default to 10, max 30 for DuckDuckGo
-	}
+	// Set count (results per page) - always use default of 10
+	count := 10
 	params.Set("s", fmt.Sprintf("%d", count))
 
 	// Always use US English settings
