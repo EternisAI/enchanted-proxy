@@ -145,7 +145,7 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			orig(r)
 			r.Host = target.Host
 
-			// Set Authorization header with Bearer token
+			// Set Authorization header with Bearer token for AI services
 			r.Header.Set("Authorization", "Bearer "+apiKey)
 
 			// Handle User-Agent header
