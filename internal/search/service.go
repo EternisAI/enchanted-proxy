@@ -43,16 +43,8 @@ type SearchRequest struct {
 
 // ExaSearchRequest represents a search request for Exa API
 type ExaSearchRequest struct {
-	Query             string `json:"query" binding:"required"`
-	NumResults        int    `json:"num_results,omitempty"`        // default: 10, max: 10
-	StartPublishedDate string `json:"start_published_date,omitempty"` // YYYY-MM-DD format
-	EndPublishedDate  string `json:"end_published_date,omitempty"`   // YYYY-MM-DD format
-	UseAutoprompt     bool   `json:"use_autoprompt,omitempty"`     // improve search query automatically
-	Type              string `json:"type,omitempty"`               // search type: "neural", "keyword", or "auto"
-	Category          string `json:"category,omitempty"`           // filter by category
-	IncludeText       bool   `json:"include_text,omitempty"`       // include full page text
-	IncludeSummary    bool   `json:"include_summary,omitempty"`    // include AI-generated summary
-	SummaryQuery      string `json:"summary_query,omitempty"`      // custom prompt for AI summary
+	Query      string `json:"query" binding:"required"`
+	NumResults int    `json:"num_results,omitempty"` // default: 10, max: 10
 }
 
 // SearchResponse represents the standardized search response
@@ -321,7 +313,7 @@ func (s *Service) convertSerpAPIResponse(req SearchRequest, serpResp SerpAPIDuck
 func (s *Service) buildExaAPIPayload(req ExaSearchRequest) ([]byte, error) {
 	payload := map[string]interface{}{
 		"query": req.Query,
-		"type":  "auto", // default to auto
+		"type":  "auto", // always use auto search type
 	}
 
 	// Set number of results (default 10, max 10)
@@ -334,49 +326,15 @@ func (s *Service) buildExaAPIPayload(req ExaSearchRequest) ([]byte, error) {
 	}
 	payload["numResults"] = numResults
 
-	// Set search type if specified
-	if req.Type != "" {
-		payload["type"] = req.Type
+	// Configure content options - hardcoded values
+	contents := map[string]interface{}{
+		"summary": map[string]interface{}{
+			"query": "Summarize the entire content of the page without omitting any details, numbers, names, examples, or specific language. Include all sections, subheadings, and important bullet points. Preserve the original structure of the content as much as possible. Do not generalize—be as thorough and precise as if you were creating a comprehensive executive briefing based on the page.",
+		},
 	}
+	// Note: text is always excluded (include_text = false by default)
 
-	// Set date filters if provided
-	if req.StartPublishedDate != "" {
-		payload["startPublishedDate"] = req.StartPublishedDate
-	}
-	if req.EndPublishedDate != "" {
-		payload["endPublishedDate"] = req.EndPublishedDate
-	}
-
-	// Set category filter
-	if req.Category != "" {
-		payload["category"] = req.Category
-	}
-
-	// Set autoprompt option
-	if req.UseAutoprompt {
-		payload["useAutoprompt"] = true
-	}
-
-	// Configure content options
-	contents := make(map[string]interface{})
-	
-	// Include text if requested
-	if req.IncludeText {
-		contents["text"] = true
-	}
-
-	// Include summary if requested
-	if req.IncludeSummary {
-		summaryConfig := map[string]interface{}{}
-		if req.SummaryQuery != "" {
-			summaryConfig["query"] = req.SummaryQuery
-		}
-		contents["summary"] = summaryConfig
-	}
-
-	if len(contents) > 0 {
-		payload["contents"] = contents
-	}
+	payload["contents"] = contents
 
 	return json.Marshal(payload)
 }

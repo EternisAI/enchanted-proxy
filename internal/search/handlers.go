@@ -147,8 +147,6 @@ func (h *Handler) PostExaSearchHandler(c *gin.Context) {
 
 	log.Info("processing exa search request",
 		slog.Int("num_results", searchReq.NumResults),
-		slog.Bool("include_text", searchReq.IncludeText),
-		slog.Bool("include_summary", searchReq.IncludeSummary),
 		slog.String("user_id", userID))
 	
 	// Log query at debug level for troubleshooting (if needed)
