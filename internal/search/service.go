@@ -1,6 +1,7 @@
 package search
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,7 @@ type Service struct {
 	httpClient *http.Client
 	logger     *logger.Logger
 	serpAPIKey string
+	exaAPIKey  string
 }
 
 // NewService creates a new search service
@@ -28,6 +30,7 @@ func NewService(logger *logger.Logger) *Service {
 		},
 		logger:     logger,
 		serpAPIKey: config.AppConfig.SerpAPIKey,
+		exaAPIKey:  config.AppConfig.ExaAPIKey,
 	}
 }
 
@@ -36,6 +39,12 @@ type SearchRequest struct {
 	Query      string `json:"query" binding:"required"`
 	Engine     string `json:"engine,omitempty"`     // default: "duckduckgo"
 	TimeFilter string `json:"time_filter,omitempty"` // "d", "w", "m", "y"
+}
+
+// ExaSearchRequest represents a search request for Exa API
+type ExaSearchRequest struct {
+	Query      string `json:"query" binding:"required"`
+	NumResults int    `json:"num_results,omitempty"` // default: 10, max: 10
 }
 
 // SearchResponse represents the standardized search response
@@ -57,12 +66,39 @@ type SearchResult struct {
 	Source   string `json:"source,omitempty"`
 }
 
+// ExaSearchResult represents a single Exa search result
+type ExaSearchResult struct {
+	URL           string  `json:"url"`
+	Title         string  `json:"title"`
+	PublishedDate string  `json:"published_date,omitempty"`
+	Author        string  `json:"author,omitempty"`
+	Summary       string  `json:"summary,omitempty"`        // AI-generated summary if requested
+	Image         string  `json:"image,omitempty"`          // featured image URL
+	Favicon       string  `json:"favicon,omitempty"`        // favicon URL
+}
+
 // SearchMetadata contains metadata about the search
 type SearchMetadata struct {
 	TotalResults string `json:"total_results,omitempty"`
 	TimeTaken    string `json:"time_taken,omitempty"`
 	Engine       string `json:"engine"`
 	Status       string `json:"status"`
+}
+
+// ExaSearchResponse represents the response from Exa search
+type ExaSearchResponse struct {
+	Query          string            `json:"query"`
+	Results        []ExaSearchResult `json:"results"`
+	ProcessingTime string            `json:"processing_time"`
+	SearchMetadata ExaSearchMetadata `json:"search_metadata"`
+}
+
+// ExaSearchMetadata contains metadata about the Exa search
+type ExaSearchMetadata struct {
+	Engine        string `json:"engine"`
+	Status        string `json:"status"`
+	ResultsCount  int    `json:"results_count"`
+	ResponseTime  string `json:"response_time"`
 }
 
 // SerpAPIDuckDuckGoResponse represents the raw SerpAPI DuckDuckGo response
@@ -82,6 +118,24 @@ type SerpAPIDuckDuckGoResponse struct {
 		TotalTimeTaken float64 `json:"total_time_taken"`
 	} `json:"search_metadata"`
 	Error string `json:"error,omitempty"`
+}
+
+// ExaAPIResponse represents the raw response from Exa API
+type ExaAPIResponse struct {
+	Results []struct {
+		ID            string  `json:"id"`
+		URL           string  `json:"url"`
+		Title         string  `json:"title"`
+		Score         float64 `json:"score,omitempty"`
+		PublishedDate string  `json:"publishedDate,omitempty"`
+		Author        string  `json:"author,omitempty"`
+		Text          string  `json:"text,omitempty"`
+		Summary       string  `json:"summary,omitempty"`
+		Image         string  `json:"image,omitempty"`
+		Favicon       string  `json:"favicon,omitempty"`
+	} `json:"results"`
+	AutoPromptString string `json:"autopromptString,omitempty"`
+	RequestID        string `json:"requestId,omitempty"`
 }
 
 // SearchDuckDuckGo performs a DuckDuckGo search via SerpAPI
@@ -134,6 +188,59 @@ func (s *Service) SearchDuckDuckGo(ctx context.Context, req SearchRequest) (*Sea
 
 	// Convert to standardized response
 	searchResp := s.convertSerpAPIResponse(req, serpResp, time.Since(start))
+
+	return searchResp, nil
+}
+
+// SearchExa performs a search using Exa AI API
+func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSearchResponse, error) {
+	start := time.Now()
+	
+	if s.exaAPIKey == "" {
+		return nil, fmt.Errorf("Exa API key not configured")
+	}
+
+	// Build Exa API request payload
+	payload, err := s.buildExaAPIPayload(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build API payload: %w", err)
+	}
+
+	// Make HTTP request
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://api.exa.ai/search", bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-api-key", s.exaAPIKey)
+
+	resp, err := s.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check for HTTP errors
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Exa API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse Exa API response
+	var exaResp ExaAPIResponse
+	if err := json.Unmarshal(body, &exaResp); err != nil {
+		return nil, fmt.Errorf("failed to parse Exa API response: %w", err)
+	}
+
+	// Convert to standardized response
+	searchResp := s.convertExaAPIResponse(req, exaResp, time.Since(start))
 
 	return searchResp, nil
 }
@@ -199,6 +306,66 @@ func (s *Service) convertSerpAPIResponse(req SearchRequest, serpResp SerpAPIDuck
 			TimeTaken: fmt.Sprintf("%.2fs", serpResp.SearchMetadata.TotalTimeTaken),
 		},
 		ProcessingTime: fmt.Sprintf("%.2fms", float64(processingTime.Nanoseconds())/1000000),
+	}
+}
+
+// buildExaAPIPayload constructs the Exa API request payload
+func (s *Service) buildExaAPIPayload(req ExaSearchRequest) ([]byte, error) {
+	payload := map[string]interface{}{
+		"query": req.Query,
+		"type":  "auto", // always use auto search type
+	}
+
+	// Set number of results (default 10, max 10)
+	numResults := req.NumResults
+	if numResults <= 0 {
+		numResults = 10
+	}
+	if numResults > 10 {
+		numResults = 10
+	}
+	payload["numResults"] = numResults
+
+	// Configure content options - hardcoded values
+	contents := map[string]interface{}{
+		"summary": map[string]interface{}{
+			"query": "Summarize the entire content of the page without omitting any details, numbers, names, examples, or specific language. Include all sections, subheadings, and important bullet points. Preserve the original structure of the content as much as possible. Do not generalize—be as thorough and precise as if you were creating a comprehensive executive briefing based on the page.",
+		},
+	}
+	// Note: text is always excluded (include_text = false by default)
+
+	payload["contents"] = contents
+
+	return json.Marshal(payload)
+}
+
+// convertExaAPIResponse converts Exa API response to standardized format
+func (s *Service) convertExaAPIResponse(req ExaSearchRequest, exaResp ExaAPIResponse, processingTime time.Duration) *ExaSearchResponse {
+	// Convert results
+	results := make([]ExaSearchResult, 0, len(exaResp.Results))
+	for _, result := range exaResp.Results {
+		results = append(results, ExaSearchResult{
+			URL:           result.URL,
+			Title:         result.Title,
+			PublishedDate: result.PublishedDate,
+			Author:        result.Author,
+			Summary:       result.Summary,
+			Image:         result.Image,
+			Favicon:       result.Favicon,
+		})
+	}
+
+	// Build response
+	return &ExaSearchResponse{
+		Query:          req.Query,
+		Results:        results,
+		ProcessingTime: fmt.Sprintf("%.2fms", float64(processingTime.Nanoseconds())/1000000),
+		SearchMetadata: ExaSearchMetadata{
+			Engine:       "exa",
+			Status:       "success",
+			ResultsCount: len(results),
+			ResponseTime: fmt.Sprintf("%.2fms", float64(processingTime.Nanoseconds())/1000000),
+		},
 	}
 }
 
