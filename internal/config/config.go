@@ -24,6 +24,8 @@ type Config struct {
 	OpenAIAPIKey          string
 	OpenRouterAPIKey      string
 	TinfoilAPIKey         string
+	SerpAPIKey            string
+	ExaAPIKey            string
 	ValidatorType         string // "jwk" or "firebase"
 	JWTJWKSURL            string
 	FirebaseCredJSON      string
@@ -110,6 +112,12 @@ func LoadConfig() {
 		// Tinfoil
 		TinfoilAPIKey: getEnvOrDefault("TINFOIL_API_KEY", ""),
 
+		// SerpAPI
+		SerpAPIKey: getEnvOrDefault("SERPAPI_API_KEY", ""),
+
+		// Exa AI
+		ExaAPIKey: getEnvOrDefault("EXA_API_KEY", ""),
+
 		// Validator
 		ValidatorType:    getEnvOrDefault("VALIDATOR_TYPE", "firebase"),
 		JWTJWKSURL:       getEnvOrDefault("JWT_JWKS_URL", ""),
@@ -176,6 +184,14 @@ func LoadConfig() {
 
 	if AppConfig.ReplicateAPIToken == "" {
 		log.Println("Warning: Replicate API token is missing. Please set REPLICATE_API_TOKEN environment variable.")
+	}
+
+	if AppConfig.SerpAPIKey == "" {
+		log.Println("Warning: SerpAPI key is missing. Please set SERPAPI_API_KEY environment variable.")
+	}
+
+	if AppConfig.ExaAPIKey == "" {
+		log.Println("Warning: Exa AI API key is missing. Please set EXA_API_KEY environment variable.")
 	}
 
 	if AppConfig.TelegramToken != "" {

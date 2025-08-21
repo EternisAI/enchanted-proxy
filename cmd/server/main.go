@@ -26,6 +26,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/oauth"
 	"github.com/eternisai/enchanted-proxy/internal/proxy"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
+	"github.com/eternisai/enchanted-proxy/internal/search"
 	"github.com/eternisai/enchanted-proxy/internal/storage/pg"
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
 	"github.com/gin-gonic/gin"
@@ -101,12 +102,14 @@ func main() {
 	inviteCodeService := invitecode.NewService(db.Queries)
 	requestTrackingService := request_tracking.NewService(db.Queries, logger.WithComponent("request_tracking"))
 	mcpService := mcp.NewService()
+	searchService := search.NewService(logger.WithComponent("search"))
 
 	// Initialize handlers
 	oauthHandler := oauth.NewHandler(oauthService, logger.WithComponent("oauth"))
 	composioHandler := composio.NewHandler(composioService, logger.WithComponent("composio"))
 	inviteCodeHandler := invitecode.NewHandler(inviteCodeService)
 	mcpHandler := mcp.NewHandler(mcpService)
+	searchHandler := search.NewHandler(searchService, logger.WithComponent("search"))
 
 	// Initialize NATS for Telegram
 	var natsClient *nats.Conn
@@ -158,6 +161,7 @@ func main() {
 		composioHandler:        composioHandler,
 		inviteCodeHandler:      inviteCodeHandler,
 		mcpHandler:             mcpHandler,
+		searchHandler:          searchHandler,
 	})
 
 	// Initialize GraphQL server for Telegram
@@ -256,6 +260,7 @@ type restServerInput struct {
 	composioHandler        *composio.Handler
 	inviteCodeHandler      *invitecode.Handler
 	mcpHandler             *mcp.Handler
+	searchHandler          *search.Handler
 }
 
 func setupRESTServer(input restServerInput) *gin.Engine {
@@ -318,12 +323,17 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		{
 			rateLimit.GET("/status", request_tracking.RateLimitStatusHandler(input.requestTrackingService))
 		}
+
+		// Search API routes (protected)
+		api.POST("/search", input.searchHandler.PostSearchHandler)      // POST /api/v1/search (SerpAPI)
+		api.POST("/exa/search", input.searchHandler.PostExaSearchHandler) // POST /api/v1/exa/search (Exa AI)
 	}
 
 	// Protected proxy routes
 	proxyGroup := router.Group("/")
 	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger))
 	{
+		// AI service endpoints
 		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService))
