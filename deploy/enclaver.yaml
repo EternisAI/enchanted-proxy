@@ -37,6 +37,7 @@ egress:
   - inference.tinfoil.sh
   - openrouter.ai
   - serpapi.com
+  - api.exa.ai
   # aws-0-us-east-2.pooler.supabase.com
   - 3.13.175.194
   - 3.139.14.59
