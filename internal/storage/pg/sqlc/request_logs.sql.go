@@ -87,7 +87,7 @@ func (q *Queries) GetUserTokenUsageInLastDay(ctx context.Context, userID string)
 }
 
 const getUserTokenUsageInTimeWindow = `-- name: GetUserTokenUsageInTimeWindow :one
-SELECT COALESCE(SUM(total_tokens), 0)::BIGINT as total_tokens
+SELECT COALESCE(SUM(total_tokens_used), 0)::BIGINT as total_tokens
 FROM user_token_usage_daily 
 WHERE user_id = $1 
   AND day_bucket >= $2
