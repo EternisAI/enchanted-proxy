@@ -14,7 +14,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 )
 
-// Service handles search operations
+// Service handles search operations.
 type Service struct {
 	httpClient *http.Client
 	logger     *logger.Logger
@@ -22,7 +22,7 @@ type Service struct {
 	exaAPIKey  string
 }
 
-// NewService creates a new search service
+// NewService creates a new search service.
 func NewService(logger *logger.Logger) *Service {
 	return &Service{
 		httpClient: &http.Client{
@@ -34,30 +34,30 @@ func NewService(logger *logger.Logger) *Service {
 	}
 }
 
-// SearchRequest represents a search request from the client
+// SearchRequest represents a search request from the client.
 type SearchRequest struct {
 	Query      string `json:"query" binding:"required"`
-	Engine     string `json:"engine,omitempty"`     // default: "duckduckgo"
+	Engine     string `json:"engine,omitempty"`      // default: "duckduckgo"
 	TimeFilter string `json:"time_filter,omitempty"` // "d", "w", "m", "y"
 }
 
-// ExaSearchRequest represents a search request for Exa API
+// ExaSearchRequest represents a search request for Exa API.
 type ExaSearchRequest struct {
 	Query      string `json:"query" binding:"required"`
 	NumResults int    `json:"num_results,omitempty"` // default: 10, max: 10
 }
 
-// SearchResponse represents the standardized search response
+// SearchResponse represents the standardized search response.
 type SearchResponse struct {
-	Query           string         `json:"query"`
-	Engine          string         `json:"engine"`
-	OrganicResults  []SearchResult `json:"organic_results"`
-	RelatedQueries  []string       `json:"related_queries,omitempty"`
-	SearchMetadata  SearchMetadata `json:"search_metadata"`
-	ProcessingTime  string         `json:"processing_time"`
+	Query          string         `json:"query"`
+	Engine         string         `json:"engine"`
+	OrganicResults []SearchResult `json:"organic_results"`
+	RelatedQueries []string       `json:"related_queries,omitempty"`
+	SearchMetadata SearchMetadata `json:"search_metadata"`
+	ProcessingTime string         `json:"processing_time"`
 }
 
-// SearchResult represents a single search result
+// SearchResult represents a single search result.
 type SearchResult struct {
 	Position int    `json:"position"`
 	Title    string `json:"title"`
@@ -66,18 +66,18 @@ type SearchResult struct {
 	Source   string `json:"source,omitempty"`
 }
 
-// ExaSearchResult represents a single Exa search result
+// ExaSearchResult represents a single Exa search result.
 type ExaSearchResult struct {
-	URL           string  `json:"url"`
-	Title         string  `json:"title"`
-	PublishedDate string  `json:"published_date,omitempty"`
-	Author        string  `json:"author,omitempty"`
-	Summary       string  `json:"summary,omitempty"`        // AI-generated summary if requested
-	Image         string  `json:"image,omitempty"`          // featured image URL
-	Favicon       string  `json:"favicon,omitempty"`        // favicon URL
+	URL           string `json:"url"`
+	Title         string `json:"title"`
+	PublishedDate string `json:"published_date,omitempty"`
+	Author        string `json:"author,omitempty"`
+	Summary       string `json:"summary,omitempty"` // AI-generated summary if requested
+	Image         string `json:"image,omitempty"`   // featured image URL
+	Favicon       string `json:"favicon,omitempty"` // favicon URL
 }
 
-// SearchMetadata contains metadata about the search
+// SearchMetadata contains metadata about the search.
 type SearchMetadata struct {
 	TotalResults string `json:"total_results,omitempty"`
 	TimeTaken    string `json:"time_taken,omitempty"`
@@ -85,7 +85,7 @@ type SearchMetadata struct {
 	Status       string `json:"status"`
 }
 
-// ExaSearchResponse represents the response from Exa search
+// ExaSearchResponse represents the response from Exa search.
 type ExaSearchResponse struct {
 	Query          string            `json:"query"`
 	Results        []ExaSearchResult `json:"results"`
@@ -93,15 +93,15 @@ type ExaSearchResponse struct {
 	SearchMetadata ExaSearchMetadata `json:"search_metadata"`
 }
 
-// ExaSearchMetadata contains metadata about the Exa search
+// ExaSearchMetadata contains metadata about the Exa search.
 type ExaSearchMetadata struct {
-	Engine        string `json:"engine"`
-	Status        string `json:"status"`
-	ResultsCount  int    `json:"results_count"`
-	ResponseTime  string `json:"response_time"`
+	Engine       string `json:"engine"`
+	Status       string `json:"status"`
+	ResultsCount int    `json:"results_count"`
+	ResponseTime string `json:"response_time"`
 }
 
-// SerpAPIDuckDuckGoResponse represents the raw SerpAPI DuckDuckGo response
+// SerpAPIDuckDuckGoResponse represents the raw SerpAPI DuckDuckGo response.
 type SerpAPIDuckDuckGoResponse struct {
 	OrganicResults []struct {
 		Position int    `json:"position"`
@@ -113,14 +113,14 @@ type SerpAPIDuckDuckGoResponse struct {
 		Query string `json:"query"`
 	} `json:"related_searches"`
 	SearchMetadata struct {
-		Status         string `json:"status"`
-		ProcessedAt    string `json:"processed_at"`
+		Status         string  `json:"status"`
+		ProcessedAt    string  `json:"processed_at"`
 		TotalTimeTaken float64 `json:"total_time_taken"`
 	} `json:"search_metadata"`
 	Error string `json:"error,omitempty"`
 }
 
-// ExaAPIResponse represents the raw response from Exa API
+// ExaAPIResponse represents the raw response from Exa API.
 type ExaAPIResponse struct {
 	Results []struct {
 		ID            string  `json:"id"`
@@ -138,10 +138,10 @@ type ExaAPIResponse struct {
 	RequestID        string `json:"requestId,omitempty"`
 }
 
-// SearchDuckDuckGo performs a DuckDuckGo search via SerpAPI
+// SearchDuckDuckGo performs a DuckDuckGo search via SerpAPI.
 func (s *Service) SearchDuckDuckGo(ctx context.Context, req SearchRequest) (*SearchResponse, error) {
 	start := time.Now()
-	
+
 	if s.serpAPIKey == "" {
 		return nil, fmt.Errorf("SerpAPI key not configured")
 	}
@@ -162,7 +162,7 @@ func (s *Service) SearchDuckDuckGo(ctx context.Context, req SearchRequest) (*Sea
 	if err != nil {
 		return nil, fmt.Errorf("failed to make request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
@@ -192,12 +192,12 @@ func (s *Service) SearchDuckDuckGo(ctx context.Context, req SearchRequest) (*Sea
 	return searchResp, nil
 }
 
-// SearchExa performs a search using Exa AI API
+// SearchExa performs a search using Exa AI API.
 func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSearchResponse, error) {
 	start := time.Now()
-	
+
 	if s.exaAPIKey == "" {
-		return nil, fmt.Errorf("Exa API key not configured")
+		return nil, fmt.Errorf("failed to create request: Exa API key not configured")
 	}
 
 	// Build Exa API request payload
@@ -220,7 +220,7 @@ func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSear
 	if err != nil {
 		return nil, fmt.Errorf("failed to make request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
@@ -230,7 +230,7 @@ func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSear
 
 	// Check for HTTP errors
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Exa API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("request to Exa API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse Exa API response
@@ -245,18 +245,18 @@ func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSear
 	return searchResp, nil
 }
 
-// buildSerpAPIURL constructs the SerpAPI request URL
+// buildSerpAPIURL constructs the SerpAPI request URL.
 func (s *Service) buildSerpAPIURL(req SearchRequest) (string, error) {
 	baseURL := "https://serpapi.com/search.json"
-	
+
 	params := url.Values{}
 	params.Set("api_key", s.serpAPIKey)
 	params.Set("engine", "duckduckgo")
 	params.Set("q", req.Query)
 
 	// Always use US English settings
-	params.Set("kl", "us-en")     // Language/locale: US English (covers region)
-	params.Set("safe", "-1")      // Safe search: moderate (-1=moderate, 1=strict, -2=off)
+	params.Set("kl", "us-en")      // Language/locale: US English (covers region)
+	params.Set("safe", "-1")       // Safe search: moderate (-1=moderate, 1=strict, -2=off)
 	params.Set("no_cache", "true") // Zero trace: prevent caching for privacy
 
 	// Set time filter if provided
@@ -267,7 +267,7 @@ func (s *Service) buildSerpAPIURL(req SearchRequest) (string, error) {
 	return baseURL + "?" + params.Encode(), nil
 }
 
-// convertSerpAPIResponse converts SerpAPI response to standardized format
+// convertSerpAPIResponse converts SerpAPI response to standardized format.
 func (s *Service) convertSerpAPIResponse(req SearchRequest, serpResp SerpAPIDuckDuckGoResponse, processingTime time.Duration) *SearchResponse {
 	// Convert organic results
 	results := make([]SearchResult, 0, len(serpResp.OrganicResults))
@@ -301,15 +301,15 @@ func (s *Service) convertSerpAPIResponse(req SearchRequest, serpResp SerpAPIDuck
 		OrganicResults: results,
 		RelatedQueries: relatedQueries,
 		SearchMetadata: SearchMetadata{
-			Engine: engine,
-			Status: serpResp.SearchMetadata.Status,
+			Engine:    engine,
+			Status:    serpResp.SearchMetadata.Status,
 			TimeTaken: fmt.Sprintf("%.2fs", serpResp.SearchMetadata.TotalTimeTaken),
 		},
 		ProcessingTime: fmt.Sprintf("%.2fms", float64(processingTime.Nanoseconds())/1000000),
 	}
 }
 
-// buildExaAPIPayload constructs the Exa API request payload
+// buildExaAPIPayload constructs the Exa API request payload.
 func (s *Service) buildExaAPIPayload(req ExaSearchRequest) ([]byte, error) {
 	payload := map[string]interface{}{
 		"query": req.Query,
@@ -339,7 +339,7 @@ func (s *Service) buildExaAPIPayload(req ExaSearchRequest) ([]byte, error) {
 	return json.Marshal(payload)
 }
 
-// convertExaAPIResponse converts Exa API response to standardized format
+// convertExaAPIResponse converts Exa API response to standardized format.
 func (s *Service) convertExaAPIResponse(req ExaSearchRequest, exaResp ExaAPIResponse, processingTime time.Duration) *ExaSearchResponse {
 	// Convert results
 	results := make([]ExaSearchResult, 0, len(exaResp.Results))
@@ -369,7 +369,7 @@ func (s *Service) convertExaAPIResponse(req ExaSearchRequest, exaResp ExaAPIResp
 	}
 }
 
-// extractDomain extracts domain from URL for display
+// extractDomain extracts domain from URL for display.
 func extractDomain(urlStr string) string {
 	if u, err := url.Parse(urlStr); err == nil {
 		return u.Host

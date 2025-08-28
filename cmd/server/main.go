@@ -205,7 +205,7 @@ func main() {
 				mode = "LOG-ONLY"
 			}
 			log.Info("rate limiting enabled",
-				slog.Int64("limit", config.AppConfig.RateLimitRequestsPerDay),
+				slog.Int64("limit", config.AppConfig.RateLimitTokensPerDay),
 				slog.String("mode", mode))
 		} else {
 			log.Info("rate limiting disabled")
@@ -325,7 +325,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		}
 
 		// Search API routes (protected)
-		api.POST("/search", input.searchHandler.PostSearchHandler)      // POST /api/v1/search (SerpAPI)
+		api.POST("/search", input.searchHandler.PostSearchHandler)        // POST /api/v1/search (SerpAPI)
 		api.POST("/exa/search", input.searchHandler.PostExaSearchHandler) // POST /api/v1/exa/search (Exa AI)
 	}
 

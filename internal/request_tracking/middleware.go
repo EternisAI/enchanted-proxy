@@ -22,16 +22,16 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger) 
 		log := logger.WithContext(c.Request.Context()).WithComponent("request_tracking")
 
 		if config.AppConfig.RateLimitEnabled {
-			isUnderLimit, err := trackingService.CheckRateLimit(c.Request.Context(), userID, config.AppConfig.RateLimitRequestsPerDay)
+			isUnderLimit, err := trackingService.CheckRateLimit(c.Request.Context(), userID, config.AppConfig.RateLimitTokensPerDay)
 			if err != nil {
 				log.Error("failed to check rate limit", slog.String("error", err.Error()))
 			} else if !isUnderLimit {
-				log.Warn("rate limit exceeded", slog.Int64("limit", config.AppConfig.RateLimitRequestsPerDay))
+				log.Warn("rate limit exceeded", slog.Int64("limit", config.AppConfig.RateLimitTokensPerDay))
 
 				if !config.AppConfig.RateLimitLogOnly {
-					c.JSON(http.StatusTooManyRequests, gin.H{
+					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 						"error": "Rate limit exceeded. Please try again later.",
-						"limit": config.AppConfig.RateLimitRequestsPerDay,
+						"limit": config.AppConfig.RateLimitTokensPerDay,
 					})
 					return
 				}

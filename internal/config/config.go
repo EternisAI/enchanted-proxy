@@ -25,7 +25,7 @@ type Config struct {
 	OpenRouterAPIKey      string
 	TinfoilAPIKey         string
 	SerpAPIKey            string
-	ExaAPIKey            string
+	ExaAPIKey             string
 	ValidatorType         string // "jwk" or "firebase"
 	JWTJWKSURL            string
 	FirebaseCredJSON      string
@@ -35,9 +35,9 @@ type Config struct {
 	ReplicateAPIToken string
 
 	// Rate Limiting
-	RateLimitEnabled        bool
-	RateLimitRequestsPerDay int64
-	RateLimitLogOnly        bool // If true, only log violations, don't block.
+	RateLimitEnabled      bool
+	RateLimitTokensPerDay int64
+	RateLimitLogOnly      bool // If true, only log violations, don't block.
 
 	// Telegram
 	EnableTelegramServer bool
@@ -128,9 +128,9 @@ func LoadConfig() {
 		ReplicateAPIToken: getEnvOrDefault("REPLICATE_API_TOKEN", ""),
 
 		// Rate Limiting
-		RateLimitEnabled:        getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
-		RateLimitRequestsPerDay: getEnvAsInt64("RATE_LIMIT_REQUESTS_PER_DAY", 100),
-		RateLimitLogOnly:        getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
+		RateLimitEnabled:      getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
+		RateLimitTokensPerDay: getEnvAsInt64("RATE_LIMIT_TOKENS_PER_DAY", 100),
+		RateLimitLogOnly:      getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
 
 		// Telegram
 		EnableTelegramServer: getEnvOrDefault("ENABLE_TELEGRAM_SERVER", "true") == "true",

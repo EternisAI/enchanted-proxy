@@ -26,7 +26,7 @@ func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
 			return
 		}
 
-		isUnderLimit, err := trackingService.CheckRateLimit(c.Request.Context(), userID, config.AppConfig.RateLimitRequestsPerDay)
+		isUnderLimit, err := trackingService.CheckRateLimit(c.Request.Context(), userID, config.AppConfig.RateLimitTokensPerDay)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check rate limit"})
 			return
@@ -34,17 +34,18 @@ func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
 
 		// Get current request count for the user in the last day
 		oneDayAgo := time.Now().Add(-24 * time.Hour)
-		requestCount, err := trackingService.GetUserRequestCountSince(c.Request.Context(), userID, oneDayAgo)
+
+		tokenUsage, err := trackingService.GetUserTokenUsageSince(c.Request.Context(), userID, oneDayAgo)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get request count"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get token usage"})
 			return
 		}
 
 		c.JSON(http.StatusOK, gin.H{
 			"enabled":       config.AppConfig.RateLimitEnabled,
-			"limit":         config.AppConfig.RateLimitRequestsPerDay,
-			"current_count": requestCount,
-			"remaining":     config.AppConfig.RateLimitRequestsPerDay - requestCount,
+			"limit":         config.AppConfig.RateLimitTokensPerDay,
+			"used":          tokenUsage,
+			"remaining":     config.AppConfig.RateLimitTokensPerDay - tokenUsage,
 			"under_limit":   isUnderLimit,
 			"log_only_mode": config.AppConfig.RateLimitLogOnly,
 		})
