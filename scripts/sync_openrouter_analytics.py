@@ -110,7 +110,7 @@ def send_to_posthog(api_key: str, host: str, event_data: Dict[str, Any], date: s
     payload = {
         "api_key": api_key,
         "event": "openrouter_daily_activity",
-        "distinct_id": "enchanted_ios_system",
+        "distinct_id": "enchanted_github_actions",
         "properties": event_data,
         "timestamp": timestamp
     }
