@@ -33,7 +33,7 @@ func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
 		}
 
 		// Get current request count for the user in the last day.
-		now := time.Now()
+		now := time.Now().UTC()
 		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
 		tokenUsage, err := trackingService.GetUserTokenUsageSince(c.Request.Context(), userID, dayStart)
