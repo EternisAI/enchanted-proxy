@@ -129,7 +129,7 @@ func LoadConfig() {
 
 		// Rate Limiting
 		RateLimitEnabled:      getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
-		RateLimitTokensPerDay: getEnvAsInt64("RATE_LIMIT_TOKENS_PER_DAY", 100),
+		RateLimitTokensPerDay: getEnvAsInt64("RATE_LIMIT_TOKENS_PER_DAY", 1000000),
 		RateLimitLogOnly:      getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
 
 		// Telegram
