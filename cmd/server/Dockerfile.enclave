@@ -38,7 +38,7 @@ RUN git clone --depth 1 https://github.com/linkdd/procfusion.git && \
 RUN cargo build --release --manifest-path /root/procfusion/Cargo.toml
 
 # Fetch attestation-proxy
-FROM public.ecr.aws/f5z1z8p0/attestation-proxy/server:sha-042634d@sha256:4cf287618a63ea6bce2519819d58775bcbd9bf6ff6908c0988330631730f92a0 AS attestation_proxy
+FROM public.ecr.aws/f5z1z8p0/attestation-proxy/server:sha-d156211@sha256:941d4eb028ec6c4c06e7eb4bfa3faf87a7ab3af09d6210f3af8984aef67716c4 AS attestation_proxy
 
 # Runtime stage
 FROM envoyproxy/envoy:v1.35.1@sha256:522f4f88bdd741fe87b813bdca678a11c13e42e630cc4304a9e18193813c935d

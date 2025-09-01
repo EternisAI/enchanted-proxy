@@ -1,5 +1,5 @@
 [processes.attestation]
-command = "attestation-proxy -c /var/run/secrets/tls/tls.crt -k /var/run/secrets/tls/tls.key"
+command = "attestation-proxy -c /var/run/secrets/tls/tls.crt -k /var/run/secrets/tls/tls.key -e GIN_MODE,LOG_LEVEL"
 
 [processes.dnsmasq]
 command = "dnsmasq -dhR -H /etc/hosts.enclave -A /./127.0.0.1 -A /./::1"
