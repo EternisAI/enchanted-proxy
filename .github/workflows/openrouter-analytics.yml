@@ -32,10 +32,10 @@ jobs:
       matrix:
         include:
           - key_name: OPENROUTER_MOBILE_API_KEY
-            event_name: test_openrouter_daily_activity
+            event_name: openrouter_daily_activity
             account: Mobile
           - key_name: OPENROUTER_DESKTOP_API_KEY
-            event_name: test_openrouter_daily_activity_desktop
+            event_name: openrouter_daily_activity_desktop
             account: Desktop
 
     name: Sync ${{ matrix.account }} account
