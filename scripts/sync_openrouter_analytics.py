@@ -101,7 +101,7 @@ def transform_activity_data(raw_data: List[Dict[str, Any]], date: str) -> Dict[s
     }
 
 
-def send_to_posthog(api_key: str, host: str, event_data: Dict[str, Any], date: str) -> None:
+def send_to_posthog(api_key: str, host: str, event_data: Dict[str, Any], date: str, event_name: str) -> None:
     """Send event to PostHog."""
     url = f"{host}/i/v0/e/"
     
@@ -109,7 +109,7 @@ def send_to_posthog(api_key: str, host: str, event_data: Dict[str, Any], date: s
     
     payload = {
         "api_key": api_key,
-        "event": "openrouter_daily_activity",
+        "event": event_name,
         "distinct_id": "enchanted_github_actions",
         "properties": event_data,
         "timestamp": timestamp
@@ -140,7 +140,7 @@ def parse_date_range(start_date: str, end_date: str = None) -> List[str]:
     return dates
 
 
-def sync_date(openrouter_key: str, posthog_key: str, posthog_host: str, date: str) -> None:
+def sync_date(openrouter_key: str, posthog_key: str, posthog_host: str, date: str, event_name: str) -> None:
     """Sync data for a single date."""
     print(f"Fetching OpenRouter activity for {date}")
     
@@ -151,7 +151,7 @@ def sync_date(openrouter_key: str, posthog_key: str, posthog_host: str, date: st
         event_data = transform_activity_data(raw_data, date)
         print(f"Processed data: ${event_data['total_cost']:.2f} total cost, {event_data['model_count']} models")
         
-        send_to_posthog(posthog_key, posthog_host, event_data, date)
+        send_to_posthog(posthog_key, posthog_host, event_data, date, event_name)
         print("✅ Successfully sent data to PostHog")
         
     except requests.RequestException as e:
@@ -168,16 +168,18 @@ def main():
     parser.add_argument("--date", help="Specific date to sync (YYYY-MM-DD). Defaults to yesterday.")
     parser.add_argument("--start-date", help="Start date for range sync (YYYY-MM-DD)")
     parser.add_argument("--end-date", help="End date for range sync (YYYY-MM-DD)")
+    parser.add_argument("--key-name", help="Environment variable name for the API key", default="OPENROUTER_API_KEY")
+    parser.add_argument("--event-name", help="Event name to send to PostHog", default="openrouter_daily_activity")
     
     args = parser.parse_args()
     
-    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    openrouter_key = os.getenv(args.key_name)
     posthog_key = os.getenv("POSTHOG_API_KEY")
     posthog_host = os.getenv("POSTHOG_HOST")
     
     if not all([openrouter_key, posthog_key, posthog_host]):
         print("Error: Missing required environment variables")
-        print("Required: OPENROUTER_API_KEY, POSTHOG_API_KEY, POSTHOG_HOST")
+        print(f"Required: {args.key_name}, POSTHOG_API_KEY, POSTHOG_HOST")
         sys.exit(1)
     
     if args.start_date:
@@ -193,7 +195,7 @@ def main():
     success_count = 0
     for date in dates:
         try:
-            sync_date(openrouter_key, posthog_key, posthog_host, date)
+            sync_date(openrouter_key, posthog_key, posthog_host, date, args.event_name)
             success_count += 1
         except Exception:
             print(f"Skipping {date} due to error")

@@ -87,8 +87,14 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			return
 		}
 
+		platform := c.GetHeader("X-Client-Platform")
+		if platform == "" {
+			log.Warn("missing client platform header, defaulting to mobile")
+			platform = "mobile"
+		}
+
 		// Check if base URL is in our allowed dictionary
-		apiKey := getAPIKey(baseURL, config.AppConfig)
+		apiKey := getAPIKey(baseURL, platform, config.AppConfig)
 		if apiKey == "" {
 			log.Warn("unauthorized base url", slog.String("base_url", baseURL))
 			c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized base URL"})
@@ -161,6 +167,7 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			r.Header.Del("X-Forwarded-For")
 			r.Header.Del("X-Real-Ip")
 			r.Header.Del("X-BASE-URL") // Remove our custom header before forwarding
+			r.Header.Del("X-Client-Platform")
 		}
 
 		// Some canceled requests by clients could cause panic.
