@@ -22,8 +22,8 @@ on:
 env:
   POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
   POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
-  OPENROUTER_MOBILE_PROVISIONING_KEY: ${{ secrets.OPENROUTER_MOBILE_PROVISIONING_KEY }}
-  OPENROUTER_DESKTOP_PROVISIONING_KEY: ${{ secrets.OPENROUTER_DESKTOP_PROVISIONING_KEY }}
+  OPENROUTER_MOBILE_API_KEY: ${{ secrets.OPENROUTER_MOBILE_PROVISIONING_KEY }}
+  OPENROUTER_DESKTOP_API_KEY: ${{ secrets.OPENROUTER_DESKTOP_PROVISIONING_KEY }}
 
 jobs:
   fetch-and-send-analytics:
@@ -31,13 +31,11 @@ jobs:
     strategy:
       matrix:
         include:
-          - api_key_secret: OPENROUTER_MOBILE_PROVISIONING_KEY
-            key_name: OPENROUTER_MOBILE_API_KEY
-            event_name: openrouter_daily_activity
+          - key_name: OPENROUTER_MOBILE_API_KEY
+            event_name: test_openrouter_daily_activity
             account: Mobile
-          - api_key_secret: OPENROUTER_DESKTOP_PROVISIONING_KEY
-            key_name: OPENROUTER_DESKTOP_API_KEY
-            event_name: openrouter_daily_activity_desktop
+          - key_name: OPENROUTER_DESKTOP_API_KEY
+            event_name: test_openrouter_daily_activity_desktop
             account: Desktop
 
     name: Sync ${{ matrix.account }} account
@@ -57,7 +55,6 @@ jobs:
 
       - name: Sync OpenRouter analytics to PostHog
         run: |
-          export ${{ matrix.key_name }}=${{ secrets[matrix.api_key_secret] }}
           CMD="python scripts/sync_openrouter_analytics.py --key-name ${{ matrix.key_name }} --event-name ${{ matrix.event_name }}"
 
           if [ -n "${{ github.event.inputs.date }}" ]; then
