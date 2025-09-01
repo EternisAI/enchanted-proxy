@@ -37,7 +37,7 @@ jobs:
             key_name: OPENROUTER_DESKTOP_API_KEY
             event_name: openrouter_daily_activity_desktop
             account: Desktop
-    
+
     name: Sync ${{ matrix.account }} account
     
     steps:
@@ -54,9 +54,8 @@ jobs:
         pip install requests
         
     - name: Sync OpenRouter analytics to PostHog
-      env:
-        ${{ matrix.key_name }}: ${{ secrets[matrix.api_key_secret] }}
       run: |
+        export ${{ matrix.key_name }}=${{ secrets[matrix.api_key_secret] }}
         CMD="python scripts/sync_openrouter_analytics.py --key-name ${{ matrix.key_name }} --event-name ${{ matrix.event_name }}"
         
         if [ -n "${{ github.event.inputs.date }}" ]; then
