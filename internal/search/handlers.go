@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -129,10 +130,28 @@ func (h *Handler) PostExaSearchHandler(c *gin.Context) {
 	}
 
 	// Validate required fields
-	searchReq.Query = strings.TrimSpace(searchReq.Query)
-	if searchReq.Query == "" {
+	if len(searchReq.Queries) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Missing required field 'query'",
+			"error": "At least one query is required",
+		})
+		return
+	}
+
+	// Trim all queries
+	for i, q := range searchReq.Queries {
+		searchReq.Queries[i] = strings.TrimSpace(q)
+		if searchReq.Queries[i] == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("Query at index %d is empty", i),
+			})
+			return
+		}
+	}
+
+	// Validate max queries
+	if len(searchReq.Queries) > 3 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Maximum 3 queries allowed",
 		})
 		return
 	}
@@ -147,11 +166,11 @@ func (h *Handler) PostExaSearchHandler(c *gin.Context) {
 
 	log.Info("processing exa search request",
 		slog.Int("num_results", searchReq.NumResults),
+		slog.Int("num_queries", len(searchReq.Queries)),
 		slog.String("user_id", userID))
-
-	// Log query at debug level for troubleshooting (if needed)
+	// Log queries at debug level for troubleshooting (if needed)
 	log.Debug("exa search query details",
-		slog.String("query", searchReq.Query),
+		slog.Any("queries", searchReq.Queries),
 		slog.String("user_id", userID))
 
 	// Perform Exa search

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
@@ -43,8 +44,8 @@ type SearchRequest struct {
 
 // ExaSearchRequest represents a search request for Exa API.
 type ExaSearchRequest struct {
-	Query      string `json:"query" binding:"required"`
-	NumResults int    `json:"num_results,omitempty"` // default: 10, max: 10
+	Queries    []string `json:"queries" binding:"required,max=3"`
+	NumResults int      `json:"num_results,omitempty"` // default: 10, max: 10
 }
 
 // SearchResponse represents the standardized search response.
@@ -192,7 +193,7 @@ func (s *Service) SearchDuckDuckGo(ctx context.Context, req SearchRequest) (*Sea
 	return searchResp, nil
 }
 
-// SearchExa performs a search using Exa AI API.
+// SearchExa performs parallel searches using Exa AI API
 func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSearchResponse, error) {
 	start := time.Now()
 
@@ -200,49 +201,116 @@ func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSear
 		return nil, fmt.Errorf("failed to create request: Exa API key not configured")
 	}
 
-	// Build Exa API request payload
-	payload, err := s.buildExaAPIPayload(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build API payload: %w", err)
+	if len(req.Queries) == 0 {
+		return nil, fmt.Errorf("at least one query is required")
 	}
 
-	// Make HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://api.exa.ai/search", bytes.NewBuffer(payload))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	// Create channels for results and errors
+	type searchResult struct {
+		query   string
+		results []ExaSearchResult
+		err     error
+	}
+	resultChan := make(chan searchResult, len(req.Queries))
+
+	// Launch parallel searches
+	for _, query := range req.Queries {
+		go func(q string) {
+			// Build Exa API request payload
+			payload, err := s.buildExaAPIPayload(ExaSearchRequest{
+				Queries:    []string{q},
+				NumResults: req.NumResults,
+			})
+			if err != nil {
+				resultChan <- searchResult{query: q, err: fmt.Errorf("failed to build API payload: %w", err)}
+				return
+			}
+
+			// Make HTTP request
+			httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://api.exa.ai/search", bytes.NewBuffer(payload))
+			if err != nil {
+				resultChan <- searchResult{query: q, err: fmt.Errorf("failed to create request: %w", err)}
+				return
+			}
+
+			// Set headers
+			httpReq.Header.Set("Content-Type", "application/json")
+			httpReq.Header.Set("x-api-key", s.exaAPIKey)
+
+			resp, err := s.httpClient.Do(httpReq)
+			if err != nil {
+				resultChan <- searchResult{query: q, err: fmt.Errorf("failed to make request: %w", err)}
+				return
+			}
+			defer resp.Body.Close()
+
+			// Read response body
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				resultChan <- searchResult{query: q, err: fmt.Errorf("failed to read response: %w", err)}
+				return
+			}
+
+			// Check for HTTP errors
+			if resp.StatusCode != http.StatusOK {
+				resultChan <- searchResult{query: q, err: fmt.Errorf("Exa API returned status %d: %s", resp.StatusCode, string(body))}
+				return
+			}
+
+			// Parse Exa API response
+			var exaResp ExaAPIResponse
+			if err := json.Unmarshal(body, &exaResp); err != nil {
+				resultChan <- searchResult{query: q, err: fmt.Errorf("failed to parse Exa API response: %w", err)}
+				return
+			}
+
+			// Convert results
+			results := make([]ExaSearchResult, 0, len(exaResp.Results))
+			for _, result := range exaResp.Results {
+				results = append(results, ExaSearchResult{
+					URL:           result.URL,
+					Title:         result.Title,
+					PublishedDate: result.PublishedDate,
+					Author:        result.Author,
+					Summary:       result.Summary,
+					Image:         result.Image,
+					Favicon:       result.Favicon,
+				})
+			}
+
+			resultChan <- searchResult{query: q, results: results}
+		}(query)
 	}
 
-	// Set headers
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", s.exaAPIKey)
-
-	resp, err := s.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+	// Collect results
+	var allResults []ExaSearchResult
+	var errors []error
+	for i := 0; i < len(req.Queries); i++ {
+		result := <-resultChan
+		if result.err != nil {
+			errors = append(errors, fmt.Errorf("query '%s': %w", result.query, result.err))
+		} else {
+			allResults = append(allResults, result.results...)
+		}
 	}
 
-	// Check for HTTP errors
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("request to Exa API returned status %d: %s", resp.StatusCode, string(body))
+	// If all queries failed, return error
+	if len(errors) == len(req.Queries) {
+		return nil, fmt.Errorf("all queries failed: %v", errors)
 	}
 
-	// Parse Exa API response
-	var exaResp ExaAPIResponse
-	if err := json.Unmarshal(body, &exaResp); err != nil {
-		return nil, fmt.Errorf("failed to parse Exa API response: %w", err)
-	}
-
-	// Convert to standardized response
-	searchResp := s.convertExaAPIResponse(req, exaResp, time.Since(start))
-
-	return searchResp, nil
+	// Build combined response
+	return &ExaSearchResponse{
+		Query:          strings.Join(req.Queries, ", "),
+		Results:        allResults,
+		ProcessingTime: fmt.Sprintf("%.2fms", float64(time.Since(start).Nanoseconds())/1000000),
+		SearchMetadata: ExaSearchMetadata{
+			Engine:       "exa",
+			Status:       "success",
+			ResultsCount: len(allResults),
+			ResponseTime: fmt.Sprintf("%.2fms", float64(time.Since(start).Nanoseconds())/1000000),
+		},
+	}, nil
 }
 
 // buildSerpAPIURL constructs the SerpAPI request URL.
@@ -311,9 +379,13 @@ func (s *Service) convertSerpAPIResponse(req SearchRequest, serpResp SerpAPIDuck
 
 // buildExaAPIPayload constructs the Exa API request payload.
 func (s *Service) buildExaAPIPayload(req ExaSearchRequest) ([]byte, error) {
+	if len(req.Queries) == 0 {
+		return nil, fmt.Errorf("at least one query is required")
+	}
+
 	payload := map[string]interface{}{
-		"query": req.Query,
-		"type":  "auto", // always use auto search type
+		"query": req.Queries[0], // Use first query since this is called per query
+		"type":  "keyword",      // use keyword search type
 	}
 
 	// Set number of results (default 10, max 10)
@@ -357,7 +429,7 @@ func (s *Service) convertExaAPIResponse(req ExaSearchRequest, exaResp ExaAPIResp
 
 	// Build response
 	return &ExaSearchResponse{
-		Query:          req.Query,
+		Query:          strings.Join(req.Queries, ", "),
 		Results:        results,
 		ProcessingTime: fmt.Sprintf("%.2fms", float64(processingTime.Nanoseconds())/1000000),
 		SearchMetadata: ExaSearchMetadata{
