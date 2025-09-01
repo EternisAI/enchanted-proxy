@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24.5-alpine3.22@sha256:48ee313931980110b5a91bbe04abdf640b9a67ca5dea3a620f01bacf50593396 AS builder
+FROM golang:1.25.0-alpine3.22@sha256:f18a072054848d87a8077455f0ac8a25886f2397f88bfdd222d6fafbb5bba440 AS builder
 
 # Set working directory
 WORKDIR /app
@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server cmd/server
 FROM quay.io/prometheus/node-exporter:v1.9.1@sha256:d00a542e409ee618a4edc67da14dd48c5da66726bbd5537ab2af9c1dfc442c8a AS node_exporter
 
 # Build procfusion
-FROM rust:1.88.0-alpine3.22@sha256:63985230b69fbd90528857dabf261379eb47f285ccc69f577d17c3dfde721deb AS procfusion
+FROM rust:1.89.0-alpine3.22@sha256:4b800f2e72e04be908e5f634c504c741bd943b763d1d8ad7b096cc340e1b5b46 AS procfusion
 WORKDIR /root
 RUN apk add --no-cache git musl-dev
 # v0.2.2
@@ -41,7 +41,7 @@ RUN cargo build --release --manifest-path /root/procfusion/Cargo.toml
 FROM public.ecr.aws/f5z1z8p0/attestation-proxy/server:sha-042634d@sha256:4cf287618a63ea6bce2519819d58775bcbd9bf6ff6908c0988330631730f92a0 AS attestation_proxy
 
 # Runtime stage
-FROM envoyproxy/envoy:v1.34.4@sha256:3da51b4deded479faf5ecdf6f82557aedb084ef2291551376847c9120292ede5
+FROM envoyproxy/envoy:v1.35.1@sha256:522f4f88bdd741fe87b813bdca678a11c13e42e630cc4304a9e18193813c935d
 RUN apt -qq update && \
     apt install -y --no-install-recommends \
         ca-certificates dnsmasq iproute2 netcat-openbsd \
