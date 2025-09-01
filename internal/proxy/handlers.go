@@ -89,9 +89,8 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 
 		platform := c.GetHeader("X-Client-Platform")
 		if platform == "" {
-			log.Warn("missing client platform header")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "X-Client-Platform header is required"})
-			return
+			log.Warn("missing client platform header, defaulting to mobile")
+			platform = "mobile"
 		}
 
 		// Check if base URL is in our allowed dictionary
@@ -168,6 +167,7 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			r.Header.Del("X-Forwarded-For")
 			r.Header.Del("X-Real-Ip")
 			r.Header.Del("X-BASE-URL") // Remove our custom header before forwarding
+			r.Header.Del("X-Client-Platform")
 		}
 
 		// Some canceled requests by clients could cause panic.
