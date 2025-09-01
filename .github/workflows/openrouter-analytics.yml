@@ -29,14 +29,14 @@ jobs:
     strategy:
       matrix:
         include:
-          - api_key_secret: IOS_OPENROUTER_PROVISIONING_KEY
-            key_name: IOS_OPENROUTER_API_KEY
+          - api_key_secret: MOBILE_OPENROUTER_PROVISIONING_KEY
+            key_name: MOBILE_OPENROUTER_API_KEY
             event_name: openrouter_daily_activity
-            account: iOS
-          - api_key_secret: MACOS_OPENROUTER_PROVISIONING_KEY
-            key_name: MACOS_OPENROUTER_API_KEY
-            event_name: openrouter_daily_activity_macos
-            account: macOS
+            account: Mobile
+          - api_key_secret: DESKTOP_OPENROUTER_PROVISIONING_KEY
+            key_name: DESKTOP_OPENROUTER_API_KEY
+            event_name: openrouter_daily_activity_desktop
+            account: Desktop
     
     name: Sync ${{ matrix.account }} account
     
