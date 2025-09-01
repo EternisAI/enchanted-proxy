@@ -23,6 +23,7 @@ type Querier interface {
 	GetUserRequestCountInLastDay(ctx context.Context, userID string) (int64, error)
 	GetUserRequestCountInTimeWindow(ctx context.Context, arg GetUserRequestCountInTimeWindowParams) (int64, error)
 	GetUserTokenUsageInLastDay(ctx context.Context, userID string) (int64, error)
+	GetUserTokenUsageInTimeWindow(ctx context.Context, arg GetUserTokenUsageInTimeWindowParams) (int64, error)
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
 	RefreshUserRequestCountsView(ctx context.Context) error
 	RefreshUserTokenUsageView(ctx context.Context) error

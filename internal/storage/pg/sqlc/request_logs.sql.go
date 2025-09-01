@@ -86,6 +86,25 @@ func (q *Queries) GetUserTokenUsageInLastDay(ctx context.Context, userID string)
 	return total_tokens, err
 }
 
+const getUserTokenUsageInTimeWindow = `-- name: GetUserTokenUsageInTimeWindow :one
+SELECT COALESCE(SUM(total_tokens_used), 0)::BIGINT as total_tokens
+FROM user_token_usage_daily 
+WHERE user_id = $1 
+  AND day_bucket >= $2
+`
+
+type GetUserTokenUsageInTimeWindowParams struct {
+	UserID    string    `json:"userId"`
+	DayBucket time.Time `json:"dayBucket"`
+}
+
+func (q *Queries) GetUserTokenUsageInTimeWindow(ctx context.Context, arg GetUserTokenUsageInTimeWindowParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserTokenUsageInTimeWindow, arg.UserID, arg.DayBucket)
+	var total_tokens int64
+	err := row.Scan(&total_tokens)
+	return total_tokens, err
+}
+
 const refreshUserRequestCountsView = `-- name: RefreshUserRequestCountsView :exec
 REFRESH MATERIALIZED VIEW CONCURRENTLY user_request_counts_daily
 `

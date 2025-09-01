@@ -11,19 +11,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SearchService interface defines the methods needed by the handler
+// SearchService interface defines the methods needed by the handler.
 type SearchService interface {
 	SearchDuckDuckGo(ctx context.Context, req SearchRequest) (*SearchResponse, error)
 	SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSearchResponse, error)
 }
 
-// Handler handles HTTP requests for search operations
+// Handler handles HTTP requests for search operations.
 type Handler struct {
 	service SearchService
 	logger  *logger.Logger
 }
 
-// NewHandler creates a new search handler
+// NewHandler creates a new search handler.
 func NewHandler(service *Service, logger *logger.Logger) *Handler {
 	return &Handler{
 		service: service,
@@ -31,7 +31,7 @@ func NewHandler(service *Service, logger *logger.Logger) *Handler {
 	}
 }
 
-// PostSearchHandler handles POST /api/search requests with JSON body
+// PostSearchHandler handles POST /api/search requests with JSON body.
 func (h *Handler) PostSearchHandler(c *gin.Context) {
 	log := h.logger.WithContext(c.Request.Context()).WithComponent("search_handler")
 
@@ -40,7 +40,7 @@ func (h *Handler) PostSearchHandler(c *gin.Context) {
 
 	var searchReq SearchRequest
 	if err := c.ShouldBindJSON(&searchReq); err != nil {
-		log.Warn("invalid search request body", 
+		log.Warn("invalid search request body",
 			slog.String("error", err.Error()),
 			slog.String("user_id", userID))
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -65,8 +65,8 @@ func (h *Handler) PostSearchHandler(c *gin.Context) {
 
 	// Validate engine
 	if searchReq.Engine != "duckduckgo" {
-		log.Warn("unsupported search engine requested", 
-			slog.String("engine", searchReq.Engine), 
+		log.Warn("unsupported search engine requested",
+			slog.String("engine", searchReq.Engine),
 			slog.String("user_id", userID))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Unsupported search engine. Currently supported: 'duckduckgo'",
@@ -77,7 +77,7 @@ func (h *Handler) PostSearchHandler(c *gin.Context) {
 	log.Info("processing search request",
 		slog.String("engine", searchReq.Engine),
 		slog.String("user_id", userID))
-	
+
 	// Log query at debug level for troubleshooting (if needed)
 	log.Debug("search query details",
 		slog.String("query", searchReq.Query),
@@ -90,12 +90,12 @@ func (h *Handler) PostSearchHandler(c *gin.Context) {
 			slog.String("engine", searchReq.Engine),
 			slog.String("error", err.Error()),
 			slog.String("user_id", userID))
-		
+
 		// Log query at debug level for troubleshooting
 		log.Debug("failed search query details",
 			slog.String("query", "[REDACTED]"),
 			slog.String("user_id", userID))
-		
+
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Search request failed",
 		})
@@ -110,7 +110,7 @@ func (h *Handler) PostSearchHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// PostExaSearchHandler handles POST /api/exa/search requests with JSON body
+// PostExaSearchHandler handles POST /api/exa/search requests with JSON body.
 func (h *Handler) PostExaSearchHandler(c *gin.Context) {
 	log := h.logger.WithContext(c.Request.Context()).WithComponent("exa_search_handler")
 
@@ -119,7 +119,7 @@ func (h *Handler) PostExaSearchHandler(c *gin.Context) {
 
 	var searchReq ExaSearchRequest
 	if err := c.ShouldBindJSON(&searchReq); err != nil {
-		log.Warn("invalid exa search request body", 
+		log.Warn("invalid exa search request body",
 			slog.String("error", err.Error()),
 			slog.String("user_id", userID))
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -148,7 +148,7 @@ func (h *Handler) PostExaSearchHandler(c *gin.Context) {
 	log.Info("processing exa search request",
 		slog.Int("num_results", searchReq.NumResults),
 		slog.String("user_id", userID))
-	
+
 	// Log query at debug level for troubleshooting (if needed)
 	log.Debug("exa search query details",
 		slog.String("query", searchReq.Query),
@@ -160,12 +160,12 @@ func (h *Handler) PostExaSearchHandler(c *gin.Context) {
 		log.Error("exa search request failed",
 			slog.String("error", err.Error()),
 			slog.String("user_id", userID))
-		
+
 		// Log query at debug level for troubleshooting
 		log.Debug("failed exa search query details",
 			slog.String("query", "[REDACTED]"),
 			slog.String("user_id", userID))
-		
+
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Exa search request failed",
 		})

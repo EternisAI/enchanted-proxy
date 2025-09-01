@@ -42,10 +42,10 @@ func logRequestBody(body []byte, maxSize int) string {
 	return bodyStr[:maxSize] + "..."
 }
 
-func getAPIKey(baseURL string, config *config.Config) string {
+func getAPIKey(baseURL string, platform string, config *config.Config) string {
 	switch baseURL {
 	case "https://openrouter.ai/api/v1":
-		return config.OpenRouterAPIKey
+		return getOpenRouterAPIKey(platform, config)
 	case "https://api.openai.com/v1":
 		return config.OpenAIAPIKey
 	case "https://inference.tinfoil.sh/v1":
@@ -126,5 +126,16 @@ func extractTokenUsageFromSSELine(line string) *Usage {
 		PromptTokens:     int(promptTokens),
 		CompletionTokens: int(completionTokens),
 		TotalTokens:      int(totalTokens),
+	}
+}
+
+func getOpenRouterAPIKey(platform string, config *config.Config) string {
+	switch platform {
+	case "mobile":
+		return config.OpenRouterMobileAPIKey
+	case "desktop":
+		return config.OpenRouterDesktopAPIKey
+	default:
+		return ""
 	}
 }

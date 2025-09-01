@@ -205,7 +205,7 @@ func main() {
 				mode = "LOG-ONLY"
 			}
 			log.Info("rate limiting enabled",
-				slog.Int64("limit", config.AppConfig.RateLimitRequestsPerDay),
+				slog.Int64("limit", config.AppConfig.RateLimitTokensPerDay),
 				slog.String("mode", mode))
 		} else {
 			log.Info("rate limiting disabled")
@@ -274,7 +274,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	router.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-BASE-URL")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-BASE-URL, X-Client-Platform")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -325,7 +325,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		}
 
 		// Search API routes (protected)
-		api.POST("/search", input.searchHandler.PostSearchHandler)      // POST /api/v1/search (SerpAPI)
+		api.POST("/search", input.searchHandler.PostSearchHandler)        // POST /api/v1/search (SerpAPI)
 		api.POST("/exa/search", input.searchHandler.PostExaSearchHandler) // POST /api/v1/exa/search (Exa AI)
 	}
 

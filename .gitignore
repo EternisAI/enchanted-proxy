@@ -55,3 +55,6 @@ temp/
 
 # Tests
 tests/
+
+# Scripts
+__pycache__/

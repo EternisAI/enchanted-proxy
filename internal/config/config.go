@@ -9,35 +9,36 @@ import (
 )
 
 type Config struct {
-	Port                  string
-	GinMode               string
-	FirebaseProjectID     string
-	DatabaseURL           string
-	GoogleClientID        string
-	GoogleClientSecret    string
-	SlackClientID         string
-	SlackClientSecret     string
-	TwitterClientID       string
-	TwitterClientSecret   string
-	ComposioAPIKey        string
-	ComposioTwitterConfig string
-	OpenAIAPIKey          string
-	OpenRouterAPIKey      string
-	TinfoilAPIKey         string
-	SerpAPIKey            string
-	ExaAPIKey            string
-	ValidatorType         string // "jwk" or "firebase"
-	JWTJWKSURL            string
-	FirebaseCredJSON      string
+	Port                    string
+	GinMode                 string
+	FirebaseProjectID       string
+	DatabaseURL             string
+	GoogleClientID          string
+	GoogleClientSecret      string
+	SlackClientID           string
+	SlackClientSecret       string
+	TwitterClientID         string
+	TwitterClientSecret     string
+	ComposioAPIKey          string
+	ComposioTwitterConfig   string
+	OpenAIAPIKey            string
+	OpenRouterMobileAPIKey  string
+	OpenRouterDesktopAPIKey string
+	TinfoilAPIKey           string
+	SerpAPIKey              string
+	ExaAPIKey               string
+	ValidatorType           string // "jwk" or "firebase"
+	JWTJWKSURL              string
+	FirebaseCredJSON        string
 
 	// MCP
 	PerplexityAPIKey  string
 	ReplicateAPIToken string
 
 	// Rate Limiting
-	RateLimitEnabled        bool
-	RateLimitRequestsPerDay int64
-	RateLimitLogOnly        bool // If true, only log violations, don't block.
+	RateLimitEnabled      bool
+	RateLimitTokensPerDay int64
+	RateLimitLogOnly      bool // If true, only log violations, don't block.
 
 	// Telegram
 	EnableTelegramServer bool
@@ -106,8 +107,11 @@ func LoadConfig() {
 		ComposioTwitterConfig: getEnvOrDefault("COMPOSIO_TWITTER_CONFIG", ""),
 
 		// OpenAI
-		OpenAIAPIKey:     getEnvOrDefault("OPENAI_API_KEY", ""),
-		OpenRouterAPIKey: getEnvOrDefault("OPENROUTER_API_KEY", ""),
+		OpenAIAPIKey: getEnvOrDefault("OPENAI_API_KEY", ""),
+
+		// OpenRouter
+		OpenRouterMobileAPIKey:  getEnvOrDefault("OPENROUTER_MOBILE_API_KEY", ""),
+		OpenRouterDesktopAPIKey: getEnvOrDefault("OPENROUTER_DESKTOP_API_KEY", ""),
 
 		// Tinfoil
 		TinfoilAPIKey: getEnvOrDefault("TINFOIL_API_KEY", ""),
@@ -128,9 +132,9 @@ func LoadConfig() {
 		ReplicateAPIToken: getEnvOrDefault("REPLICATE_API_TOKEN", ""),
 
 		// Rate Limiting
-		RateLimitEnabled:        getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
-		RateLimitRequestsPerDay: getEnvAsInt64("RATE_LIMIT_REQUESTS_PER_DAY", 100),
-		RateLimitLogOnly:        getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
+		RateLimitEnabled:      getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
+		RateLimitTokensPerDay: getEnvAsInt64("RATE_LIMIT_TOKENS_PER_DAY", 1000000),
+		RateLimitLogOnly:      getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
 
 		// Telegram
 		EnableTelegramServer: getEnvOrDefault("ENABLE_TELEGRAM_SERVER", "true") == "true",

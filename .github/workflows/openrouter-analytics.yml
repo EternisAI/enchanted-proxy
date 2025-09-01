@@ -1,0 +1,73 @@
+name: OpenRouter Daily Analytics to PostHog
+
+on:
+  schedule:
+    # 45 minutes after midnight to get previous day's data
+    - cron: "45 0 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Specific date to sync (YYYY-MM-DD)"
+        required: false
+        type: string
+      start_date:
+        description: "Start date for range sync (YYYY-MM-DD)"
+        required: false
+        type: string
+      end_date:
+        description: "End date for range sync (YYYY-MM-DD)"
+        required: false
+        type: string
+
+env:
+  POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+  POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+  OPENROUTER_MOBILE_PROVISIONING_KEY: ${{ secrets.OPENROUTER_MOBILE_PROVISIONING_KEY }}
+  OPENROUTER_DESKTOP_PROVISIONING_KEY: ${{ secrets.OPENROUTER_DESKTOP_PROVISIONING_KEY }}
+
+jobs:
+  fetch-and-send-analytics:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - api_key_secret: OPENROUTER_MOBILE_PROVISIONING_KEY
+            key_name: OPENROUTER_MOBILE_API_KEY
+            event_name: openrouter_daily_activity
+            account: Mobile
+          - api_key_secret: OPENROUTER_DESKTOP_PROVISIONING_KEY
+            key_name: OPENROUTER_DESKTOP_API_KEY
+            event_name: openrouter_daily_activity_desktop
+            account: Desktop
+
+    name: Sync ${{ matrix.account }} account
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install requests
+
+      - name: Sync OpenRouter analytics to PostHog
+        run: |
+          export ${{ matrix.key_name }}=${{ secrets[matrix.api_key_secret] }}
+          CMD="python scripts/sync_openrouter_analytics.py --key-name ${{ matrix.key_name }} --event-name ${{ matrix.event_name }}"
+
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            CMD="$CMD --date ${{ github.event.inputs.date }}"
+          elif [ -n "${{ github.event.inputs.start_date }}" ]; then
+            CMD="$CMD --start-date ${{ github.event.inputs.start_date }}"
+            if [ -n "${{ github.event.inputs.end_date }}" ]; then
+              CMD="$CMD --end-date ${{ github.event.inputs.end_date }}"
+            fi
+          fi
+
+          echo "Running ${{ matrix.account }} account: $CMD"
+          eval $CMD

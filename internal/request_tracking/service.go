@@ -167,13 +167,13 @@ type RequestInfo struct {
 	TotalTokens      *int
 }
 
-func (s *Service) CheckRateLimit(ctx context.Context, userID string, maxRequestsPerDay int64) (bool, error) {
-	count, err := s.queries.GetUserRequestCountInLastDay(ctx, userID)
+func (s *Service) CheckRateLimit(ctx context.Context, userID string, maxTokensPerDay int64) (bool, error) {
+	count, err := s.queries.GetUserTokenUsageInLastDay(ctx, userID)
 	if err != nil {
 		return false, fmt.Errorf("failed to check rate limit: %w", err)
 	}
 
-	return count < maxRequestsPerDay, nil
+	return count < maxTokensPerDay, nil
 }
 
 func (s *Service) GetUserRequestCountSince(ctx context.Context, userID string, since time.Time) (int64, error) {
@@ -182,6 +182,14 @@ func (s *Service) GetUserRequestCountSince(ctx context.Context, userID string, s
 		CreatedAt: since,
 	}
 	return s.queries.GetUserRequestCountInTimeWindow(ctx, params)
+}
+
+func (s *Service) GetUserTokenUsageSince(ctx context.Context, userID string, since time.Time) (int64, error) {
+	params := pgdb.GetUserTokenUsageInTimeWindowParams{
+		UserID:    userID,
+		DayBucket: since,
+	}
+	return s.queries.GetUserTokenUsageInTimeWindow(ctx, params)
 }
 
 // LogRequestWithTokensAsync queues a log request with token data to be processed by the worker pool.
