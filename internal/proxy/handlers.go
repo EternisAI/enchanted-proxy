@@ -87,8 +87,15 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			return
 		}
 
+		platform := c.GetHeader("X-Client-Platform")
+		if platform == "" {
+			log.Warn("missing client platform header")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "X-Client-Platform header is required"})
+			return
+		}
+
 		// Check if base URL is in our allowed dictionary
-		apiKey := getAPIKey(baseURL, config.AppConfig)
+		apiKey := getAPIKey(baseURL, platform, config.AppConfig)
 		if apiKey == "" {
 			log.Warn("unauthorized base url", slog.String("base_url", baseURL))
 			c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized base URL"})
