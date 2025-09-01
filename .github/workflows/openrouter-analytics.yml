@@ -20,13 +20,25 @@ on:
         type: string
 
 env:
-  OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_PROVISIONING_KEY }}
   POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
   POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
 
 jobs:
   fetch-and-send-analytics:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - api_key_secret: IOS_OPENROUTER_PROVISIONING_KEY
+            key_name: IOS_OPENROUTER_API_KEY
+            event_name: openrouter_daily_activity
+            account: iOS
+          - api_key_secret: MACOS_OPENROUTER_PROVISIONING_KEY
+            key_name: MACOS_OPENROUTER_API_KEY
+            event_name: openrouter_daily_activity_macos
+            account: macOS
+    
+    name: Sync ${{ matrix.account }} account
     
     steps:
     - name: Checkout repository
@@ -42,8 +54,10 @@ jobs:
         pip install requests
         
     - name: Sync OpenRouter analytics to PostHog
+      env:
+        ${{ matrix.key_name }}: ${{ secrets[matrix.api_key_secret] }}
       run: |
-        CMD="python scripts/sync_openrouter_analytics.py"
+        CMD="python scripts/sync_openrouter_analytics.py --key-name ${{ matrix.key_name }} --event-name ${{ matrix.event_name }}"
         
         if [ -n "${{ github.event.inputs.date }}" ]; then
           CMD="$CMD --date ${{ github.event.inputs.date }}"
@@ -54,5 +68,5 @@ jobs:
           fi
         fi
         
-        echo "Running: $CMD"
+        echo "Running ${{ matrix.account }} account: $CMD"
         eval $CMD
