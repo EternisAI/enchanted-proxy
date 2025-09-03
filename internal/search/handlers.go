@@ -129,6 +129,10 @@ func (h *Handler) PostExaSearchHandler(c *gin.Context) {
 		return
 	}
 
+	if searchReq.Query != "" {
+		searchReq.Queries = []string{searchReq.Query}
+	}
+
 	// Validate required fields
 	if len(searchReq.Queries) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
