@@ -44,7 +44,7 @@ type SearchRequest struct {
 
 // ExaSearchRequest represents a search request for Exa API.
 type ExaSearchRequest struct {
-	Queries    []string `json:"queries" binding:"required,max=3"`
+	Queries    []string `json:"queries,omitempty"`
 	Query      string   `json:"query,omitempty"`
 	NumResults int      `json:"num_results,omitempty"` // default: 10, max: 10
 }
