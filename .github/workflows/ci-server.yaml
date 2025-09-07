@@ -117,6 +117,12 @@ jobs:
         echo "::add-mask::$OIDC_TOKEN"
         echo "token=$OIDC_TOKEN" >> $GITHUB_OUTPUT
 
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d116df # v4.2.1
+      with:
+        aws-region: us-east-1
+        role-to-assume: arn:aws:iam::314146293458:role/github-ci-enchanted-proxy
+
     - name: Log in to GHCR
       uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
       with:
