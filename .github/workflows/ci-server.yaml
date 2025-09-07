@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     outputs:
       ref: ${{ steps.enclave-image.outputs.ref }}
       tag: ${{ steps.enclave-meta.outputs.version }}
@@ -53,6 +54,13 @@ jobs:
         tags: |
           type=sha
 
+    - name: Log in to GHCR
+      uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Check Image Digest
       id: check
       run: |
@@ -71,6 +79,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: write
     outputs:
       digest: ${{ steps.push-enclave-image.outputs.digest }}
     steps:
@@ -114,10 +123,12 @@ jobs:
         aws-region: us-east-1
         role-to-assume: arn:aws:iam::314146293458:role/github-ci-enchanted-proxy
 
-    - name: Log in to AWS Public ECR
-      uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
+    - name: Log in to GHCR
+      uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
       with:
-        registry-type: public
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
@@ -140,10 +151,14 @@ jobs:
         cache-from: type=gha
         cache-to: type=gha,mode=max
         push: true
+        outputs: type=docker,dest=${{ runner.temp }}/image.tar
         build-args: |
           ENCLAVE_BUILD_ID=${{ github.sha }}
           ENCLAVE_BUILD_VERSION=${{ steps.app-meta.outputs.version }}
           ENCLAVE_PROVENANCE_PATH=enchanted-proxy/server
+
+    - name: Load App Image
+      run: docker load -i ${{ runner.temp }}/image.tar
 
     - name: Cosign App Image
       run: >-
@@ -189,10 +204,10 @@ jobs:
     - name: Verify Enclaver CLI Image
       id: enclaver-cli
       run: |
-        CLI_IMAGE="public.ecr.aws/f5z1z8p0/enclaver:v0.5.0-eternis.1@sha256:79bfa2fc31f9434a436c6a8c22ebcf9f6cb3da105bbd0414821e6624715a3fb3"
+        CLI_IMAGE="ghcr.io/eternisai/enclaver:v0.5.0-eternis.2@sha256:cd32c5a3562fa14770e201006c071bcb3ffd134dbf740bc565f4dc6b0baa6203"
         cosign verify "$CLI_IMAGE" \
           --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-          --certificate-identity "https://github.com/${{ github.repository_owner }}/enclaver/.github/workflows/release.yaml@refs/tags/v0.5.0-eternis.1"
+          --certificate-identity "https://github.com/${{ github.repository_owner }}/enclaver/.github/workflows/release.yaml@refs/tags/v0.5.0-eternis.2"
         echo "image=$CLI_IMAGE" | tee -a "$GITHUB_OUTPUT"
 
     - name: Prepare Enclaver Manifest
@@ -260,20 +275,16 @@ jobs:
     needs: check
     if: needs.check.outputs.digest && github.ref_type == 'tag'
     permissions:
-      id-token: write
+      packages: write
     outputs:
       digest: ${{ steps.push-enclave-image.outputs.digest }}
     steps:
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d116df # v4.2.1
+    - name: Log in to GHCR
+      uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
       with:
-        aws-region: us-east-1
-        role-to-assume: arn:aws:iam::314146293458:role/github-ci-enchanted-proxy
-
-    - name: Log in to AWS Public ECR
-      uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
-      with:
-        registry-type: public
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Tag and Push Enclave Image
       id: push-enclave-image
@@ -322,7 +333,7 @@ jobs:
       run: >-
         gh workflow run
         enchanted-proxy.yaml
-        --repo EternisAI/gitops-apps
+        --repo ${{ github.repository_owner }}/gitops-apps
         --ref main
         --field component=server
         --field actor="${{ github.actor }}"
