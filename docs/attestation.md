@@ -29,7 +29,7 @@ After that you should verify that the nonce displayed in the validation results 
 The next step is to decode the user data provided in the attestation document. You can use the following command, substituting with your own user data value from the validation result:
 
 ```sh
-echo 'eyJlbmNsYXZlIjp7ImJ1aWxkX2lkIjoiMzkzYjZhNzFlMzY5MTUzMGQyNDUxNWFlNmMwNWJkMzFmZDBlY2Y2NyIsImJ1aWxkX3ZlcnNpb24iOiJzaGEtMzkzYjZhNyIsInByb3ZlbmFuY2VfcGF0aCI6ImVuY2hhbnRlZC1wcm94eS9zZXJ2ZXIifSwidGxzIjp7ImNlcnRpZmljYXRlIjoiOGIzYmUwMDA3ZTIwMGQzNTY5MmUyY2YzMDg5MGRkNzNiM2U4Y2FlMjEzNTFkNzJkNjViYzc2YjMyYzNkYjQwMCIsInB1YmxpY19rZXkiOiI0ZWYwNzUzZDI2MjYxYjcyM2JlOTcwM2E1YjJiYTUzNWQ1ZjVlNzhkMWEzYjJjZWU3MWM1N2Q0NWNlNmNlZGI4In19' \
+echo 'eyJlbmNsYXZlIjp7ImJ1aWxkX2lkIjoiNzQ4MjdjM2Y0MTExNDUyMjEyYmE1MWI5MWZhNTU3OWE0MThmYWYyNSIsImJ1aWxkX3ZlcnNpb24iOiJzaGEtNzQ4MjdjMyIsInByb3ZlbmFuY2VfcGF0aCI6ImVuY2hhbnRlZC1wcm94eS9zZXJ2ZXIifSwiZW52Ijp7IkxPR19MRVZFTCI6ImluZm8ifSwidGxzIjp7ImNlcnRpZmljYXRlIjoiOGIzYmUwMDA3ZTIwMGQzNTY5MmUyY2YzMDg5MGRkNzNiM2U4Y2FlMjEzNTFkNzJkNjViYzc2YjMyYzNkYjQwMCIsInB1YmxpY19rZXkiOiI0ZWYwNzUzZDI2MjYxYjcyM2JlOTcwM2E1YjJiYTUzNWQ1ZjVlNzhkMWEzYjJjZWU3MWM1N2Q0NWNlNmNlZGI4In19' \
 | base64 -d | jq
 ```
 
@@ -38,9 +38,12 @@ You should receive an output similar to the following one:
 ```json
 {
   "enclave": {
-    "build_id": "393b6a71e3691530d24515ae6c05bd31fd0ecf67",
-    "build_version": "sha-393b6a7",
+    "build_id": "74827c3f4111452212ba51b91fa5579a418faf25",
+    "build_version": "sha-74827c3",
     "provenance_path": "enchanted-proxy/server"
+  },
+  "env": {
+    "LOG_LEVEL": "info"
   },
   "tls": {
     "certificate": "8b3be0007e200d35692e2cf30890dd73b3e8cae21351d72d65bc76b32c3db400",
@@ -55,7 +58,7 @@ The `enclave` part of this output contains information about the build of the co
 
 To obtain the original PCR values of the build, visit the following URL, substituting with the values of `provenance_path` and `build_id` and from the `enclave` section of your decoded user data:
 
-https://provenance.eternis.ai/enchanted-proxy/server/39/3b/6a/393b6a71e3691530d24515ae6c05bd31fd0ecf67
+https://provenance.eternis.ai/enchanted-proxy/server/74/82/7c/74827c3f4111452212ba51b91fa5579a418faf25
 
 Please note that the `provenance_path` value should form the URL prefix after https://provenance.eternis.ai, and the path following that prefix consists of the first two characters (#1 and #2) of the `build_id` value, the next two characters (#3 and #4) and the next two characters (#5 and #6) of the `build_id` value as subdirectories, followed by the entire `build_id` value.
 
@@ -84,16 +87,16 @@ You should have Cosign CLI [installed](https://github.com/sigstore/cosign?tab=re
 Then you should issue the following command (substituting with values from your decoded user data):
 
 ```sh
-cosign verify public.ecr.aws/f5z1z8p0/enchanted-proxy/server:sha-393b6a7 \
+cosign verify ghcr.io/eternisai/enchanted-proxy/server:sha-74827c3 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity 'https://github.com/EternisAI/enchanted-proxy/.github/workflows/ci-server.yaml@refs/heads/main'
+  --certificate-identity 'https://github.com/EternisAI/enchanted-proxy/.github/workflows/ci-server.yaml@refs/heads/production'
 ```
 
 Where, in the commands above,
 
-* `public.ecr.aws/f5z1z8p0` is the URL of the AWS Public ECR repository used to publish builds of code from this repository during the CI workflow,
+* `ghcr.io/eternisai` is the URL of the public container repository used to publish builds of code from this repository during the CI workflow,
 * `enchanted-proxy/server` is the `provenance_path` value from your decoded user data,
-* `sha-15c7db1` is the value of `build_version` from your decoded user data,
+* `sha-74827c3` is the value of `build_version` from your decoded user data,
 * https://token.actions.githubusercontent.com is the [OIDC issuer](https://docs.github.com/en/actions/concepts/security/openid-connect) URL for Github Actions jobs,
 * `https://github.com/EternisAI/enchanted-proxy` is the path of the current Github repostory,
 * `.github/workflows/ci-server.yaml` is the path of the build CI workflow in the current repository.
@@ -108,9 +111,9 @@ If the `cosign` command exited successfully, it means that:
 Moreover, the output of a successful verification by the `cosign verify` command shown above is a JSON manifest containing provenance data, including the PCR measurements produced during the build which were originally uploaded to https://provenance.eternis.ai. You can extract them by supplying the output of the `cosign verify` command to `jq` like this:
 
 ```sh
-cosign verify public.ecr.aws/f5z1z8p0/enchanted-proxy/server:sha-393b6a7 \
+cosign verify ghcr.io/eternisai/enchanted-proxy/server:sha-74827c3 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity 'https://github.com/EternisAI/enchanted-proxy/.github/workflows/ci-server.yaml@refs/heads/main' \
+  --certificate-identity 'https://github.com/EternisAI/enchanted-proxy/.github/workflows/ci-server.yaml@refs/heads/production' \
 | jq '{"Measurements": {"PCR0": .[0].optional.awsNitroEnclavePCR0, "PCR1": .[0].optional.awsNitroEnclavePCR1, "PCR2": .[0].optional.awsNitroEnclavePCR2}}'
 ```
 
