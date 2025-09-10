@@ -36,9 +36,20 @@ type Config struct {
 	ReplicateAPIToken string
 
 	// Rate Limiting
-	RateLimitEnabled      bool
-	RateLimitTokensPerDay int64
-	RateLimitLogOnly      bool // If true, only log violations, don't block.
+	RateLimitEnabled bool
+	RateLimitLogOnly bool // If true, only log violations, don't block.
+
+	// Usage Tiers
+	FreeLifetimeTokens int64
+	DripDailyMessages  int64
+	ProDailyTokens     int64
+
+	// App Store (IAP)
+	AppStoreAPIKeyP8 string
+	AppStoreAPIKeyID string
+	AppStoreBundleID string
+	AppStoreIssuerID string
+	AppStoreSandbox  bool
 
 	// Telegram
 	EnableTelegramServer bool
@@ -132,9 +143,20 @@ func LoadConfig() {
 		ReplicateAPIToken: getEnvOrDefault("REPLICATE_API_TOKEN", ""),
 
 		// Rate Limiting
-		RateLimitEnabled:      getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
-		RateLimitTokensPerDay: getEnvAsInt64("RATE_LIMIT_TOKENS_PER_DAY", 1000000),
-		RateLimitLogOnly:      getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
+		RateLimitEnabled: getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
+		RateLimitLogOnly: getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
+
+		// Usage Tiers
+		FreeLifetimeTokens: getEnvAsInt64("FREE_LIFETIME_TOKENS", 20000),
+		DripDailyMessages:  getEnvAsInt64("DRIP_DAILY_MESSAGES", 10),
+		ProDailyTokens:     getEnvAsInt64("PRO_DAILY_TOKENS", 500000),
+
+		// App Store (IAP)
+		AppStoreAPIKeyP8: getEnvOrDefault("APPSTORE_API_KEY_P8", ""),
+		AppStoreAPIKeyID: getEnvOrDefault("APPSTORE_API_KEY_ID", ""),
+		AppStoreBundleID: getEnvOrDefault("APPSTORE_BUNDLE_ID", ""),
+		AppStoreIssuerID: getEnvOrDefault("APPSTORE_ISSUER_ID", ""),
+		AppStoreSandbox:  getEnvOrDefault("APPSTORE_ENV", "production") == "sandbox",
 
 		// Telegram
 		EnableTelegramServer: getEnvOrDefault("ENABLE_TELEGRAM_SERVER", "true") == "true",

@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+type Entitlement struct {
+	UserID       string       `json:"userId"`
+	ProExpiresAt sql.NullTime `json:"proExpiresAt"`
+	UpdatedAt    time.Time    `json:"updatedAt"`
+}
+
 type InviteCode struct {
 	ID         int64      `json:"id"`
 	Code       string     `json:"code"`
