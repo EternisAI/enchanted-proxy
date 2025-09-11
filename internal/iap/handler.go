@@ -18,12 +18,12 @@ func NewHandler(service *Service, logger *logger.Logger) *Handler {
 }
 
 // AttachAppStoreSubscription validates a signed transaction JWS and marks user as Pro.
-// Request body: { "signedTransactionInfo": "<JWS>" }
+// Request body: { "jwsTransactionInfo": "<JWS>" }
 func (h *Handler) AttachAppStoreSubscription(c *gin.Context) {
 	var body struct {
-		SignedTransactionInfo string `json:"signedTransactionInfo"`
+		JWSTransactionInfo string `json:"jwsTransactionInfo"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || body.SignedTransactionInfo == "" {
+	if err := c.ShouldBindJSON(&body); err != nil || body.JWSTransactionInfo == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
@@ -34,9 +34,9 @@ func (h *Handler) AttachAppStoreSubscription(c *gin.Context) {
 		return
 	}
 
-	payload, expiresAt, err := h.service.AttachAppStoreSubscription(c.Request.Context(), userID, body.SignedTransactionInfo)
+	payload, expiresAt, err := h.service.AttachAppStoreSubscription(c.Request.Context(), userID, body.JWSTransactionInfo)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid signedTransactionInfo"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid jwsTransactionInfo"})
 		return
 	}
 

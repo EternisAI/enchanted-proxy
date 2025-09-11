@@ -28,8 +28,8 @@ func NewService(queries pgdb.Querier) *Service {
 }
 
 // AttachAppStoreSubscription verifies the JWS and upserts entitlement.
-func (s *Service) AttachAppStoreSubscription(ctx context.Context, userID string, signedTransactionInfo string) (payload *appstore.JWSTransaction, proUntil time.Time, err error) {
-	p, err := s.store.ParseNotificationV2TransactionInfo(signedTransactionInfo)
+func (s *Service) AttachAppStoreSubscription(ctx context.Context, userID string, jwsTransactionInfo string) (payload *appstore.JWSTransaction, proUntil time.Time, err error) {
+	p, err := s.store.ParseNotificationV2TransactionInfo(jwsTransactionInfo)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
