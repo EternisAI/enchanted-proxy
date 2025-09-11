@@ -82,6 +82,11 @@ env:
 - TINFOIL_API_KEY
 - TWITTER_CLIENT_ID
 - VALIDATOR_TYPE
+- APPSTORE_API_KEY_P8
+- APPSTORE_API_KEY_ID
+- APPSTORE_BUNDLE_ID
+- APPSTORE_ISSUER_ID
+- APPSTORE_ENV
 files:
 - /var/run/secrets/tls/tls.crt
 - /var/run/secrets/tls/tls.key
