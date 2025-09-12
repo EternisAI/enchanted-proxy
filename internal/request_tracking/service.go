@@ -3,6 +3,7 @@ package request_tracking
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -211,9 +212,13 @@ func (s *Service) GetUserTokenUsageSince(ctx context.Context, userID string, sin
 func (s *Service) HasActivePro(ctx context.Context, userID string) (bool, *time.Time, error) {
 	ent, err := s.queries.GetEntitlement(ctx, userID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil, nil
+		}
 		return false, nil, err
 	}
-	if ent.ProExpiresAt.Valid && ent.ProExpiresAt.Time.After(time.Now()) {
+	now := time.Now().UTC()
+	if ent.ProExpiresAt.Valid && ent.ProExpiresAt.Time.After(now) {
 		t := ent.ProExpiresAt.Time
 		return true, &t, nil
 	}

@@ -21,9 +21,12 @@ ingress:
 - listen_port: 9101
 egress:
   allow:
-  # API client enpdoints
+  # API client endpoints
   - api.telegram.org
   - backend.composio.dev
+  # App Store Server API (IAP verification)
+  - api.storekit.itunes.apple.com
+  - api.storekit-sandbox.itunes.apple.com
   # MCP API client endpoints
   - api.perplexity.ai
   - api.replicate.com
@@ -69,7 +72,6 @@ env:
 - PORT
 - RATE_LIMIT_ENABLED
 - RATE_LIMIT_LOG_ONLY
-- RATE_LIMIT_TOKENS_PER_DAY
 - REPLICATE_API_TOKEN
 - REQUEST_TRACKING_BUFFER_SIZE
 - REQUEST_TRACKING_TIMEOUT_SECONDS

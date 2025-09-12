@@ -30,7 +30,12 @@ func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
 		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
 		// Pro tier.
-		if isPro, _, _ := trackingService.HasActivePro(c.Request.Context(), userID); isPro {
+		isPro, _, err := trackingService.HasActivePro(c.Request.Context(), userID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get active pro"})
+			return
+		}
+		if isPro {
 			used, err := trackingService.GetUserTokenUsageToday(c.Request.Context(), userID)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get token usage"})

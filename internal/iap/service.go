@@ -3,6 +3,7 @@ package iap
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	appstore "github.com/richzw/appstore"
@@ -38,7 +39,7 @@ func (s *Service) AttachAppStoreSubscription(ctx context.Context, userID string,
 	if p.ExpiresDate > 0 {
 		expiresAt = sql.NullTime{Time: time.UnixMilli(p.ExpiresDate), Valid: true}
 	} else {
-		expiresAt = sql.NullTime{Time: time.Now().AddDate(10, 0, 0), Valid: true}
+		return nil, time.Time{}, fmt.Errorf("missing expiresDate")
 	}
 
 	if err := s.queries.UpsertEntitlement(ctx, pgdb.UpsertEntitlementParams{
