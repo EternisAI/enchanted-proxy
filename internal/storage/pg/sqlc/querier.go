@@ -16,14 +16,18 @@ type Querier interface {
 	CreateTelegramChat(ctx context.Context, arg CreateTelegramChatParams) (TelegramChat, error)
 	DeleteTelegramChat(ctx context.Context, chatID int64) error
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
+	GetEntitlement(ctx context.Context, userID string) (Entitlement, error)
 	GetInviteCodeByCodeHash(ctx context.Context, codeHash string) (InviteCode, error)
 	GetInviteCodeByID(ctx context.Context, id int64) (InviteCode, error)
 	GetTelegramChatByChatID(ctx context.Context, chatID int64) (TelegramChat, error)
 	GetTelegramChatByChatUUID(ctx context.Context, chatUuid string) (TelegramChat, error)
+	GetUserLifetimeTokenUsage(ctx context.Context, userID string) (int64, error)
 	GetUserRequestCountInLastDay(ctx context.Context, userID string) (int64, error)
 	GetUserRequestCountInTimeWindow(ctx context.Context, arg GetUserRequestCountInTimeWindowParams) (int64, error)
+	GetUserRequestCountToday(ctx context.Context, userID string) (int64, error)
 	GetUserTokenUsageInLastDay(ctx context.Context, userID string) (int64, error)
 	GetUserTokenUsageInTimeWindow(ctx context.Context, arg GetUserTokenUsageInTimeWindowParams) (int64, error)
+	GetUserTokenUsageToday(ctx context.Context, userID string) (int64, error)
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
 	RefreshUserRequestCountsView(ctx context.Context) error
 	RefreshUserTokenUsageView(ctx context.Context) error
@@ -31,6 +35,7 @@ type Querier interface {
 	SoftDeleteInviteCode(ctx context.Context, id int64) error
 	UpdateInviteCodeActive(ctx context.Context, arg UpdateInviteCodeActiveParams) error
 	UpdateInviteCodeUsage(ctx context.Context, arg UpdateInviteCodeUsageParams) error
+	UpsertEntitlement(ctx context.Context, arg UpsertEntitlementParams) error
 }
 
 var _ Querier = (*Queries)(nil)

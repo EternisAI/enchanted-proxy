@@ -26,33 +26,84 @@ func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
 			return
 		}
 
-		isUnderLimit, err := trackingService.CheckRateLimit(c.Request.Context(), userID, config.AppConfig.RateLimitTokensPerDay)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check rate limit"})
-			return
-		}
-
-		// Get current request count for the user in the last day.
 		now := time.Now().UTC()
 		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
-		tokenUsage, err := trackingService.GetUserTokenUsageSince(c.Request.Context(), userID, dayStart)
+		// Pro tier.
+		isPro, _, err := trackingService.HasActivePro(c.Request.Context(), userID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get token usage"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get active pro"})
+			return
+		}
+		if isPro {
+			used, err := trackingService.GetUserTokenUsageToday(c.Request.Context(), userID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get token usage"})
+				return
+			}
+			limit := config.AppConfig.ProDailyTokens
+			remaining := limit - used
+			if remaining < 0 {
+				remaining = 0
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"enabled":       config.AppConfig.RateLimitEnabled,
+				"tier":          "pro",
+				"limit":         limit,
+				"used":          used,
+				"remaining":     remaining,
+				"resets_at":     dayStart.Add(24 * time.Hour),
+				"under_limit":   used < limit,
+				"log_only_mode": config.AppConfig.RateLimitLogOnly,
+			})
 			return
 		}
 
-		remaining := config.AppConfig.RateLimitTokensPerDay - tokenUsage
+		// Free tier (lifetime).
+		lifetime, err := trackingService.GetUserLifetimeTokenUsage(c.Request.Context(), userID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get lifetime usage"})
+			return
+		}
+		if lifetime < config.AppConfig.FreeLifetimeTokens {
+			limit := config.AppConfig.FreeLifetimeTokens
+			used := lifetime
+			remaining := limit - used
+			if remaining < 0 {
+				remaining = 0
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"enabled":       config.AppConfig.RateLimitEnabled,
+				"tier":          "free",
+				"limit":         limit,
+				"used":          used,
+				"remaining":     remaining,
+				"resets_at":     nil,
+				"under_limit":   used < limit,
+				"log_only_mode": config.AppConfig.RateLimitLogOnly,
+			})
+			return
+		}
+
+		// Drip tier (daily requests).
+		reqs, err := trackingService.GetUserRequestCountToday(c.Request.Context(), userID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get request count"})
+			return
+		}
+		limit := config.AppConfig.DripDailyMessages
+		remaining := limit - reqs
 		if remaining < 0 {
 			remaining = 0
 		}
-
 		c.JSON(http.StatusOK, gin.H{
 			"enabled":       config.AppConfig.RateLimitEnabled,
-			"limit":         config.AppConfig.RateLimitTokensPerDay,
-			"used":          tokenUsage,
+			"tier":          "drip",
+			"limit":         limit,
+			"used":          reqs,
 			"remaining":     remaining,
-			"under_limit":   isUnderLimit,
+			"resets_at":     dayStart.Add(24 * time.Hour),
+			"under_limit":   reqs < limit,
 			"log_only_mode": config.AppConfig.RateLimitLogOnly,
 		})
 	}

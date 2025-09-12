@@ -20,6 +20,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/composio"
 	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/iap"
 	"github.com/eternisai/enchanted-proxy/internal/invitecode"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/mcp"
@@ -101,6 +102,7 @@ func main() {
 	composioService := composio.NewService(logger.WithComponent("composio"))
 	inviteCodeService := invitecode.NewService(db.Queries)
 	requestTrackingService := request_tracking.NewService(db.Queries, logger.WithComponent("request_tracking"))
+	iapService := iap.NewService(db.Queries)
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
 
@@ -108,6 +110,7 @@ func main() {
 	oauthHandler := oauth.NewHandler(oauthService, logger.WithComponent("oauth"))
 	composioHandler := composio.NewHandler(composioService, logger.WithComponent("composio"))
 	inviteCodeHandler := invitecode.NewHandler(inviteCodeService)
+	iapHandler := iap.NewHandler(iapService, logger.WithComponent("iap"))
 	mcpHandler := mcp.NewHandler(mcpService)
 	searchHandler := search.NewHandler(searchService, logger.WithComponent("search"))
 
@@ -160,6 +163,7 @@ func main() {
 		oauthHandler:           oauthHandler,
 		composioHandler:        composioHandler,
 		inviteCodeHandler:      inviteCodeHandler,
+		iapHandler:             iapHandler,
 		mcpHandler:             mcpHandler,
 		searchHandler:          searchHandler,
 	})
@@ -205,7 +209,6 @@ func main() {
 				mode = "LOG-ONLY"
 			}
 			log.Info("rate limiting enabled",
-				slog.Int64("limit", config.AppConfig.RateLimitTokensPerDay),
 				slog.String("mode", mode))
 		} else {
 			log.Info("rate limiting disabled")
@@ -259,6 +262,7 @@ type restServerInput struct {
 	oauthHandler           *oauth.Handler
 	composioHandler        *composio.Handler
 	inviteCodeHandler      *invitecode.Handler
+	iapHandler             *iap.Handler
 	mcpHandler             *mcp.Handler
 	searchHandler          *search.Handler
 }
@@ -322,6 +326,12 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		rateLimit := api.Group("/rate-limit")
 		{
 			rateLimit.GET("/status", request_tracking.RateLimitStatusHandler(input.requestTrackingService))
+		}
+
+		// IAP (protected)
+		sub := api.Group("/subscription")
+		{
+			sub.POST("/appstore/attach", input.iapHandler.AttachAppStoreSubscription)
 		}
 
 		// Search API routes (protected)
