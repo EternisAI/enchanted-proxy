@@ -49,7 +49,6 @@ type Config struct {
 	AppStoreAPIKeyID string
 	AppStoreBundleID string
 	AppStoreIssuerID string
-	AppStoreSandbox  bool
 
 	// Telegram
 	EnableTelegramServer bool
@@ -156,7 +155,6 @@ func LoadConfig() {
 		AppStoreAPIKeyID: getEnvOrDefault("APPSTORE_API_KEY_ID", ""),
 		AppStoreBundleID: getEnvOrDefault("APPSTORE_BUNDLE_ID", ""),
 		AppStoreIssuerID: getEnvOrDefault("APPSTORE_ISSUER_ID", ""),
-		AppStoreSandbox:  getEnvOrDefault("APPSTORE_ENV", "production") == "sandbox",
 
 		// Telegram
 		EnableTelegramServer: getEnvOrDefault("ENABLE_TELEGRAM_SERVER", "true") == "true",
