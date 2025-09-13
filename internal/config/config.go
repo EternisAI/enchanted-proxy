@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"log"
 	"os"
 	"strconv"
@@ -220,6 +221,22 @@ func LoadConfig() {
 
 	if AppConfig.TelegramToken != "" {
 		log.Println("Telegram service enabled with token")
+	}
+
+	if AppConfig.AppStoreAPIKeyP8 == "" || AppConfig.AppStoreAPIKeyID == "" || AppConfig.AppStoreBundleID == "" || AppConfig.AppStoreIssuerID == "" {
+		log.Println("Warning: App Store IAP credentials are missing. Please set APPSTORE_API_KEY_P8, APPSTORE_API_KEY_ID, APPSTORE_BUNDLE_ID, and APPSTORE_ISSUER_ID environment variables.")
+	} else {
+		log.Println(
+			"App Store IAP configured:",
+			"key_id=", AppConfig.AppStoreAPIKeyID,
+			"bundle_id=", AppConfig.AppStoreBundleID,
+			"issuer_id=", AppConfig.AppStoreIssuerID,
+		)
+
+		if AppConfig.AppStoreAPIKeyP8 != "" {
+			sum := sha256.Sum256([]byte(AppConfig.AppStoreAPIKeyP8))
+			log.Printf("App Store IAP private key loaded (sha256=%x, bytes=%d)", sum, len(AppConfig.AppStoreAPIKeyP8))
+		}
 	}
 
 	log.Println("Firebase project ID: ", AppConfig.FirebaseProjectID)

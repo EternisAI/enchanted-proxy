@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	appstore "github.com/richzw/appstore"
@@ -19,8 +20,14 @@ type Service struct {
 }
 
 func NewService(queries pgdb.Querier) *Service {
+	// Normalize P8: support both literal newlines and \n-escaped forms.
+	key := config.AppConfig.AppStoreAPIKeyP8
+	if strings.Contains(key, "\\n") && !strings.Contains(key, "\n") {
+		key = strings.ReplaceAll(key, "\\n", "\n")
+	}
+
 	prodClient := appstore.NewStoreClient(&appstore.StoreConfig{
-		KeyContent: []byte(config.AppConfig.AppStoreAPIKeyP8),
+		KeyContent: []byte(key),
 		KeyID:      config.AppConfig.AppStoreAPIKeyID,
 		BundleID:   config.AppConfig.AppStoreBundleID,
 		Issuer:     config.AppConfig.AppStoreIssuerID,
@@ -28,7 +35,7 @@ func NewService(queries pgdb.Querier) *Service {
 	})
 
 	sandboxClient := appstore.NewStoreClient(&appstore.StoreConfig{
-		KeyContent: []byte(config.AppConfig.AppStoreAPIKeyP8),
+		KeyContent: []byte(key),
 		KeyID:      config.AppConfig.AppStoreAPIKeyID,
 		BundleID:   config.AppConfig.AppStoreBundleID,
 		Issuer:     config.AppConfig.AppStoreIssuerID,
