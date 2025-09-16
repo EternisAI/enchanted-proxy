@@ -41,6 +41,7 @@ var allowedBaseURLs = map[string]string{
 	"https://openrouter.ai/api/v1":     os.Getenv("OPENROUTER_API_KEY"),
 	"https://api.openai.com/v1":        os.Getenv("OPENAI_API_KEY"),
 	"https://inference.tinfoil.sh/v1/": os.Getenv("TINFOIL_API_KEY"),
+	"https://cloud-api.near.ai/v1":     os.Getenv("NEAR_API_KEY"),
 }
 
 func waHandler(logger *logger.Logger) gin.HandlerFunc {

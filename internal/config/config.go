@@ -26,6 +26,7 @@ type Config struct {
 	OpenRouterMobileAPIKey  string
 	OpenRouterDesktopAPIKey string
 	TinfoilAPIKey           string
+	NearAPIKey              string
 	SerpAPIKey              string
 	ExaAPIKey               string
 	ValidatorType           string // "jwk" or "firebase"
@@ -126,6 +127,9 @@ func LoadConfig() {
 
 		// Tinfoil
 		TinfoilAPIKey: getEnvOrDefault("TINFOIL_API_KEY", ""),
+
+		// Near
+		NearAPIKey: getEnvOrDefault("NEAR_API_KEY", ""),
 
 		// SerpAPI
 		SerpAPIKey: getEnvOrDefault("SERPAPI_API_KEY", ""),
