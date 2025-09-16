@@ -41,6 +41,7 @@ egress:
   - openrouter.ai
   - serpapi.com
   - api.exa.ai
+  - cloud-api.near.ai
   # aws-0-us-east-2.pooler.supabase.com
   - 3.13.175.194
   - 3.139.14.59
@@ -68,6 +69,7 @@ env:
 - LOG_FORMAT
 - LOG_LEVEL
 - NATS_URL
+- NEAR_API_KEY
 - OPENAI_API_KEY
 - OPENROUTER_API_KEY
 - OPENROUTER_DESKTOP_API_KEY

@@ -50,6 +50,8 @@ func getAPIKey(baseURL string, platform string, config *config.Config) string {
 		return config.OpenAIAPIKey
 	case "https://inference.tinfoil.sh/v1":
 		return config.TinfoilAPIKey
+	case "https://cloud-api.near.ai/v1":
+		return config.NearAPIKey
 	default:
 		return ""
 	}
