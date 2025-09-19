@@ -22,8 +22,10 @@ on:
 env:
   POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
   POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
-  OPENROUTER_MOBILE_API_KEY: ${{ secrets.OPENROUTER_MOBILE_PROVISIONING_KEY }}
-  OPENROUTER_DESKTOP_API_KEY: ${{ secrets.OPENROUTER_DESKTOP_PROVISIONING_KEY }}
+  OPENROUTER_MOBILE_PROVISIONING_KEY: ${{ secrets.OPENROUTER_MOBILE_PROVISIONING_KEY }}
+  OPENROUTER_DESKTOP_PROVISIONING_KEY: ${{ secrets.OPENROUTER_DESKTOP_PROVISIONING_KEY }}
+  OPENROUTER_FREYSA_IDENTITY_PROVISIONING_KEY: ${{ secrets.OPENROUTER_FREYSA_IDENTITY_PROVISIONING_KEY }}
+  OPENROUTER_RESEARCH_PROVISIONING_KEY: ${{ secrets.OPENROUTER_RESEARCH_PROVISIONING_KEY }}
 
 jobs:
   fetch-and-send-analytics:
@@ -31,12 +33,18 @@ jobs:
     strategy:
       matrix:
         include:
-          - key_name: OPENROUTER_MOBILE_API_KEY
+          - key_name: OPENROUTER_MOBILE_PROVISIONING_KEY
             event_name: openrouter_daily_activity
             account: Mobile
-          - key_name: OPENROUTER_DESKTOP_API_KEY
+          - key_name: OPENROUTER_DESKTOP_PROVISIONING_KEY
             event_name: openrouter_daily_activity_desktop
             account: Desktop
+          - key_name: OPENROUTER_FREYSA_IDENTITY_PROVISIONING_KEY
+            event_name: openrouter_daily_activity_freysa_identity
+            account: FreysaIdentity
+          - key_name: OPENROUTER_RESEARCH_PROVISIONING_KEY
+            event_name: openrouter_daily_activity_research
+            account: Research
 
     name: Sync ${{ matrix.account }} account
 

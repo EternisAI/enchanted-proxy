@@ -26,6 +26,23 @@ FROM user_token_usage_daily
 WHERE user_id = $1 
   AND day_bucket = DATE_TRUNC('day', NOW());
 
+-- name: GetUserLifetimeTokenUsage :one
+SELECT COALESCE(SUM(total_tokens), 0)::BIGINT as total_tokens
+FROM request_logs
+WHERE user_id = $1 AND total_tokens IS NOT NULL;
+
+-- name: GetUserTokenUsageToday :one
+SELECT COALESCE(SUM(total_tokens), 0)::BIGINT as total_tokens
+FROM request_logs
+WHERE user_id = $1 AND total_tokens IS NOT NULL
+  AND created_at >= DATE_TRUNC('day', NOW());
+
+-- name: GetUserRequestCountToday :one
+SELECT COUNT(*)
+FROM request_logs
+WHERE user_id = $1
+  AND created_at >= DATE_TRUNC('day', NOW());
+
 -- name: RefreshUserRequestCountsView :exec
 REFRESH MATERIALIZED VIEW CONCURRENTLY user_request_counts_daily;
 

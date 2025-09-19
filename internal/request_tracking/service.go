@@ -3,6 +3,7 @@ package request_tracking
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -176,6 +177,21 @@ func (s *Service) CheckRateLimit(ctx context.Context, userID string, maxTokensPe
 	return count < maxTokensPerDay, nil
 }
 
+// GetUserLifetimeTokenUsage returns the total tokens a user has ever consumed.
+func (s *Service) GetUserLifetimeTokenUsage(ctx context.Context, userID string) (int64, error) {
+	return s.queries.GetUserLifetimeTokenUsage(ctx, userID)
+}
+
+// GetUserTokenUsageToday returns tokens used today.
+func (s *Service) GetUserTokenUsageToday(ctx context.Context, userID string) (int64, error) {
+	return s.queries.GetUserTokenUsageToday(ctx, userID)
+}
+
+// GetUserRequestCountToday returns requests made today.
+func (s *Service) GetUserRequestCountToday(ctx context.Context, userID string) (int64, error) {
+	return s.queries.GetUserRequestCountToday(ctx, userID)
+}
+
 func (s *Service) GetUserRequestCountSince(ctx context.Context, userID string, since time.Time) (int64, error) {
 	params := pgdb.GetUserRequestCountInTimeWindowParams{
 		UserID:    userID,
@@ -190,6 +206,23 @@ func (s *Service) GetUserTokenUsageSince(ctx context.Context, userID string, sin
 		DayBucket: since,
 	}
 	return s.queries.GetUserTokenUsageInTimeWindow(ctx, params)
+}
+
+// HasActivePro checks if user has an active Pro entitlement and returns expiry when available.
+func (s *Service) HasActivePro(ctx context.Context, userID string) (bool, *time.Time, error) {
+	ent, err := s.queries.GetEntitlement(ctx, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil, nil
+		}
+		return false, nil, err
+	}
+	now := time.Now().UTC()
+	if ent.ProExpiresAt.Valid && ent.ProExpiresAt.Time.After(now) {
+		t := ent.ProExpiresAt.Time
+		return true, &t, nil
+	}
+	return false, nil, nil
 }
 
 // LogRequestWithTokensAsync queues a log request with token data to be processed by the worker pool.

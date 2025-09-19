@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"log"
 	"os"
 	"strconv"
@@ -25,6 +26,7 @@ type Config struct {
 	OpenRouterMobileAPIKey  string
 	OpenRouterDesktopAPIKey string
 	TinfoilAPIKey           string
+	NearAPIKey              string
 	SerpAPIKey              string
 	ExaAPIKey               string
 	ValidatorType           string // "jwk" or "firebase"
@@ -36,9 +38,19 @@ type Config struct {
 	ReplicateAPIToken string
 
 	// Rate Limiting
-	RateLimitEnabled      bool
-	RateLimitTokensPerDay int64
-	RateLimitLogOnly      bool // If true, only log violations, don't block.
+	RateLimitEnabled bool
+	RateLimitLogOnly bool // If true, only log violations, don't block.
+
+	// Usage Tiers
+	FreeLifetimeTokens int64
+	DripDailyMessages  int64
+	ProDailyTokens     int64
+
+	// App Store (IAP)
+	AppStoreAPIKeyP8 string
+	AppStoreAPIKeyID string
+	AppStoreBundleID string
+	AppStoreIssuerID string
 
 	// Telegram
 	EnableTelegramServer bool
@@ -116,6 +128,9 @@ func LoadConfig() {
 		// Tinfoil
 		TinfoilAPIKey: getEnvOrDefault("TINFOIL_API_KEY", ""),
 
+		// Near
+		NearAPIKey: getEnvOrDefault("NEAR_API_KEY", ""),
+
 		// SerpAPI
 		SerpAPIKey: getEnvOrDefault("SERPAPI_API_KEY", ""),
 
@@ -132,9 +147,19 @@ func LoadConfig() {
 		ReplicateAPIToken: getEnvOrDefault("REPLICATE_API_TOKEN", ""),
 
 		// Rate Limiting
-		RateLimitEnabled:      getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
-		RateLimitTokensPerDay: getEnvAsInt64("RATE_LIMIT_TOKENS_PER_DAY", 1000000),
-		RateLimitLogOnly:      getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
+		RateLimitEnabled: getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
+		RateLimitLogOnly: getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
+
+		// Usage Tiers
+		FreeLifetimeTokens: getEnvAsInt64("FREE_LIFETIME_TOKENS", 20000),
+		DripDailyMessages:  getEnvAsInt64("DRIP_DAILY_MESSAGES", 10),
+		ProDailyTokens:     getEnvAsInt64("PRO_DAILY_TOKENS", 500000),
+
+		// App Store (IAP)
+		AppStoreAPIKeyP8: getEnvOrDefault("APPSTORE_API_KEY_P8", ""),
+		AppStoreAPIKeyID: getEnvOrDefault("APPSTORE_API_KEY_ID", ""),
+		AppStoreBundleID: getEnvOrDefault("APPSTORE_BUNDLE_ID", ""),
+		AppStoreIssuerID: getEnvOrDefault("APPSTORE_ISSUER_ID", ""),
 
 		// Telegram
 		EnableTelegramServer: getEnvOrDefault("ENABLE_TELEGRAM_SERVER", "true") == "true",
@@ -200,6 +225,22 @@ func LoadConfig() {
 
 	if AppConfig.TelegramToken != "" {
 		log.Println("Telegram service enabled with token")
+	}
+
+	if AppConfig.AppStoreAPIKeyP8 == "" || AppConfig.AppStoreAPIKeyID == "" || AppConfig.AppStoreBundleID == "" || AppConfig.AppStoreIssuerID == "" {
+		log.Println("Warning: App Store IAP credentials are missing. Please set APPSTORE_API_KEY_P8, APPSTORE_API_KEY_ID, APPSTORE_BUNDLE_ID, and APPSTORE_ISSUER_ID environment variables.")
+	} else {
+		log.Println(
+			"App Store IAP configured:",
+			"key_id=", AppConfig.AppStoreAPIKeyID,
+			"bundle_id=", AppConfig.AppStoreBundleID,
+			"issuer_id=", AppConfig.AppStoreIssuerID,
+		)
+
+		if AppConfig.AppStoreAPIKeyP8 != "" {
+			sum := sha256.Sum256([]byte(AppConfig.AppStoreAPIKeyP8))
+			log.Printf("App Store IAP private key loaded (sha256=%x, bytes=%d)", sum, len(AppConfig.AppStoreAPIKeyP8))
+		}
 	}
 
 	log.Println("Firebase project ID: ", AppConfig.FirebaseProjectID)

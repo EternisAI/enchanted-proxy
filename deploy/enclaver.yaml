@@ -21,9 +21,12 @@ ingress:
 - listen_port: 9101
 egress:
   allow:
-  # API client enpdoints
+  # API client endpoints
   - api.telegram.org
   - backend.composio.dev
+  # App Store Server API (IAP verification)
+  - api.storekit.itunes.apple.com
+  - api.storekit-sandbox.itunes.apple.com
   # MCP API client endpoints
   - api.perplexity.ai
   - api.replicate.com
@@ -38,10 +41,15 @@ egress:
   - openrouter.ai
   - serpapi.com
   - api.exa.ai
+  - cloud-api.near.ai
   # aws-0-us-east-2.pooler.supabase.com
   - 3.13.175.194
   - 3.139.14.59
 env:
+- APPSTORE_API_KEY_ID
+- APPSTORE_API_KEY_P8
+- APPSTORE_BUNDLE_ID
+- APPSTORE_ISSUER_ID
 - COMPOSIO_API_KEY
 - COMPOSIO_TWITTER_CONFIG
 - CORS_ALLOWED_ORIGINS
@@ -61,6 +69,7 @@ env:
 - LOG_FORMAT
 - LOG_LEVEL
 - NATS_URL
+- NEAR_API_KEY
 - OPENAI_API_KEY
 - OPENROUTER_API_KEY
 - OPENROUTER_DESKTOP_API_KEY
@@ -69,7 +78,6 @@ env:
 - PORT
 - RATE_LIMIT_ENABLED
 - RATE_LIMIT_LOG_ONLY
-- RATE_LIMIT_TOKENS_PER_DAY
 - REPLICATE_API_TOKEN
 - REQUEST_TRACKING_BUFFER_SIZE
 - REQUEST_TRACKING_TIMEOUT_SECONDS

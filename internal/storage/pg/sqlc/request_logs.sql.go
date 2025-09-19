@@ -39,6 +39,19 @@ func (q *Queries) CreateRequestLog(ctx context.Context, arg CreateRequestLogPara
 	return err
 }
 
+const getUserLifetimeTokenUsage = `-- name: GetUserLifetimeTokenUsage :one
+SELECT COALESCE(SUM(total_tokens), 0)::BIGINT as total_tokens
+FROM request_logs
+WHERE user_id = $1 AND total_tokens IS NOT NULL
+`
+
+func (q *Queries) GetUserLifetimeTokenUsage(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserLifetimeTokenUsage, userID)
+	var total_tokens int64
+	err := row.Scan(&total_tokens)
+	return total_tokens, err
+}
+
 const getUserRequestCountInLastDay = `-- name: GetUserRequestCountInLastDay :one
 SELECT COALESCE(SUM(request_count), 0)::BIGINT as total_requests
 FROM user_request_counts_daily 
@@ -72,6 +85,20 @@ func (q *Queries) GetUserRequestCountInTimeWindow(ctx context.Context, arg GetUs
 	return count, err
 }
 
+const getUserRequestCountToday = `-- name: GetUserRequestCountToday :one
+SELECT COUNT(*)
+FROM request_logs
+WHERE user_id = $1
+  AND created_at >= DATE_TRUNC('day', NOW())
+`
+
+func (q *Queries) GetUserRequestCountToday(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserRequestCountToday, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getUserTokenUsageInLastDay = `-- name: GetUserTokenUsageInLastDay :one
 SELECT COALESCE(SUM(total_tokens_used), 0)::BIGINT as total_tokens
 FROM user_token_usage_daily 
@@ -100,6 +127,20 @@ type GetUserTokenUsageInTimeWindowParams struct {
 
 func (q *Queries) GetUserTokenUsageInTimeWindow(ctx context.Context, arg GetUserTokenUsageInTimeWindowParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getUserTokenUsageInTimeWindow, arg.UserID, arg.DayBucket)
+	var total_tokens int64
+	err := row.Scan(&total_tokens)
+	return total_tokens, err
+}
+
+const getUserTokenUsageToday = `-- name: GetUserTokenUsageToday :one
+SELECT COALESCE(SUM(total_tokens), 0)::BIGINT as total_tokens
+FROM request_logs
+WHERE user_id = $1 AND total_tokens IS NOT NULL
+  AND created_at >= DATE_TRUNC('day', NOW())
+`
+
+func (q *Queries) GetUserTokenUsageToday(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserTokenUsageToday, userID)
 	var total_tokens int64
 	err := row.Scan(&total_tokens)
 	return total_tokens, err
