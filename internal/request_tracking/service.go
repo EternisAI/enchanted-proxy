@@ -195,7 +195,7 @@ func (s *Service) GetUserRequestCountToday(ctx context.Context, userID string) (
 func (s *Service) GetUserRequestCountSince(ctx context.Context, userID string, since time.Time) (int64, error) {
 	params := pgdb.GetUserRequestCountInTimeWindowParams{
 		UserID:    userID,
-		CreatedAt: since,
+		DayBucket: since,
 	}
 	return s.queries.GetUserRequestCountInTimeWindow(ctx, params)
 }
