@@ -9,5 +9,3 @@ ON CONFLICT (user_id) DO UPDATE SET
 SELECT user_id, pro_expires_at, updated_at
 FROM entitlements
 WHERE user_id = $1;
-
-
