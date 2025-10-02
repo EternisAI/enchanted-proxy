@@ -54,21 +54,31 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 	// - Block freemium users from certain endpoints
 
 	// Construct WebSocket URL for the deep research server
+	deepResearchHost := os.Getenv("DEEP_RESEARCH_WS")
+	if deepResearchHost == "" {
+		log.Error("❌ [DeepResearch] DEEP_RESEARCH_WS environment variable not set")
+		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Deep research backend not configured"}`))
+		return
+	}
+
 	wsURL := url.URL{
 		Scheme: "ws",
-		Host:   os.Getenv("DEEP_RESEARCH_WS"),
+		Host:   deepResearchHost,
 		Path:   "/deep_research/" + userID + "/" + chatID + "/",
 	}
 
-	log.Info("connecting to deep research server", slog.String("url", wsURL.String()))
+	log.Info("🔌 [DeepResearch] connecting to deep research server", slog.String("url", wsURL.String()))
 
 	// Connect to the deep research server
 	serverConn, _, err := websocket.DefaultDialer.Dial(wsURL.String(), nil)
 	if err != nil {
-		log.Error("failed to connect to deep research server", slog.String("error", err.Error()))
+		log.Error("❌ [DeepResearch] failed to connect to deep research server", slog.String("error", err.Error()))
+		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to connect to deep research backend"}`))
 		return
 	}
 	defer serverConn.Close()
+
+	log.Info("✅ [DeepResearch] Connected to deep research backend")
 
 	// Create channels for communication
 	done := make(chan struct{})
@@ -84,18 +94,20 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 				_, message, err := clientConn.ReadMessage()
 				if err != nil {
 					if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-						log.Error("error reading from client", slog.String("error", err.Error()))
+						log.Error("❌ [DeepResearch] error reading from client", slog.String("error", err.Error()))
 					}
 					return
 				}
 
+				log.Info("📨 [DeepResearch] Received message from client", slog.String("message", string(message)))
+
 				// Forward message to server
 				if err := serverConn.WriteMessage(websocket.TextMessage, message); err != nil {
-					log.Error("error writing to server", slog.String("error", err.Error()))
+					log.Error("❌ [DeepResearch] error writing to server", slog.String("error", err.Error()))
 					return
 				}
 
-				log.Debug("message forwarded to server", slog.String("message", string(message)))
+				log.Info("📤 [DeepResearch] message forwarded to deep research backend")
 			}
 		}
 	}()
@@ -111,18 +123,20 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 			_, message, err := serverConn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Error("error reading from server", slog.String("error", err.Error()))
+					log.Error("❌ [DeepResearch] error reading from backend", slog.String("error", err.Error()))
 				}
 				return
 			}
 
+			log.Info("📨 [DeepResearch] Received message from backend", slog.String("message", string(message)))
+
 			// Forward message to client
 			if err := clientConn.WriteMessage(websocket.TextMessage, message); err != nil {
-				log.Error("error writing to client", slog.String("error", err.Error()))
+				log.Error("❌ [DeepResearch] error writing to client", slog.String("error", err.Error()))
 				return
 			}
 
-			log.Debug("message forwarded to client", slog.String("message", string(message)))
+			log.Info("📤 [DeepResearch] message forwarded to client")
 		}
 	}
 }
