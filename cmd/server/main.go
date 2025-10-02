@@ -20,6 +20,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/composio"
 	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/deepr"
 	"github.com/eternisai/enchanted-proxy/internal/iap"
 	"github.com/eternisai/enchanted-proxy/internal/invitecode"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -338,6 +339,9 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		// Search API routes (protected)
 		api.POST("/search", input.searchHandler.PostSearchHandler)        // POST /api/v1/search (SerpAPI)
 		api.POST("/exa/search", input.searchHandler.PostExaSearchHandler) // POST /api/v1/exa/search (Exa AI)
+
+		// Deep Research WebSocket endpoint (protected)
+		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService)) // WebSocket proxy for deep research
 	}
 
 	// Protected proxy routes
