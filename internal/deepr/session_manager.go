@@ -1,0 +1,211 @@
+package deepr
+
+import (
+	"context"
+	"log/slog"
+	"sync"
+
+	"github.com/eternisai/enchanted-proxy/internal/logger"
+	"github.com/gorilla/websocket"
+)
+
+// ActiveSession represents an active backend connection
+type ActiveSession struct {
+	UserID       string
+	ChatID       string
+	BackendConn  *websocket.Conn
+	Context      context.Context
+	CancelFunc   context.CancelFunc
+	mu           sync.RWMutex
+	clientConns  map[string]*websocket.Conn // Map of client connection IDs
+}
+
+// SessionManager manages active backend connections
+type SessionManager struct {
+	logger   *logger.Logger
+	sessions map[string]*ActiveSession // key: "userID:chatID"
+	mu       sync.RWMutex
+}
+
+// NewSessionManager creates a new session manager
+func NewSessionManager(logger *logger.Logger) *SessionManager {
+	return &SessionManager{
+		logger:   logger,
+		sessions: make(map[string]*ActiveSession),
+	}
+}
+
+// getSessionKey generates a session key from userID and chatID
+func (sm *SessionManager) getSessionKey(userID, chatID string) string {
+	return userID + ":" + chatID
+}
+
+// GetSession retrieves an active session
+func (sm *SessionManager) GetSession(userID, chatID string) (*ActiveSession, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	key := sm.getSessionKey(userID, chatID)
+	session, exists := sm.sessions[key]
+	return session, exists
+}
+
+// CreateSession creates a new active session
+func (sm *SessionManager) CreateSession(userID, chatID string, backendConn *websocket.Conn, ctx context.Context, cancel context.CancelFunc) *ActiveSession {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	key := sm.getSessionKey(userID, chatID)
+
+	session := &ActiveSession{
+		UserID:      userID,
+		ChatID:      chatID,
+		BackendConn: backendConn,
+		Context:     ctx,
+		CancelFunc:  cancel,
+		clientConns: make(map[string]*websocket.Conn),
+	}
+
+	sm.sessions[key] = session
+
+	sm.logger.WithComponent("deepr-session").Info("created new session",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID))
+
+	return session
+}
+
+// RemoveSession removes a session
+func (sm *SessionManager) RemoveSession(userID, chatID string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	key := sm.getSessionKey(userID, chatID)
+
+	if session, exists := sm.sessions[key]; exists {
+		// Close all client connections
+		session.mu.Lock()
+		for clientID, conn := range session.clientConns {
+			conn.Close()
+			sm.logger.WithComponent("deepr-session").Info("closed client connection during session removal",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("client_id", clientID))
+		}
+		session.clientConns = make(map[string]*websocket.Conn)
+		session.mu.Unlock()
+
+		// Cancel context
+		if session.CancelFunc != nil {
+			session.CancelFunc()
+		}
+
+		delete(sm.sessions, key)
+
+		sm.logger.WithComponent("deepr-session").Info("removed session",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID))
+	}
+}
+
+// AddClientConnection adds a client connection to an existing session
+func (sm *SessionManager) AddClientConnection(userID, chatID, clientID string, conn *websocket.Conn) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	key := sm.getSessionKey(userID, chatID)
+	if session, exists := sm.sessions[key]; exists {
+		session.mu.Lock()
+		session.clientConns[clientID] = conn
+		session.mu.Unlock()
+
+		sm.logger.WithComponent("deepr-session").Info("added client connection to session",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("client_id", clientID))
+	}
+}
+
+// RemoveClientConnection removes a client connection from a session
+func (sm *SessionManager) RemoveClientConnection(userID, chatID, clientID string) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	key := sm.getSessionKey(userID, chatID)
+	if session, exists := sm.sessions[key]; exists {
+		session.mu.Lock()
+		delete(session.clientConns, clientID)
+		clientCount := len(session.clientConns)
+		session.mu.Unlock()
+
+		sm.logger.WithComponent("deepr-session").Info("removed client connection from session",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("client_id", clientID),
+			slog.Int("remaining_clients", clientCount))
+	}
+}
+
+// BroadcastToClients sends a message to all connected clients for a session
+func (sm *SessionManager) BroadcastToClients(userID, chatID string, message []byte) error {
+	sm.mu.RLock()
+	key := sm.getSessionKey(userID, chatID)
+	session, exists := sm.sessions[key]
+	sm.mu.RUnlock()
+
+	if !exists {
+		return nil // No active session, message will be stored as unsent
+	}
+
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+
+	var lastErr error
+	sentCount := 0
+
+	for clientID, conn := range session.clientConns {
+		if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
+			sm.logger.WithComponent("deepr-session").Error("failed to send message to client",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("client_id", clientID),
+				slog.String("error", err.Error()))
+			lastErr = err
+		} else {
+			sentCount++
+		}
+	}
+
+	sm.logger.WithComponent("deepr-session").Debug("broadcast message to clients",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.Int("sent_count", sentCount),
+		slog.Int("total_clients", len(session.clientConns)))
+
+	return lastErr
+}
+
+// GetClientCount returns the number of connected clients for a session
+func (sm *SessionManager) GetClientCount(userID, chatID string) int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	key := sm.getSessionKey(userID, chatID)
+	if session, exists := sm.sessions[key]; exists {
+		session.mu.RLock()
+		defer session.mu.RUnlock()
+		return len(session.clientConns)
+	}
+
+	return 0
+}
+
+// HasActiveBackend checks if there's an active backend connection for a session
+func (sm *SessionManager) HasActiveBackend(userID, chatID string) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	key := sm.getSessionKey(userID, chatID)
+	_, exists := sm.sessions[key]
+	return exists
+}

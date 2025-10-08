@@ -195,3 +195,16 @@ All logs include structured fields for user ID, chat ID, and request context.
 ```
 
 This architecture provides a scalable, secure, and monetizable deep research service with proper usage controls and comprehensive monitoring.
+
+## Reconnection and Session Persistence
+
+The deep research service now supports automatic session persistence and reconnection. This allows iOS clients to disconnect (e.g., app backgrounded or killed) and reconnect without losing progress.
+
+**Key Features:**
+- **Session Persistence**: Messages are stored to disk as they arrive from the backend
+- **Message State Tracking**: Each message is marked as sent/unsent (delivered to iOS or not)
+- **Backend Persistence**: Connection to deep research backend stays active even when iOS disconnects
+- **Automatic Recovery**: On reconnection, all unsent messages are delivered automatically
+- **Session Completion Detection**: Recognizes when research is complete (final report or error)
+
+For detailed information about the reconnection feature, see [Deep Research Reconnection Documentation](./deep-research-reconnection.md).
