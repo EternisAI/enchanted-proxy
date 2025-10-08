@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 
+	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"github.com/gorilla/websocket"
@@ -15,13 +16,15 @@ import (
 type Service struct {
 	logger          *logger.Logger
 	trackingService *request_tracking.Service
+	firebaseClient  *auth.FirebaseClient
 }
 
 // NewService creates a new deep research service
-func NewService(logger *logger.Logger, trackingService *request_tracking.Service) *Service {
+func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient) *Service {
 	return &Service{
 		logger:          logger,
 		trackingService: trackingService,
+		firebaseClient:  firebaseClient,
 	}
 }
 
@@ -42,16 +45,41 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 		log.Info("user has active pro subscription",
 			slog.String("user_id", userID),
 			slog.Time("expires_at", *proExpiresAt))
-	} else {
-		log.Info("user is on freemium plan", slog.String("user_id", userID))
-	}
 
-	// TODO: Implement subscription-based access control
-	// For now, allow both pro and freemium users
-	// In the future, you might want to:
-	// - Limit freemium users to certain features
-	// - Rate limit freemium users
-	// - Block freemium users from certain endpoints
+		// Track usage for pro users (for analytics)
+		if err := s.firebaseClient.IncrementDeepResearchUsage(ctx, userID); err != nil {
+			log.Error("failed to track pro user deep research usage", slog.String("error", err.Error()))
+			// Don't block pro users on tracking error
+		}
+	} else {
+		// Freemium user - check if they've already used their free deep research
+		log.Info("user is on freemium plan", slog.String("user_id", userID))
+
+		hasUsed, err := s.firebaseClient.HasUsedFreeDeepResearch(ctx, userID)
+		if err != nil {
+			log.Error("failed to check freemium deep research usage", slog.String("error", err.Error()))
+			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify usage status"}`))
+			clientConn.Close()
+			return
+		}
+
+		if hasUsed {
+			log.Info("freemium user has already used their free deep research", slog.String("user_id", userID))
+			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You have already used your free deep research. Please upgrade to Pro for unlimited access.", "error_code": "FREE_LIMIT_REACHED"}`))
+			clientConn.Close()
+			return
+		}
+
+		// Mark that the freemium user has now used their free deep research
+		if err := s.firebaseClient.MarkFreeDeepResearchUsed(ctx, userID); err != nil {
+			log.Error("failed to mark freemium deep research as used", slog.String("error", err.Error()))
+			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to track usage"}`))
+			clientConn.Close()
+			return
+		}
+
+		log.Info("freemium user is using their free deep research", slog.String("user_id", userID))
+	}
 
 	// Construct WebSocket URL for the deep research server
 	deepResearchHost := os.Getenv("DEEP_RESEARCH_WS")
