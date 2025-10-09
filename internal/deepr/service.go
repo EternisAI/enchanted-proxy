@@ -115,11 +115,16 @@ func (s *Service) checkAndTrackSubscription(ctx context.Context, clientConn *web
 	}
 
 	if hasActivePro {
-		log.Info("pro subscription active",
+		// Build log attributes, conditionally adding expires_at if available
+		logAttrs := []any{
 			slog.String("user_id", userID),
 			slog.String("subscription_type", "pro"),
-			slog.Time("expires_at", *proExpiresAt),
-			slog.Duration("check_duration", time.Since(startTime)))
+			slog.Duration("check_duration", time.Since(startTime)),
+		}
+		if proExpiresAt != nil {
+			logAttrs = append(logAttrs, slog.Time("expires_at", *proExpiresAt))
+		}
+		log.Info("pro subscription active", logAttrs...)
 
 		if err := s.firebaseClient.IncrementDeepResearchUsage(ctx, userID); err != nil {
 			log.Error("failed to increment usage counter",
