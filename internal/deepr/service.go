@@ -215,9 +215,8 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 
 	deepResearchHost := os.Getenv("DEEP_RESEARCH_WS")
 	if deepResearchHost == "" {
-		log.Error("DEEP_RESEARCH_WS environment variable not set")
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Deep research backend not configured"}`))
-		return
+		deepResearchHost = "165.232.133.47:3031"
+		log.Info("DEEP_RESEARCH_WS environment variable not set, using default", slog.String("default", deepResearchHost))
 	}
 
 	wsURL := url.URL{
