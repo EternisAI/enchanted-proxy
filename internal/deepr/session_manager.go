@@ -69,9 +69,11 @@ func (sm *SessionManager) CreateSession(userID, chatID string, backendConn *webs
 
 	sm.sessions[key] = session
 
-	sm.logger.WithComponent("deepr-session").Info("created new session",
+	sm.logger.WithComponent("deepr-session").Info("session created",
 		slog.String("user_id", userID),
-		slog.String("chat_id", chatID))
+		slog.String("chat_id", chatID),
+		slog.String("session_key", key),
+		slog.Int("total_active_sessions", len(sm.sessions)))
 
 	return session
 }
@@ -86,9 +88,10 @@ func (sm *SessionManager) RemoveSession(userID, chatID string) {
 	if session, exists := sm.sessions[key]; exists {
 		// Close all client connections
 		session.mu.Lock()
+		clientCount := len(session.clientConns)
 		for clientID, conn := range session.clientConns {
 			conn.Close()
-			sm.logger.WithComponent("deepr-session").Info("closed client connection during session removal",
+			sm.logger.WithComponent("deepr-session").Debug("client connection closed during cleanup",
 				slog.String("user_id", userID),
 				slog.String("chat_id", chatID),
 				slog.String("client_id", clientID))
@@ -103,9 +106,12 @@ func (sm *SessionManager) RemoveSession(userID, chatID string) {
 
 		delete(sm.sessions, key)
 
-		sm.logger.WithComponent("deepr-session").Info("removed session",
+		sm.logger.WithComponent("deepr-session").Info("session removed",
 			slog.String("user_id", userID),
-			slog.String("chat_id", chatID))
+			slog.String("chat_id", chatID),
+			slog.String("session_key", key),
+			slog.Int("closed_clients", clientCount),
+			slog.Int("remaining_active_sessions", len(sm.sessions)))
 	}
 }
 
@@ -118,9 +124,16 @@ func (sm *SessionManager) AddClientConnection(userID, chatID, clientID string, c
 	if session, exists := sm.sessions[key]; exists {
 		session.mu.Lock()
 		session.clientConns[clientID] = conn
+		totalClients := len(session.clientConns)
 		session.mu.Unlock()
 
-		sm.logger.WithComponent("deepr-session").Info("added client connection to session",
+		sm.logger.WithComponent("deepr-session").Info("client connection added",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("client_id", clientID),
+			slog.Int("total_clients", totalClients))
+	} else {
+		sm.logger.WithComponent("deepr-session").Warn("attempted to add client to non-existent session",
 			slog.String("user_id", userID),
 			slog.String("chat_id", chatID),
 			slog.String("client_id", clientID))
@@ -135,15 +148,23 @@ func (sm *SessionManager) RemoveClientConnection(userID, chatID, clientID string
 	key := sm.getSessionKey(userID, chatID)
 	if session, exists := sm.sessions[key]; exists {
 		session.mu.Lock()
+		_, wasPresent := session.clientConns[clientID]
 		delete(session.clientConns, clientID)
 		clientCount := len(session.clientConns)
 		session.mu.Unlock()
 
-		sm.logger.WithComponent("deepr-session").Info("removed client connection from session",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.String("client_id", clientID),
-			slog.Int("remaining_clients", clientCount))
+		if wasPresent {
+			sm.logger.WithComponent("deepr-session").Info("client connection removed",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("client_id", clientID),
+				slog.Int("remaining_clients", clientCount))
+		} else {
+			sm.logger.WithComponent("deepr-session").Debug("attempted to remove non-existent client connection",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("client_id", clientID))
+		}
 	}
 }
 
@@ -155,6 +176,9 @@ func (sm *SessionManager) BroadcastToClients(userID, chatID string, message []by
 	sm.mu.RUnlock()
 
 	if !exists {
+		sm.logger.WithComponent("deepr-session").Debug("no active session for broadcast",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID))
 		return nil // No active session, message will be stored as unsent
 	}
 
@@ -163,25 +187,32 @@ func (sm *SessionManager) BroadcastToClients(userID, chatID string, message []by
 
 	var lastErr error
 	sentCount := 0
+	failedCount := 0
+	totalClients := len(session.clientConns)
 
 	for clientID, conn := range session.clientConns {
 		if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
-			sm.logger.WithComponent("deepr-session").Error("failed to send message to client",
+			sm.logger.WithComponent("deepr-session").Error("failed to broadcast to client",
 				slog.String("user_id", userID),
 				slog.String("chat_id", chatID),
 				slog.String("client_id", clientID),
 				slog.String("error", err.Error()))
 			lastErr = err
+			failedCount++
 		} else {
 			sentCount++
 		}
 	}
 
-	sm.logger.WithComponent("deepr-session").Debug("broadcast message to clients",
-		slog.String("user_id", userID),
-		slog.String("chat_id", chatID),
-		slog.Int("sent_count", sentCount),
-		slog.Int("total_clients", len(session.clientConns)))
+	if totalClients > 0 {
+		sm.logger.WithComponent("deepr-session").Debug("broadcast completed",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.Int("message_size", len(message)),
+			slog.Int("sent_count", sentCount),
+			slog.Int("failed_count", failedCount),
+			slog.Int("total_clients", totalClients))
+	}
 
 	return lastErr
 }
@@ -220,6 +251,9 @@ func (sm *SessionManager) WriteToBackend(userID, chatID string, messageType int,
 	sm.mu.RUnlock()
 
 	if !exists {
+		sm.logger.WithComponent("deepr-session").Debug("no active session for backend write",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID))
 		return nil // No active session
 	}
 
@@ -228,8 +262,24 @@ func (sm *SessionManager) WriteToBackend(userID, chatID string, messageType int,
 	defer session.backendWriteMu.Unlock()
 
 	if session.BackendConn == nil {
+		sm.logger.WithComponent("deepr-session").Warn("backend connection closed, cannot write",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID))
 		return nil // Backend connection closed
 	}
 
-	return session.BackendConn.WriteMessage(messageType, message)
+	err := session.BackendConn.WriteMessage(messageType, message)
+	if err != nil {
+		sm.logger.WithComponent("deepr-session").Error("failed to write to backend",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("error", err.Error()))
+	} else {
+		sm.logger.WithComponent("deepr-session").Debug("message written to backend",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.Int("message_size", len(message)))
+	}
+
+	return err
 }
