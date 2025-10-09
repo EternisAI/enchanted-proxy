@@ -199,12 +199,10 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 
 				log.Info("received message from reconnected client", slog.String("message", string(message)))
 
-				// Forward to backend if session exists
-				if session, exists := s.sessionManager.GetSession(userID, chatID); exists && session.BackendConn != nil {
-					if err := session.BackendConn.WriteMessage(websocket.TextMessage, message); err != nil {
-						log.Error("error forwarding message to backend", slog.String("error", err.Error()))
-						return
-					}
+				// Forward to backend using synchronized write
+				if err := s.sessionManager.WriteToBackend(userID, chatID, websocket.TextMessage, message); err != nil {
+					log.Error("error forwarding message to backend", slog.String("error", err.Error()))
+					return
 				}
 			}
 		}
@@ -233,14 +231,12 @@ func (s *Service) handleClientMessages(ctx context.Context, clientConn *websocke
 
 			log.Info("received message from client", slog.String("message", string(message)))
 
-			// Forward to backend if session exists
-			if session, exists := s.sessionManager.GetSession(userID, chatID); exists && session.BackendConn != nil {
-				if err := session.BackendConn.WriteMessage(websocket.TextMessage, message); err != nil {
-					log.Error("error forwarding message to backend", slog.String("error", err.Error()))
-					return
-				}
-				log.Info("message forwarded to deep research backend")
+			// Forward to backend using synchronized write
+			if err := s.sessionManager.WriteToBackend(userID, chatID, websocket.TextMessage, message); err != nil {
+				log.Error("error forwarding message to backend", slog.String("error", err.Error()))
+				return
 			}
+			log.Info("message forwarded to deep research backend")
 		}
 	}
 }

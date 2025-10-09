@@ -11,13 +11,14 @@ import (
 
 // ActiveSession represents an active backend connection
 type ActiveSession struct {
-	UserID       string
-	ChatID       string
-	BackendConn  *websocket.Conn
-	Context      context.Context
-	CancelFunc   context.CancelFunc
-	mu           sync.RWMutex
-	clientConns  map[string]*websocket.Conn // Map of client connection IDs
+	UserID         string
+	ChatID         string
+	BackendConn    *websocket.Conn
+	Context        context.Context
+	CancelFunc     context.CancelFunc
+	mu             sync.RWMutex              // Protects clientConns map
+	backendWriteMu sync.Mutex                // Serializes writes to backend websocket
+	clientConns    map[string]*websocket.Conn // Map of client connection IDs
 }
 
 // SessionManager manages active backend connections
@@ -208,4 +209,27 @@ func (sm *SessionManager) HasActiveBackend(userID, chatID string) bool {
 	key := sm.getSessionKey(userID, chatID)
 	_, exists := sm.sessions[key]
 	return exists
+}
+
+// WriteToBackend sends a message to the backend websocket with proper synchronization
+// This method ensures only one goroutine writes to the backend at a time
+func (sm *SessionManager) WriteToBackend(userID, chatID string, messageType int, message []byte) error {
+	sm.mu.RLock()
+	key := sm.getSessionKey(userID, chatID)
+	session, exists := sm.sessions[key]
+	sm.mu.RUnlock()
+
+	if !exists {
+		return nil // No active session
+	}
+
+	// Serialize writes to backend websocket
+	session.backendWriteMu.Lock()
+	defer session.backendWriteMu.Unlock()
+
+	if session.BackendConn == nil {
+		return nil // Backend connection closed
+	}
+
+	return session.BackendConn.WriteMessage(messageType, message)
 }
