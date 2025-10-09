@@ -89,7 +89,7 @@ var AppConfig *Config
 
 func LoadConfig() {
 	// Load .env file if it exists
-	if err := godotenv.Load(); err != nil {
+	if err := godotenv.Load(".env"); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
 
@@ -98,7 +98,7 @@ func LoadConfig() {
 		GinMode: getEnvOrDefault("GIN_MODE", "release"),
 
 		// Firebase
-		FirebaseProjectID: getEnvOrDefault("FIREBASE_PROJECT_ID", "enchanted-login-8fdb9"),
+		FirebaseProjectID: getEnvOrDefault("FIREBASE_PROJECT_ID", "silo-dev-95230"),
 
 		// Database
 		DatabaseURL: getEnvOrDefault("DATABASE_URL", "postgres://localhost/tee_api?sslmode=disable"),

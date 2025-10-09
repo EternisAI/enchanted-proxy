@@ -99,6 +99,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize Firebase client for Firestore (used for deep research tracking)
+	var firebaseClient *auth.FirebaseClient
+
+	if config.AppConfig.FirebaseCredJSON != "" {
+		firebaseClient, err = auth.NewFirebaseClient(context.Background(), config.AppConfig.FirebaseProjectID, config.AppConfig.FirebaseCredJSON)
+		if err != nil {
+			log.Error("failed to initialize firebase client", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
+		log.Info("firebase client initialized")
+
+		// Ensure cleanup on shutdown
+		defer func() {
+			if err := firebaseClient.Close(); err != nil {
+				log.Error("failed to close firebase client", slog.String("error", err.Error()))
+			}
+		}()
+	} else {
+		log.Warn("firebase credentials not provided - deep research tracking will not work properly")
+	}
+
 	// Initialize services
 	oauthService := oauth.NewService(logger.WithComponent("oauth"))
 	composioService := composio.NewService(logger.WithComponent("composio"))
@@ -161,6 +182,7 @@ func main() {
 	router := setupRESTServer(restServerInput{
 		logger:                 logger,
 		firebaseAuth:           firebaseAuth,
+		firebaseClient:         firebaseClient,
 		requestTrackingService: requestTrackingService,
 		oauthHandler:           oauthHandler,
 		composioHandler:        composioHandler,
@@ -260,6 +282,7 @@ func getKeys(m map[string]string) []string {
 type restServerInput struct {
 	logger                 *logger.Logger
 	firebaseAuth           *auth.FirebaseAuthMiddleware
+	firebaseClient         *auth.FirebaseClient
 	requestTrackingService *request_tracking.Service
 	oauthHandler           *oauth.Handler
 	composioHandler        *composio.Handler
@@ -341,7 +364,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		api.POST("/exa/search", input.searchHandler.PostExaSearchHandler) // POST /api/v1/exa/search (Exa AI)
 
 		// Deep Research WebSocket endpoint (protected)
-		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService)) // WebSocket proxy for deep research
+		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient)) // WebSocket proxy for deep research
 	}
 
 	// Protected proxy routes
