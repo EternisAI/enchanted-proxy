@@ -3,6 +3,7 @@ package deepr
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
@@ -113,7 +114,7 @@ func (s *Service) checkAndTrackSubscription(ctx context.Context, clientConn *web
 		if hasUsed {
 			log.Info("freemium user has already used their free deep research", slog.String("user_id", userID))
 			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You have already used your free deep research. Please upgrade to Pro for unlimited access.", "error_code": "FREE_LIMIT_REACHED"}`))
-			return err
+			return fmt.Errorf("freemium quota exhausted for user %s", userID)
 		}
 
 		if err := s.firebaseClient.MarkFreeDeepResearchUsed(ctx, userID); err != nil {
@@ -137,18 +138,15 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 		slog.String("chat_id", chatID),
 		slog.String("client_id", clientID))
 
-	// Add client to session manager
-	s.sessionManager.AddClientConnection(userID, chatID, clientID, clientConn)
-	defer s.sessionManager.RemoveClientConnection(userID, chatID, clientID)
-
-	// Check if session is complete
+	// Check if session is complete and replay unsent messages BEFORE adding client to session manager
+	// This prevents concurrent writes: backend broadcast won't know about this client during replay
 	if s.storage != nil {
 		isComplete, err := s.storage.IsSessionComplete(userID, chatID)
 		if err != nil {
 			log.Error("failed to check session completion status", slog.String("error", err.Error()))
 		}
 
-		// Send unsent messages
+		// Send unsent messages before registering the connection
 		unsent, err := s.storage.GetUnsentMessages(userID, chatID)
 		if err != nil {
 			log.Error("failed to get unsent messages", slog.String("error", err.Error()))
@@ -173,6 +171,10 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 			return
 		}
 	}
+
+	// Now that replay is complete, add client to session manager for future broadcasts
+	s.sessionManager.AddClientConnection(userID, chatID, clientID, clientConn)
+	defer s.sessionManager.RemoveClientConnection(userID, chatID, clientID)
 
 	// Listen for new messages from backend (they'll be broadcast to all clients)
 	done := make(chan struct{})
@@ -207,6 +209,38 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 	}()
 
 	<-done
+}
+
+// handleClientMessages handles forwarding messages from a client to the backend
+func (s *Service) handleClientMessages(ctx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
+	log := s.logger.WithContext(ctx).WithComponent("deepr")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			_, message, err := clientConn.ReadMessage()
+			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					log.Error("error reading from client", slog.String("error", err.Error()))
+				}
+				s.sessionManager.RemoveClientConnection(userID, chatID, clientID)
+				return
+			}
+
+			log.Info("received message from client", slog.String("message", string(message)))
+
+			// Forward to backend if session exists
+			if session, exists := s.sessionManager.GetSession(userID, chatID); exists && session.BackendConn != nil {
+				if err := session.BackendConn.WriteMessage(websocket.TextMessage, message); err != nil {
+					log.Error("error forwarding message to backend", slog.String("error", err.Error()))
+					return
+				}
+				log.Info("message forwarded to deep research backend")
+			}
+		}
+	}
 }
 
 // handleNewConnection creates a new backend connection and manages message flow
@@ -249,8 +283,8 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 		}()
 	}
 
-	// Create session context
-	sessionCtx, cancel := context.WithCancel(ctx)
+	// Create session context that is independent of any single client
+	sessionCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Create and register session
@@ -260,43 +294,14 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 	// Add initial client
 	s.sessionManager.AddClientConnection(userID, chatID, clientID, clientConn)
 
-	done := make(chan struct{})
+	// Handle messages from this client to backend in a separate goroutine
+	go s.handleClientMessages(ctx, clientConn, userID, chatID, clientID)
 
-	// Handle messages from client to backend
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case <-sessionCtx.Done():
-				return
-			default:
-				_, message, err := clientConn.ReadMessage()
-				if err != nil {
-					if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-						log.Error("error reading from client", slog.String("error", err.Error()))
-					}
-					s.sessionManager.RemoveClientConnection(userID, chatID, clientID)
-					return
-				}
-
-				log.Info("received message from client", slog.String("message", string(message)))
-
-				if err := serverConn.WriteMessage(websocket.TextMessage, message); err != nil {
-					log.Error("error writing to server", slog.String("error", err.Error()))
-					return
-				}
-
-				log.Info("message forwarded to deep research backend")
-			}
-		}
-	}()
-
-	// Handle messages from backend to clients
+	// Handle messages from backend to clients - this loop runs until backend disconnects
 	for {
 		select {
-		case <-done:
-			return
 		case <-sessionCtx.Done():
+			log.Info("session context cancelled, stopping backend reader")
 			return
 		default:
 			_, message, err := serverConn.ReadMessage()
@@ -304,6 +309,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 					log.Error("error reading from backend", slog.String("error", err.Error()))
 				}
+				log.Info("backend connection closed, session will be removed")
 				return
 			}
 
@@ -332,6 +338,13 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 					log.Info("message stored",
 						slog.Bool("sent", messageSent),
 						slog.String("type", messageType))
+				}
+
+				// Check if session is complete
+				if msg.FinalReport != "" || msg.Type == "error" || msg.Error != "" {
+					log.Info("session complete, backend will be closed after final message broadcast")
+					// Continue to allow reconnecting clients to receive this final message
+					// The backend connection will close naturally or via timeout
 				}
 			} else {
 				// No storage, just broadcast

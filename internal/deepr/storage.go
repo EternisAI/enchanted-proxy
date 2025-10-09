@@ -76,6 +76,40 @@ func (s *Storage) SaveSession(state *SessionState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	return s.saveSessionUnsafe(state)
+}
+
+// loadSessionUnsafe loads a session without acquiring locks (internal use only)
+func (s *Storage) loadSessionUnsafe(userID, chatID string) (*SessionState, error) {
+	filePath := s.getSessionFilePath(userID, chatID)
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// No existing session, return new one
+			return &SessionState{
+				UserID:              userID,
+				ChatID:              chatID,
+				Messages:            []PersistedMessage{},
+				BackendConnected:    false,
+				LastActivity:        time.Now(),
+				FinalReportReceived: false,
+				ErrorOccurred:       false,
+			}, nil
+		}
+		return nil, fmt.Errorf("failed to read session file: %w", err)
+	}
+
+	var state SessionState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal session: %w", err)
+	}
+
+	return &state, nil
+}
+
+// saveSessionUnsafe saves a session without acquiring locks (internal use only)
+func (s *Storage) saveSessionUnsafe(state *SessionState) error {
 	filePath := s.getSessionFilePath(state.UserID, state.ChatID)
 
 	state.LastActivity = time.Now()
@@ -92,68 +126,74 @@ func (s *Storage) SaveSession(state *SessionState) error {
 	return nil
 }
 
-// AddMessage adds a new message to the session
-func (s *Storage) AddMessage(userID, chatID, message string, sent bool, messageType string) error {
-	state, err := s.LoadSession(userID, chatID)
+// modifySession executes a mutation function on a session while holding the write lock
+func (s *Storage) modifySession(userID, chatID string, mutate func(*SessionState) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, err := s.loadSessionUnsafe(userID, chatID)
 	if err != nil {
 		return err
 	}
 
-	persistedMsg := PersistedMessage{
-		ID:          uuid.New().String(),
-		UserID:      userID,
-		ChatID:      chatID,
-		Message:     message,
-		Sent:        sent,
-		Timestamp:   time.Now(),
-		MessageType: messageType,
+	if err := mutate(state); err != nil {
+		return err
 	}
 
-	state.Messages = append(state.Messages, persistedMsg)
+	return s.saveSessionUnsafe(state)
+}
 
-	// Check if this is a final report or error
-	var msg Message
-	if err := json.Unmarshal([]byte(message), &msg); err == nil {
-		if msg.FinalReport != "" {
-			state.FinalReportReceived = true
+// AddMessage adds a new message to the session
+func (s *Storage) AddMessage(userID, chatID, message string, sent bool, messageType string) error {
+	return s.modifySession(userID, chatID, func(state *SessionState) error {
+		persistedMsg := PersistedMessage{
+			ID:          uuid.New().String(),
+			UserID:      userID,
+			ChatID:      chatID,
+			Message:     message,
+			Sent:        sent,
+			Timestamp:   time.Now(),
+			MessageType: messageType,
 		}
-		if msg.Type == "error" || msg.Error != "" {
-			state.ErrorOccurred = true
-		}
-	}
 
-	return s.SaveSession(state)
+		state.Messages = append(state.Messages, persistedMsg)
+
+		// Check if this is a final report or error
+		var msg Message
+		if err := json.Unmarshal([]byte(message), &msg); err == nil {
+			if msg.FinalReport != "" {
+				state.FinalReportReceived = true
+			}
+			if msg.Type == "error" || msg.Error != "" {
+				state.ErrorOccurred = true
+			}
+		}
+
+		return nil
+	})
 }
 
 // MarkMessageAsSent marks a specific message as sent
 func (s *Storage) MarkMessageAsSent(userID, chatID, messageID string) error {
-	state, err := s.LoadSession(userID, chatID)
-	if err != nil {
-		return err
-	}
-
-	for i := range state.Messages {
-		if state.Messages[i].ID == messageID {
-			state.Messages[i].Sent = true
-			break
+	return s.modifySession(userID, chatID, func(state *SessionState) error {
+		for i := range state.Messages {
+			if state.Messages[i].ID == messageID {
+				state.Messages[i].Sent = true
+				break
+			}
 		}
-	}
-
-	return s.SaveSession(state)
+		return nil
+	})
 }
 
 // MarkAllMessagesAsSent marks all messages up to a certain index as sent
 func (s *Storage) MarkAllMessagesAsSent(userID, chatID string) error {
-	state, err := s.LoadSession(userID, chatID)
-	if err != nil {
-		return err
-	}
-
-	for i := range state.Messages {
-		state.Messages[i].Sent = true
-	}
-
-	return s.SaveSession(state)
+	return s.modifySession(userID, chatID, func(state *SessionState) error {
+		for i := range state.Messages {
+			state.Messages[i].Sent = true
+		}
+		return nil
+	})
 }
 
 // GetUnsentMessages returns all unsent messages for a session
@@ -189,13 +229,10 @@ func (s *Storage) GetLastUnsentMessage(userID, chatID string) (*PersistedMessage
 
 // UpdateBackendConnectionStatus updates the backend connection status
 func (s *Storage) UpdateBackendConnectionStatus(userID, chatID string, connected bool) error {
-	state, err := s.LoadSession(userID, chatID)
-	if err != nil {
-		return err
-	}
-
-	state.BackendConnected = connected
-	return s.SaveSession(state)
+	return s.modifySession(userID, chatID, func(state *SessionState) error {
+		state.BackendConnected = connected
+		return nil
+	})
 }
 
 // IsSessionComplete checks if a session is complete (has final report or error)
