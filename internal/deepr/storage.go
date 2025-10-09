@@ -24,8 +24,14 @@ type Storage struct {
 func NewStorage(logger *logger.Logger, storagePath string) (*Storage, error) {
 	// Create storage directory if it doesn't exist
 	if err := os.MkdirAll(storagePath, 0755); err != nil {
+		logger.WithComponent("deepr-storage").Error("failed to create storage directory",
+			slog.String("path", storagePath),
+			slog.String("error", err.Error()))
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
+
+	logger.WithComponent("deepr-storage").Info("storage initialized",
+		slog.String("path", storagePath))
 
 	return &Storage{
 		logger:      logger,
@@ -145,7 +151,7 @@ func (s *Storage) modifySession(userID, chatID string, mutate func(*SessionState
 
 // AddMessage adds a new message to the session
 func (s *Storage) AddMessage(userID, chatID, message string, sent bool, messageType string) error {
-	return s.modifySession(userID, chatID, func(state *SessionState) error {
+	err := s.modifySession(userID, chatID, func(state *SessionState) error {
 		persistedMsg := PersistedMessage{
 			ID:          uuid.New().String(),
 			UserID:      userID,
@@ -169,8 +175,26 @@ func (s *Storage) AddMessage(userID, chatID, message string, sent bool, messageT
 			}
 		}
 
+		s.logger.WithComponent("deepr-storage").Debug("message added to session",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("message_id", persistedMsg.ID),
+			slog.String("message_type", messageType),
+			slog.Bool("sent", sent),
+			slog.Int("total_messages", len(state.Messages)))
+
 		return nil
 	})
+
+	if err != nil {
+		s.logger.WithComponent("deepr-storage").Error("failed to add message",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("message_type", messageType),
+			slog.String("error", err.Error()))
+	}
+
+	return err
 }
 
 // MarkMessageAsSent marks a specific message as sent
@@ -200,6 +224,10 @@ func (s *Storage) MarkAllMessagesAsSent(userID, chatID string) error {
 func (s *Storage) GetUnsentMessages(userID, chatID string) ([]PersistedMessage, error) {
 	state, err := s.LoadSession(userID, chatID)
 	if err != nil {
+		s.logger.WithComponent("deepr-storage").Error("failed to load session for unsent messages",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -208,6 +236,14 @@ func (s *Storage) GetUnsentMessages(userID, chatID string) ([]PersistedMessage, 
 		if !msg.Sent {
 			unsent = append(unsent, msg)
 		}
+	}
+
+	if len(unsent) > 0 {
+		s.logger.WithComponent("deepr-storage").Info("retrieved unsent messages",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.Int("unsent_count", len(unsent)),
+			slog.Int("total_messages", len(state.Messages)))
 	}
 
 	return unsent, nil
@@ -229,20 +265,48 @@ func (s *Storage) GetLastUnsentMessage(userID, chatID string) (*PersistedMessage
 
 // UpdateBackendConnectionStatus updates the backend connection status
 func (s *Storage) UpdateBackendConnectionStatus(userID, chatID string, connected bool) error {
-	return s.modifySession(userID, chatID, func(state *SessionState) error {
+	err := s.modifySession(userID, chatID, func(state *SessionState) error {
 		state.BackendConnected = connected
 		return nil
 	})
+
+	if err == nil {
+		s.logger.WithComponent("deepr-storage").Info("backend connection status updated",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.Bool("connected", connected))
+	} else {
+		s.logger.WithComponent("deepr-storage").Error("failed to update backend connection status",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.Bool("connected", connected),
+			slog.String("error", err.Error()))
+	}
+
+	return err
 }
 
 // IsSessionComplete checks if a session is complete (has final report or error)
 func (s *Storage) IsSessionComplete(userID, chatID string) (bool, error) {
 	state, err := s.LoadSession(userID, chatID)
 	if err != nil {
+		s.logger.WithComponent("deepr-storage").Error("failed to load session for completion check",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("error", err.Error()))
 		return false, err
 	}
 
-	return state.FinalReportReceived || state.ErrorOccurred, nil
+	isComplete := state.FinalReportReceived || state.ErrorOccurred
+
+	s.logger.WithComponent("deepr-storage").Debug("session completion status checked",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.Bool("is_complete", isComplete),
+		slog.Bool("has_final_report", state.FinalReportReceived),
+		slog.Bool("has_error", state.ErrorOccurred))
+
+	return isComplete, nil
 }
 
 // CleanupOldSessions removes session files older than the specified duration
@@ -250,38 +314,60 @@ func (s *Storage) CleanupOldSessions(maxAge time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.logger.WithComponent("deepr-storage").Info("starting session cleanup",
+		slog.Duration("max_age", maxAge))
+
 	files, err := os.ReadDir(s.storagePath)
 	if err != nil {
+		s.logger.WithComponent("deepr-storage").Error("failed to read storage directory for cleanup",
+			slog.String("path", s.storagePath),
+			slog.String("error", err.Error()))
 		return fmt.Errorf("failed to read storage directory: %w", err)
 	}
 
 	now := time.Now()
+	removedCount := 0
+	errorCount := 0
+	totalFiles := 0
+
 	for _, file := range files {
 		if file.IsDir() {
 			continue
 		}
 
+		totalFiles++
 		filePath := filepath.Join(s.storagePath, file.Name())
 		info, err := file.Info()
 		if err != nil {
-			s.logger.WithComponent("deepr-storage").Error("failed to get file info",
+			s.logger.WithComponent("deepr-storage").Error("failed to get file info during cleanup",
 				slog.String("file", file.Name()),
 				slog.String("error", err.Error()))
+			errorCount++
 			continue
 		}
 
-		if now.Sub(info.ModTime()) > maxAge {
+		fileAge := now.Sub(info.ModTime())
+		if fileAge > maxAge {
 			if err := os.Remove(filePath); err != nil {
 				s.logger.WithComponent("deepr-storage").Error("failed to remove old session file",
 					slog.String("file", file.Name()),
+					slog.Duration("age", fileAge),
 					slog.String("error", err.Error()))
+				errorCount++
 			} else {
-				s.logger.WithComponent("deepr-storage").Info("removed old session file",
+				s.logger.WithComponent("deepr-storage").Info("old session file removed",
 					slog.String("file", file.Name()),
-					slog.Duration("age", now.Sub(info.ModTime())))
+					slog.Duration("age", fileAge))
+				removedCount++
 			}
 		}
 	}
+
+	s.logger.WithComponent("deepr-storage").Info("session cleanup completed",
+		slog.Int("total_files", totalFiles),
+		slog.Int("removed_count", removedCount),
+		slog.Int("error_count", errorCount),
+		slog.Duration("max_age", maxAge))
 
 	return nil
 }

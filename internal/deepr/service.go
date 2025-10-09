@@ -51,10 +51,11 @@ func NewService(logger *logger.Logger, trackingService *request_tracking.Service
 
 // HandleConnection manages the WebSocket connection and streaming
 func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Conn, userID, chatID string) {
+	startTime := time.Now()
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 	clientID := uuid.New().String()
 
-	log.Info("handling new client connection",
+	log.Info("handling client connection",
 		slog.String("user_id", userID),
 		slog.String("chat_id", chatID),
 		slog.String("client_id", clientID))
@@ -63,18 +64,30 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 	isReconnection := s.sessionManager.HasActiveBackend(userID, chatID)
 
 	if isReconnection {
-		log.Info("detected reconnection to existing session",
+		log.Info("reconnection to existing session detected",
 			slog.String("user_id", userID),
-			slog.String("chat_id", chatID))
+			slog.String("chat_id", chatID),
+			slog.String("client_id", clientID),
+			slog.Bool("is_reconnection", true))
 
 		// Handle reconnection
 		s.handleReconnection(ctx, clientConn, userID, chatID, clientID)
 		return
 	}
 
+	log.Info("new session connection",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.String("client_id", clientID),
+		slog.Bool("is_reconnection", false))
+
 	// New connection - perform subscription checks
 	if err := s.checkAndTrackSubscription(ctx, clientConn, userID); err != nil {
-		log.Error("subscription check failed", slog.String("error", err.Error()))
+		log.Error("subscription check failed",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(startTime)))
 		clientConn.Close()
 		return
 	}
@@ -85,46 +98,82 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 
 // checkAndTrackSubscription checks user subscription and tracks usage
 func (s *Service) checkAndTrackSubscription(ctx context.Context, clientConn *websocket.Conn, userID string) error {
+	startTime := time.Now()
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
+
+	log.Info("checking user subscription",
+		slog.String("user_id", userID))
 
 	hasActivePro, proExpiresAt, err := s.trackingService.HasActivePro(ctx, userID)
 	if err != nil {
-		log.Error("failed to check user subscription status", slog.String("error", err.Error()))
+		log.Error("subscription status check failed",
+			slog.String("user_id", userID),
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(startTime)))
 		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify subscription status"}`))
 		return err
 	}
 
 	if hasActivePro {
-		log.Info("user has active pro subscription",
+		// Build log attributes, conditionally adding expires_at if available
+		logAttrs := []any{
 			slog.String("user_id", userID),
-			slog.Time("expires_at", *proExpiresAt))
+			slog.String("subscription_type", "pro"),
+			slog.Duration("check_duration", time.Since(startTime)),
+		}
+		if proExpiresAt != nil {
+			logAttrs = append(logAttrs, slog.Time("expires_at", *proExpiresAt))
+		}
+		log.Info("pro subscription active", logAttrs...)
 
 		if err := s.firebaseClient.IncrementDeepResearchUsage(ctx, userID); err != nil {
-			log.Error("failed to track pro user deep research usage", slog.String("error", err.Error()))
+			log.Error("failed to increment usage counter",
+				slog.String("user_id", userID),
+				slog.String("subscription_type", "pro"),
+				slog.String("error", err.Error()))
+		} else {
+			log.Info("usage tracked successfully",
+				slog.String("user_id", userID),
+				slog.String("subscription_type", "pro"))
 		}
 	} else {
-		log.Info("user is on freemium plan", slog.String("user_id", userID))
+		log.Info("freemium subscription detected",
+			slog.String("user_id", userID),
+			slog.String("subscription_type", "freemium"))
 
 		hasUsed, err := s.firebaseClient.HasUsedFreeDeepResearch(ctx, userID)
 		if err != nil {
-			log.Error("failed to check freemium deep research usage", slog.String("error", err.Error()))
+			log.Error("failed to check freemium usage",
+				slog.String("user_id", userID),
+				slog.String("subscription_type", "freemium"),
+				slog.String("error", err.Error()),
+				slog.Duration("duration", time.Since(startTime)))
 			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify usage status"}`))
 			return err
 		}
 
 		if hasUsed {
-			log.Info("freemium user has already used their free deep research", slog.String("user_id", userID))
+			log.Warn("freemium quota exhausted",
+				slog.String("user_id", userID),
+				slog.String("subscription_type", "freemium"),
+				slog.String("error_code", "FREE_LIMIT_REACHED"))
 			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You have already used your free deep research. Please upgrade to Pro for unlimited access.", "error_code": "FREE_LIMIT_REACHED"}`))
 			return fmt.Errorf("freemium quota exhausted for user %s", userID)
 		}
 
 		if err := s.firebaseClient.MarkFreeDeepResearchUsed(ctx, userID); err != nil {
-			log.Error("failed to mark freemium deep research as used", slog.String("error", err.Error()))
+			log.Error("failed to mark freemium usage",
+				slog.String("user_id", userID),
+				slog.String("subscription_type", "freemium"),
+				slog.String("error", err.Error()))
 			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to track usage"}`))
 			return err
 		}
 
-		log.Info("freemium user is using their free deep research", slog.String("user_id", userID))
+		log.Info("freemium usage marked successfully",
+			slog.String("user_id", userID),
+			slog.String("subscription_type", "freemium"),
+			slog.Duration("duration", time.Since(startTime)))
 	}
 
 	return nil
@@ -132,9 +181,10 @@ func (s *Service) checkAndTrackSubscription(ctx context.Context, clientConn *web
 
 // handleReconnection handles a client reconnecting to an existing session
 func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
+	startTime := time.Now()
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 
-	log.Info("handling reconnection",
+	log.Info("reconnection initiated",
 		slog.String("user_id", userID),
 		slog.String("chat_id", chatID),
 		slog.String("client_id", clientID))
@@ -144,32 +194,64 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 	if s.storage != nil {
 		isComplete, err := s.storage.IsSessionComplete(userID, chatID)
 		if err != nil {
-			log.Error("failed to check session completion status", slog.String("error", err.Error()))
+			log.Error("failed to check session completion status",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("error", err.Error()))
 		}
 
 		// Send unsent messages before registering the connection
 		unsent, err := s.storage.GetUnsentMessages(userID, chatID)
 		if err != nil {
-			log.Error("failed to get unsent messages", slog.String("error", err.Error()))
+			log.Error("failed to retrieve unsent messages",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("error", err.Error()))
 		} else if len(unsent) > 0 {
-			log.Info("sending unsent messages to reconnected client",
-				slog.Int("count", len(unsent)))
+			log.Info("replaying unsent messages",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("client_id", clientID),
+				slog.Int("unsent_count", len(unsent)))
 
+			sentCount := 0
 			for _, msg := range unsent {
 				if err := clientConn.WriteMessage(websocket.TextMessage, []byte(msg.Message)); err != nil {
-					log.Error("failed to send unsent message", slog.String("error", err.Error()))
+					log.Error("failed to replay message",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("message_id", msg.ID),
+						slog.String("error", err.Error()))
 					clientConn.Close()
 					return
 				}
+				sentCount++
 				// Mark as sent
 				if err := s.storage.MarkMessageAsSent(userID, chatID, msg.ID); err != nil {
-					log.Error("failed to mark message as sent", slog.String("error", err.Error()))
+					log.Error("failed to mark message as sent",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("message_id", msg.ID),
+						slog.String("error", err.Error()))
 				}
 			}
+
+			log.Info("unsent messages replayed successfully",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.Int("messages_sent", sentCount),
+				slog.Duration("replay_duration", time.Since(startTime)))
+		} else {
+			log.Info("no unsent messages to replay",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID))
 		}
 
 		if isComplete {
-			log.Info("session is complete, no more messages expected")
+			log.Info("session already complete, closing connection",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.Duration("duration", time.Since(startTime)))
 			clientConn.Close()
 			return
 		}
@@ -193,18 +275,33 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 				_, message, err := clientConn.ReadMessage()
 				if err != nil {
 					if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-						log.Error("error reading from reconnected client", slog.String("error", err.Error()))
+						log.Error("unexpected error reading from reconnected client",
+							slog.String("user_id", userID),
+							slog.String("chat_id", chatID),
+							slog.String("client_id", clientID),
+							slog.String("error", err.Error()))
 					}
 					return
 				}
 
-				log.Info("received message from reconnected client", slog.String("message", string(message)))
+				log.Info("message received from reconnected client",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("client_id", clientID),
+					slog.Int("message_size", len(message)))
 
 				// Forward to backend using synchronized write
 				if err := s.sessionManager.WriteToBackend(userID, chatID, websocket.TextMessage, message); err != nil {
-					log.Error("error forwarding message to backend", slog.String("error", err.Error()))
+					log.Error("failed to forward message to backend",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("error", err.Error()))
 					return
 				}
+
+				log.Debug("message forwarded to backend successfully",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID))
 			}
 		}
 	}()
@@ -216,40 +313,82 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 func (s *Service) handleClientMessages(ctx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 
+	log.Info("client message handler started",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.String("client_id", clientID))
+
+	messageCount := 0
 	for {
 		select {
 		case <-ctx.Done():
+			log.Info("client message handler stopped - context cancelled",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("client_id", clientID),
+				slog.Int("messages_processed", messageCount))
 			return
 		default:
 			_, message, err := clientConn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Error("error reading from client", slog.String("error", err.Error()))
+					log.Error("unexpected error reading from client",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("client_id", clientID),
+						slog.String("error", err.Error()))
+				} else {
+					log.Info("client connection closed",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("client_id", clientID))
 				}
 				s.sessionManager.RemoveClientConnection(userID, chatID, clientID)
 				return
 			}
 
-			log.Info("received message from client", slog.String("message", string(message)))
+			messageCount++
+			log.Info("message received from client",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("client_id", clientID),
+				slog.Int("message_size", len(message)),
+				slog.Int("message_number", messageCount))
 
 			// Forward to backend using synchronized write
 			if err := s.sessionManager.WriteToBackend(userID, chatID, websocket.TextMessage, message); err != nil {
-				log.Error("error forwarding message to backend", slog.String("error", err.Error()))
+				log.Error("failed to forward message to backend",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("client_id", clientID),
+					slog.String("error", err.Error()))
 				return
 			}
-			log.Info("message forwarded to deep research backend")
+
+			log.Debug("message forwarded to backend",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.Int("message_number", messageCount))
 		}
 	}
 }
 
 // handleNewConnection creates a new backend connection and manages message flow
 func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
+	startTime := time.Now()
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
+
+	log.Info("initiating new backend connection",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.String("client_id", clientID))
 
 	deepResearchHost := os.Getenv("DEEP_RESEARCH_WS")
 	if deepResearchHost == "" {
 		deepResearchHost = "165.232.133.47:3031"
-		log.Info("DEEP_RESEARCH_WS environment variable not set, using default", slog.String("default", deepResearchHost))
+		log.Info("using default backend host",
+			slog.String("host", deepResearchHost),
+			slog.String("reason", "DEEP_RESEARCH_WS not set"))
 	}
 
 	wsURL := url.URL{
@@ -258,30 +397,48 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 		Path:   "/deep_research/" + userID + "/" + chatID + "/",
 	}
 
-	log.Info("connecting to deep research server", slog.String("url", wsURL.String()))
+	log.Info("connecting to backend websocket",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.String("url", wsURL.String()))
 
 	// Create dialer with timeout to prevent indefinite hangs
 	dialer := *websocket.DefaultDialer
 	dialer.HandshakeTimeout = 30 * time.Second
 
+	connectStart := time.Now()
 	serverConn, _, err := dialer.Dial(wsURL.String(), nil)
 	if err != nil {
-		log.Error("failed to connect to deep research server", slog.String("error", err.Error()))
+		log.Error("backend connection failed",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("url", wsURL.String()),
+			slog.String("error", err.Error()),
+			slog.Duration("connection_attempt_duration", time.Since(connectStart)))
 		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to connect to deep research backend"}`))
 		return
 	}
 	defer serverConn.Close()
 
-	log.Info("connected to deep research backend")
+	log.Info("backend connection established",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.Duration("connection_time", time.Since(connectStart)))
 
 	// Update storage
 	if s.storage != nil {
 		if err := s.storage.UpdateBackendConnectionStatus(userID, chatID, true); err != nil {
-			log.Error("failed to update backend connection status", slog.String("error", err.Error()))
+			log.Error("failed to update backend connection status in storage",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("error", err.Error()))
 		}
 		defer func() {
 			if err := s.storage.UpdateBackendConnectionStatus(userID, chatID, false); err != nil {
-				log.Error("failed to update backend disconnection status", slog.String("error", err.Error()))
+				log.Error("failed to update backend disconnection status in storage",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("error", err.Error()))
 			}
 		}()
 	}
@@ -301,23 +458,50 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 	// Handle messages from this client to backend in a separate goroutine
 	go s.handleClientMessages(ctx, clientConn, userID, chatID, clientID)
 
+	log.Info("session established, starting message processing",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.Duration("setup_duration", time.Since(startTime)))
+
 	// Handle messages from backend to clients - this loop runs until backend disconnects
+	messageCount := 0
 	for {
 		select {
 		case <-sessionCtx.Done():
-			log.Info("session context cancelled, stopping backend reader")
+			log.Info("session context cancelled",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.Int("messages_received", messageCount),
+				slog.Duration("session_duration", time.Since(startTime)))
 			return
 		default:
 			_, message, err := serverConn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Error("error reading from backend", slog.String("error", err.Error()))
+					log.Error("unexpected error reading from backend",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("error", err.Error()),
+						slog.Int("messages_received", messageCount))
+				} else {
+					log.Info("backend connection closed normally",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.Int("messages_received", messageCount))
 				}
-				log.Info("backend connection closed, session will be removed")
+				log.Info("session ending",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.Duration("session_duration", time.Since(startTime)))
 				return
 			}
 
-			log.Info("received message from backend", slog.String("message", string(message)))
+			messageCount++
+			log.Info("message received from backend",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.Int("message_size", len(message)),
+				slog.Int("message_number", messageCount))
 
 			// Determine message type
 			var msg Message
@@ -330,23 +514,39 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 
 			// Store message
 			messageSent := false
+			clientCount := s.sessionManager.GetClientCount(userID, chatID)
+
 			if s.storage != nil {
 				// Try to broadcast to clients
 				broadcastErr := s.sessionManager.BroadcastToClients(userID, chatID, message)
-				messageSent = (broadcastErr == nil && s.sessionManager.GetClientCount(userID, chatID) > 0)
+				messageSent = (broadcastErr == nil && clientCount > 0)
 
 				// Store message with sent status
 				if err := s.storage.AddMessage(userID, chatID, string(message), messageSent, messageType); err != nil {
-					log.Error("failed to store message", slog.String("error", err.Error()))
+					log.Error("failed to store message in storage",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("message_type", messageType),
+						slog.String("error", err.Error()))
 				} else {
-					log.Info("message stored",
+					log.Debug("message stored successfully",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("message_type", messageType),
 						slog.Bool("sent", messageSent),
-						slog.String("type", messageType))
+						slog.Int("client_count", clientCount))
 				}
 
 				// Check if session is complete
 				if msg.FinalReport != "" || msg.Type == "error" || msg.Error != "" {
-					log.Info("session complete, closing backend connection and cleaning up")
+					log.Info("session complete - final message received",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("message_type", messageType),
+						slog.Bool("has_final_report", msg.FinalReport != ""),
+						slog.Bool("has_error", msg.Error != ""),
+						slog.Int("total_messages", messageCount),
+						slog.Duration("session_duration", time.Since(startTime)))
 					// Final message has been stored and broadcast, now clean up
 					// This cancels the session context and exits the loop
 					// Defers will close backend connection and remove session from manager
@@ -355,11 +555,22 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 				}
 			} else {
 				// No storage, just broadcast
-				s.sessionManager.BroadcastToClients(userID, chatID, message)
+				broadcastErr := s.sessionManager.BroadcastToClients(userID, chatID, message)
+				if broadcastErr != nil {
+					log.Warn("failed to broadcast message without storage",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("error", broadcastErr.Error()))
+				}
 
 				// Check if session is complete even without storage
 				if msg.FinalReport != "" || msg.Type == "error" || msg.Error != "" {
-					log.Info("session complete (no storage), closing backend connection and cleaning up")
+					log.Info("session complete - final message received (no storage)",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("message_type", messageType),
+						slog.Int("total_messages", messageCount),
+						slog.Duration("session_duration", time.Since(startTime)))
 					cancel()
 					return
 				}
