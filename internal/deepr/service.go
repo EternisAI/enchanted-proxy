@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -259,7 +260,11 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 
 	log.Info("connecting to deep research server", slog.String("url", wsURL.String()))
 
-	serverConn, _, err := websocket.DefaultDialer.Dial(wsURL.String(), nil)
+	// Create dialer with timeout to prevent indefinite hangs
+	dialer := *websocket.DefaultDialer
+	dialer.HandshakeTimeout = 30 * time.Second
+
+	serverConn, _, err := dialer.Dial(wsURL.String(), nil)
 	if err != nil {
 		log.Error("failed to connect to deep research server", slog.String("error", err.Error()))
 		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to connect to deep research backend"}`))
@@ -281,8 +286,9 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 		}()
 	}
 
-	// Create session context that is independent of any single client
-	sessionCtx, cancel := context.WithCancel(context.Background())
+	// Create session context derived from incoming context but independent of any single client
+	// This ensures cleanup on server shutdown while allowing session to outlive individual clients
+	sessionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	// Create and register session
@@ -340,13 +346,23 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 
 				// Check if session is complete
 				if msg.FinalReport != "" || msg.Type == "error" || msg.Error != "" {
-					log.Info("session complete, backend will be closed after final message broadcast")
-					// Continue to allow reconnecting clients to receive this final message
-					// The backend connection will close naturally or via timeout
+					log.Info("session complete, closing backend connection and cleaning up")
+					// Final message has been stored and broadcast, now clean up
+					// This cancels the session context and exits the loop
+					// Defers will close backend connection and remove session from manager
+					cancel()
+					return
 				}
 			} else {
 				// No storage, just broadcast
 				s.sessionManager.BroadcastToClients(userID, chatID, message)
+
+				// Check if session is complete even without storage
+				if msg.FinalReport != "" || msg.Type == "error" || msg.Error != "" {
+					log.Info("session complete (no storage), closing backend connection and cleaning up")
+					cancel()
+					return
+				}
 			}
 		}
 	}
