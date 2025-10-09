@@ -157,6 +157,7 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 			for _, msg := range unsent {
 				if err := clientConn.WriteMessage(websocket.TextMessage, []byte(msg.Message)); err != nil {
 					log.Error("failed to send unsent message", slog.String("error", err.Error()))
+					clientConn.Close()
 					return
 				}
 				// Mark as sent
@@ -168,6 +169,7 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 
 		if isComplete {
 			log.Info("session is complete, no more messages expected")
+			clientConn.Close()
 			return
 		}
 	}
