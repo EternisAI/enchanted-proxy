@@ -45,6 +45,8 @@ egress:
   # aws-0-us-east-2.pooler.supabase.com
   - 3.13.175.194
   - 3.139.14.59
+  # Firestore (used by deepresearch user tracking)
+  - firestore.googleapis.com
   # demo deepresearch endpoint (temporary)
   - 165.232.133.47:3031
 env:
