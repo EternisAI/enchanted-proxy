@@ -48,7 +48,7 @@ egress:
   # Firestore (used by deepresearch user tracking)
   - firestore.googleapis.com
   # demo deepresearch endpoint (temporary)
-  - 165.232.133.47:3031
+  - 165.232.133.47
 env:
 - APPSTORE_API_KEY_ID
 - APPSTORE_API_KEY_P8
