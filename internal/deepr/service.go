@@ -51,7 +51,7 @@ func NewService(logger *logger.Logger, trackingService *request_tracking.Service
 
 // HandleConnection manages the WebSocket connection and streaming
 func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Conn, userID, chatID string) {
-	startTime := time.Now()
+	// startTime := time.Now() // DISABLED: Not needed when limit checks are disabled
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 	clientID := uuid.New().String()
 
@@ -82,21 +82,24 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 		slog.Bool("is_reconnection", false))
 
 	// New connection - perform subscription checks
-	if err := s.checkAndTrackSubscription(ctx, clientConn, userID); err != nil {
-		log.Error("subscription check failed",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.String("error", err.Error()),
-			slog.Duration("duration", time.Since(startTime)))
-		clientConn.Close()
-		return
-	}
+	// LIMIT CHECK DISABLED: Allow all users to use deep research
+	// if err := s.checkAndTrackSubscription(ctx, clientConn, userID); err != nil {
+	// 	log.Error("subscription check failed",
+	// 		slog.String("user_id", userID),
+	// 		slog.String("chat_id", chatID),
+	// 		slog.String("error", err.Error()),
+	// 		slog.Duration("duration", time.Since(startTime)))
+	// 	clientConn.Close()
+	// 	return
+	// }
 
 	// Create new backend connection
 	s.handleNewConnection(ctx, clientConn, userID, chatID, clientID)
 }
 
 // checkAndTrackSubscription checks user subscription and tracks usage
+// NOTE: This function is currently DISABLED - all limit checks are commented out
+// to allow unrestricted access to deep research for all users
 func (s *Service) checkAndTrackSubscription(ctx context.Context, clientConn *websocket.Conn, userID string) error {
 	startTime := time.Now()
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
@@ -537,14 +540,88 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 						slog.Int("client_count", clientCount))
 				}
 
+				// Track usage only when final_report is sent
+				if msg.FinalReport != "" {
+					log.Info("final report detected, tracking usage",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("message_type", messageType))
+
+					// Check subscription status
+					hasActivePro, proExpiresAt, err := s.trackingService.HasActivePro(ctx, userID)
+					if err != nil {
+						log.Error("failed to check subscription status for usage tracking",
+							slog.String("user_id", userID),
+							slog.String("chat_id", chatID),
+							slog.String("error", err.Error()))
+					} else {
+						if hasActivePro {
+							// Build log attributes, conditionally adding expires_at if available
+							logAttrs := []any{
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("subscription_type", "pro"),
+							}
+							if proExpiresAt != nil {
+								logAttrs = append(logAttrs, slog.Time("expires_at", *proExpiresAt))
+							}
+							log.Info("pro user completed research, incrementing usage counter", logAttrs...)
+
+							if err := s.firebaseClient.IncrementDeepResearchUsage(ctx, userID); err != nil {
+								log.Error("failed to increment pro user usage counter",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("subscription_type", "pro"),
+									slog.String("error", err.Error()))
+							} else {
+								log.Info("pro user usage tracked successfully",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("subscription_type", "pro"))
+							}
+						} else {
+							log.Info("freemium user completed research, marking as used",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("subscription_type", "freemium"))
+
+							if err := s.firebaseClient.MarkFreeDeepResearchUsed(ctx, userID); err != nil {
+								log.Error("failed to mark freemium usage",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("subscription_type", "freemium"),
+									slog.String("error", err.Error()))
+							} else {
+								log.Info("freemium usage marked successfully",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("subscription_type", "freemium"))
+							}
+						}
+
+						// Save completion data to Firebase
+						if err := s.firebaseClient.SaveDeepResearchCompletion(ctx, userID, chatID); err != nil {
+							log.Error("failed to save deep research completion to Firebase",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("error", err.Error()))
+						} else {
+							log.Info("deep research completion saved to Firebase successfully",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID))
+						}
+					}
+				}
+
 				// Check if session is complete
-				if msg.FinalReport != "" || msg.Type == "error" || msg.Error != "" {
+				if msg.FinalReport != "" || msg.Type == "error" || msg.Error != "" || msg.Type == "research_complete" {
 					log.Info("session complete - final message received",
 						slog.String("user_id", userID),
 						slog.String("chat_id", chatID),
 						slog.String("message_type", messageType),
 						slog.Bool("has_final_report", msg.FinalReport != ""),
 						slog.Bool("has_error", msg.Error != ""),
+						slog.Bool("is_research_complete", msg.Type == "research_complete"),
 						slog.Int("total_messages", messageCount),
 						slog.Duration("session_duration", time.Since(startTime)))
 					// Final message has been stored and broadcast, now clean up
@@ -563,12 +640,86 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 						slog.String("error", broadcastErr.Error()))
 				}
 
+				// Track usage only when final_report is sent (even without storage)
+				if msg.FinalReport != "" {
+					log.Info("final report detected, tracking usage (no storage)",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("message_type", messageType))
+
+					// Check subscription status
+					hasActivePro, proExpiresAt, err := s.trackingService.HasActivePro(ctx, userID)
+					if err != nil {
+						log.Error("failed to check subscription status for usage tracking",
+							slog.String("user_id", userID),
+							slog.String("chat_id", chatID),
+							slog.String("error", err.Error()))
+					} else {
+						if hasActivePro {
+							// Build log attributes, conditionally adding expires_at if available
+							logAttrs := []any{
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("subscription_type", "pro"),
+							}
+							if proExpiresAt != nil {
+								logAttrs = append(logAttrs, slog.Time("expires_at", *proExpiresAt))
+							}
+							log.Info("pro user completed research, incrementing usage counter (no storage)", logAttrs...)
+
+							if err := s.firebaseClient.IncrementDeepResearchUsage(ctx, userID); err != nil {
+								log.Error("failed to increment pro user usage counter",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("subscription_type", "pro"),
+									slog.String("error", err.Error()))
+							} else {
+								log.Info("pro user usage tracked successfully",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("subscription_type", "pro"))
+							}
+						} else {
+							log.Info("freemium user completed research, marking as used (no storage)",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("subscription_type", "freemium"))
+
+							if err := s.firebaseClient.MarkFreeDeepResearchUsed(ctx, userID); err != nil {
+								log.Error("failed to mark freemium usage",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("subscription_type", "freemium"),
+									slog.String("error", err.Error()))
+							} else {
+								log.Info("freemium usage marked successfully",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("subscription_type", "freemium"))
+							}
+						}
+
+						// Save completion data to Firebase
+						if err := s.firebaseClient.SaveDeepResearchCompletion(ctx, userID, chatID); err != nil {
+							log.Error("failed to save deep research completion to Firebase",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("error", err.Error()))
+						} else {
+							log.Info("deep research completion saved to Firebase successfully (no storage)",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID))
+						}
+					}
+				}
+
 				// Check if session is complete even without storage
-				if msg.FinalReport != "" || msg.Type == "error" || msg.Error != "" {
+				if msg.FinalReport != "" || msg.Type == "error" || msg.Error != "" || msg.Type == "research_complete" {
 					log.Info("session complete - final message received (no storage)",
 						slog.String("user_id", userID),
 						slog.String("chat_id", chatID),
 						slog.String("message_type", messageType),
+						slog.Bool("is_research_complete", msg.Type == "research_complete"),
 						slog.Int("total_messages", messageCount),
 						slog.Duration("session_duration", time.Since(startTime)))
 					cancel()

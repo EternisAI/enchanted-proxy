@@ -155,3 +155,24 @@ func (f *FirebaseClient) IncrementDeepResearchUsage(ctx context.Context, userID 
 
 	return err
 }
+
+// SaveDeepResearchCompletion saves completion data when deep research finishes successfully
+// Note: This only saves completion metadata. Usage tracking (has_used_free_deep_research)
+// should be handled separately via MarkFreeDeepResearchUsed or IncrementDeepResearchUsage
+func (f *FirebaseClient) SaveDeepResearchCompletion(ctx context.Context, userID, chatID string) error {
+	docRef := f.firestoreClient.Collection("deep_research_usage").Doc(userID)
+	now := time.Now()
+
+	// Always use merge to avoid overwriting existing fields like has_used_free_deep_research
+	_, err := docRef.Set(ctx, map[string]interface{}{
+		"user_id":                userID,
+		"last_completed_chat_id": chatID,
+		"completed_at":           now,
+	}, firestore.MergeAll)
+
+	if err != nil {
+		return fmt.Errorf("failed to save deep research completion record: %w", err)
+	}
+
+	return nil
+}
