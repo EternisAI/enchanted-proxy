@@ -373,6 +373,8 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	{
 		// AI service endpoints
 		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService))
+		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService))
+		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService))
 		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService))
