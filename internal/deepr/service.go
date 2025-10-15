@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
@@ -22,24 +21,191 @@ type Service struct {
 	logger          *logger.Logger
 	trackingService *request_tracking.Service
 	firebaseClient  *auth.FirebaseClient
-	storage         *Storage
+	storage         MessageStorage
 	sessionManager  *SessionManager
 }
 
-// NewService creates a new deep research service
-func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient) *Service {
-	// Get storage path from environment or use default
-	storagePath := os.Getenv("DEEPR_STORAGE_PATH")
-	if storagePath == "" {
-		storagePath = filepath.Join(".", "deepr_sessions")
+// mapEventTypeToState maps event types from deep research server to session states
+func mapEventTypeToState(eventType string) string {
+	switch eventType {
+	case "clarification_needed":
+		return "clarify"
+	case "error":
+		return "error"
+	case "research_complete":
+		return "complete"
+	default:
+		// All other events (research_progress, etc.) map to in_progress
+		return "in_progress"
 	}
+}
 
-	storage, err := NewStorage(logger, storagePath)
+// canForwardMessage checks if a message from the client should be forwarded to the backend
+// based on the current session state. Messages can only be forwarded when state is 'clarify' or 'error'
+func (s *Service) canForwardMessage(ctx context.Context, userID, chatID string) (bool, string, error) {
+	log := s.logger.WithContext(ctx).WithComponent("deepr")
+
+	sessionState, err := s.firebaseClient.GetSessionState(ctx, userID, chatID)
 	if err != nil {
-		logger.WithComponent("deepr").Error("failed to create storage, using in-memory only",
+		log.Error("failed to get session state for message forwarding check",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
 			slog.String("error", err.Error()))
+		return false, "", fmt.Errorf("failed to get session state: %w", err)
 	}
 
+	// If no session state exists yet, allow forwarding (initial message)
+	if sessionState == nil {
+		log.Debug("no session state found, allowing initial message",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID))
+		return true, "", nil
+	}
+
+	// Only allow message forwarding when state is 'clarify' or 'error'
+	canForward := sessionState.State == "clarify" || sessionState.State == "error"
+
+	log.Info("message forwarding check",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.String("session_state", sessionState.State),
+		slog.Bool("can_forward", canForward))
+
+	if !canForward {
+		return false, sessionState.State, nil
+	}
+
+	return true, sessionState.State, nil
+}
+
+// validateFreemiumAccess checks if a freemium user can start or continue a deep research session
+// Returns error if user is not allowed to proceed
+// Premium users can have multiple sessions but still cannot write during 'in_progress' state
+func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websocket.Conn, userID, chatID string, isReconnection bool) error {
+	log := s.logger.WithContext(ctx).WithComponent("deepr")
+
+	// Check if user has active pro subscription
+	hasActivePro, _, err := s.trackingService.HasActivePro(ctx, userID)
+	if err != nil {
+		log.Error("failed to check subscription status",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("error", err.Error()))
+		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify subscription status"}`))
+		return fmt.Errorf("failed to check subscription status: %w", err)
+	}
+
+	// Premium users can have multiple sessions - no restrictions on session creation
+	if hasActivePro {
+		log.Info("premium user, multiple sessions allowed",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID))
+		return nil
+	}
+
+	// Freemium user - check restrictions
+	log.Info("freemium user detected, checking access restrictions",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.Bool("is_reconnection", isReconnection))
+
+	// Get current session state
+	sessionState, err := s.firebaseClient.GetSessionState(ctx, userID, chatID)
+	if err != nil {
+		log.Error("failed to get session state",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("error", err.Error()))
+		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify session state"}`))
+		return fmt.Errorf("failed to get session state: %w", err)
+	}
+
+	// If this is a reconnection or existing session
+	if sessionState != nil {
+		log.Info("existing session found",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("session_state", sessionState.State))
+
+		// Allow reconnection/continuation if state is 'clarify' or 'in_progress'
+		if sessionState.State == "clarify" || sessionState.State == "in_progress" {
+			log.Info("freemium user allowed to continue existing session",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("session_state", sessionState.State))
+			return nil
+		}
+
+		// If state is 'complete' or 'error', check if user has other completed sessions
+		if sessionState.State == "complete" || sessionState.State == "error" {
+			completedCount, err := s.firebaseClient.GetCompletedSessionCountForUser(ctx, userID)
+			if err != nil {
+				log.Error("failed to get completed session count",
+					slog.String("user_id", userID),
+					slog.String("error", err.Error()))
+				clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify usage status"}`))
+				return fmt.Errorf("failed to get completed session count: %w", err)
+			}
+
+			if completedCount >= 1 {
+				log.Warn("freemium quota exhausted - user has completed session",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.Int("completed_count", completedCount))
+				clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You have already used your free deep research. Please upgrade to Pro for unlimited access.", "error_code": "FREE_LIMIT_REACHED"}`))
+				return fmt.Errorf("freemium quota exhausted for user %s", userID)
+			}
+		}
+
+		return nil
+	}
+
+	// New session - check if user already has completed research
+	completedCount, err := s.firebaseClient.GetCompletedSessionCountForUser(ctx, userID)
+	if err != nil {
+		log.Error("failed to get completed session count",
+			slog.String("user_id", userID),
+			slog.String("error", err.Error()))
+		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify usage status"}`))
+		return fmt.Errorf("failed to get completed session count: %w", err)
+	}
+
+	if completedCount >= 1 {
+		log.Warn("freemium quota exhausted - user already has completed research",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.Int("completed_count", completedCount))
+		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You have already used your free deep research. Please upgrade to Pro for unlimited access.", "error_code": "FREE_LIMIT_REACHED"}`))
+		return fmt.Errorf("freemium quota exhausted for user %s", userID)
+	}
+
+	// Check if user has any active (in_progress or clarify) sessions
+	activeSessions, err := s.firebaseClient.GetActiveSessionsForUser(ctx, userID)
+	if err != nil {
+		log.Error("failed to get active sessions",
+			slog.String("user_id", userID),
+			slog.String("error", err.Error()))
+		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify active sessions"}`))
+		return fmt.Errorf("failed to get active sessions: %w", err)
+	}
+
+	if len(activeSessions) > 0 {
+		log.Warn("freemium user already has an active session",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.Int("active_sessions_count", len(activeSessions)))
+		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You already have an active deep research session. Please complete or cancel it before starting a new one.", "error_code": "ACTIVE_SESSION_EXISTS"}`))
+		return fmt.Errorf("freemium user %s already has active session", userID)
+	}
+
+	log.Info("freemium user allowed to start new session",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID))
+	return nil
+}
+
+// NewService creates a new deep research service with database storage
+func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage) *Service {
 	return &Service{
 		logger:          logger,
 		trackingService: trackingService,
@@ -81,17 +247,15 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 		slog.String("client_id", clientID),
 		slog.Bool("is_reconnection", false))
 
-	// New connection - perform subscription checks
-	// LIMIT CHECK DISABLED: Allow all users to use deep research
-	// if err := s.checkAndTrackSubscription(ctx, clientConn, userID); err != nil {
-	// 	log.Error("subscription check failed",
-	// 		slog.String("user_id", userID),
-	// 		slog.String("chat_id", chatID),
-	// 		slog.String("error", err.Error()),
-	// 		slog.Duration("duration", time.Since(startTime)))
-	// 	clientConn.Close()
-	// 	return
-	// }
+	// Validate freemium access for new connections
+	if err := s.validateFreemiumAccess(ctx, clientConn, userID, chatID, false); err != nil {
+		log.Error("freemium validation failed",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("error", err.Error()))
+		clientConn.Close()
+		return
+	}
 
 	// Create new backend connection
 	s.handleNewConnection(ctx, clientConn, userID, chatID, clientID)
@@ -191,6 +355,16 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 		slog.String("user_id", userID),
 		slog.String("chat_id", chatID),
 		slog.String("client_id", clientID))
+
+	// Validate freemium access for reconnections
+	if err := s.validateFreemiumAccess(ctx, clientConn, userID, chatID, true); err != nil {
+		log.Error("freemium validation failed for reconnection",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("error", err.Error()))
+		clientConn.Close()
+		return
+	}
 
 	// Check if session is complete and replay unsent messages BEFORE adding client to session manager
 	// This prevents concurrent writes: backend broadcast won't know about this client during replay
@@ -293,6 +467,29 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 					slog.String("client_id", clientID),
 					slog.Int("message_size", len(message)))
 
+				// Check if message can be forwarded based on session state
+				canForward, currentState, err := s.canForwardMessage(ctx, userID, chatID)
+				if err != nil {
+					log.Error("failed to check if message can be forwarded",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("error", err.Error()))
+					// Send error to client
+					clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify session state"}`))
+					continue
+				}
+
+				if !canForward {
+					log.Warn("message blocked - session state does not allow user input",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("session_state", currentState))
+					// Send error to client indicating they cannot send messages in current state
+					errMsg := fmt.Sprintf(`{"error": "Cannot send messages while research is in progress", "session_state": "%s"}`, currentState)
+					clientConn.WriteMessage(websocket.TextMessage, []byte(errMsg))
+					continue
+				}
+
 				// Forward to backend using synchronized write
 				if err := s.sessionManager.WriteToBackend(userID, chatID, websocket.TextMessage, message); err != nil {
 					log.Error("failed to forward message to backend",
@@ -358,6 +555,29 @@ func (s *Service) handleClientMessages(ctx context.Context, clientConn *websocke
 				slog.Int("message_size", len(message)),
 				slog.Int("message_number", messageCount))
 
+			// Check if message can be forwarded based on session state
+			canForward, currentState, err := s.canForwardMessage(ctx, userID, chatID)
+			if err != nil {
+				log.Error("failed to check if message can be forwarded",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("error", err.Error()))
+				// Send error to client
+				clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify session state"}`))
+				continue
+			}
+
+			if !canForward {
+				log.Warn("message blocked - session state does not allow user input",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("session_state", currentState))
+				// Send error to client indicating they cannot send messages in current state
+				errMsg := fmt.Sprintf(`{"error": "Cannot send messages while research is in progress", "session_state": "%s"}`, currentState)
+				clientConn.WriteMessage(websocket.TextMessage, []byte(errMsg))
+				continue
+			}
+
 			// Forward to backend using synchronized write
 			if err := s.sessionManager.WriteToBackend(userID, chatID, websocket.TextMessage, message); err != nil {
 				log.Error("failed to forward message to backend",
@@ -388,7 +608,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 
 	deepResearchHost := os.Getenv("DEEP_RESEARCH_WS")
 	if deepResearchHost == "" {
-		deepResearchHost = "165.232.133.47:3031"
+		deepResearchHost = "localhost:3031"
 		log.Info("using default backend host",
 			slog.String("host", deepResearchHost),
 			slog.String("reason", "DEEP_RESEARCH_WS not set"))
@@ -515,6 +735,23 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 				}
 			}
 
+			// Update session state in Firebase based on message type
+			sessionState := mapEventTypeToState(messageType)
+			if err := s.firebaseClient.UpdateSessionState(ctx, userID, chatID, sessionState); err != nil {
+				log.Error("failed to update session state in Firebase",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("message_type", messageType),
+					slog.String("session_state", sessionState),
+					slog.String("error", err.Error()))
+			} else {
+				log.Debug("session state updated in Firebase",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("message_type", messageType),
+					slog.String("session_state", sessionState))
+			}
+
 			// Store message
 			messageSent := false
 			clientCount := s.sessionManager.GetClientCount(userID, chatID)
@@ -523,6 +760,16 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 				// Try to broadcast to clients
 				broadcastErr := s.sessionManager.BroadcastToClients(userID, chatID, message)
 				messageSent = (broadcastErr == nil && clientCount > 0)
+
+				// Log detailed message info for debugging
+				log.Info("broadcasting message to clients",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("message_type", messageType),
+					slog.Bool("has_final_report", msg.FinalReport != ""),
+					slog.Int("client_count", clientCount),
+					slog.Bool("broadcast_success", broadcastErr == nil),
+					slog.String("raw_message", string(message)))
 
 				// Store message with sent status
 				if err := s.storage.AddMessage(userID, chatID, string(message), messageSent, messageType); err != nil {
@@ -540,9 +787,9 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 						slog.Int("client_count", clientCount))
 				}
 
-				// Track usage only when final_report is sent
-				if msg.FinalReport != "" {
-					log.Info("final report detected, tracking usage",
+				// Track usage only when research_complete event is sent
+				if msg.Type == "research_complete" {
+					log.Info("research complete event detected, tracking usage",
 						slog.String("user_id", userID),
 						slog.String("chat_id", chatID),
 						slog.String("message_type", messageType))
@@ -633,6 +880,15 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 			} else {
 				// No storage, just broadcast
 				broadcastErr := s.sessionManager.BroadcastToClients(userID, chatID, message)
+
+				// Log detailed message info for debugging (no storage)
+				log.Info("broadcasting message to clients (no storage)",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("message_type", messageType),
+					slog.Bool("has_final_report", msg.FinalReport != ""),
+					slog.Bool("broadcast_success", broadcastErr == nil),
+					slog.String("raw_message", string(message)))
 				if broadcastErr != nil {
 					log.Warn("failed to broadcast message without storage",
 						slog.String("user_id", userID),
@@ -640,9 +896,9 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 						slog.String("error", broadcastErr.Error()))
 				}
 
-				// Track usage only when final_report is sent (even without storage)
-				if msg.FinalReport != "" {
-					log.Info("final report detected, tracking usage (no storage)",
+				// Track usage only when research_complete event is sent (even without storage)
+				if msg.Type == "research_complete" {
+					log.Info("research complete event detected, tracking usage (no storage)",
 						slog.String("user_id", userID),
 						slog.String("chat_id", chatID),
 						slog.String("message_type", messageType))

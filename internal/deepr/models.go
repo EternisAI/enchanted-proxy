@@ -24,7 +24,7 @@ type Response struct {
 	Status  string `json:"status,omitempty"`
 }
 
-// PersistedMessage represents a message stored to disk
+// PersistedMessage represents a message stored in the database
 type PersistedMessage struct {
 	ID          string    `json:"id"`
 	UserID      string    `json:"user_id"`
@@ -33,15 +33,4 @@ type PersistedMessage struct {
 	Sent        bool      `json:"sent"`
 	Timestamp   time.Time `json:"timestamp"`
 	MessageType string    `json:"message_type"` // "status", "error", "final", etc.
-}
-
-// SessionState represents the state of a deep research session
-type SessionState struct {
-	UserID               string              `json:"user_id"`
-	ChatID               string              `json:"chat_id"`
-	Messages             []PersistedMessage  `json:"messages"`
-	BackendConnected     bool                `json:"backend_connected"`
-	LastActivity         time.Time           `json:"last_activity"`
-	FinalReportReceived  bool                `json:"final_report_received"`
-	ErrorOccurred        bool                `json:"error_occurred"`
 }

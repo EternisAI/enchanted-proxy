@@ -129,6 +129,9 @@ func main() {
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
 
+	// Initialize deep research storage
+	deeprStorage := deepr.NewDBStorage(logger.WithComponent("deepr-storage"), db.DB)
+
 	// Initialize handlers
 	oauthHandler := oauth.NewHandler(oauthService, logger.WithComponent("oauth"))
 	composioHandler := composio.NewHandler(composioService, logger.WithComponent("composio"))
@@ -190,6 +193,7 @@ func main() {
 		iapHandler:             iapHandler,
 		mcpHandler:             mcpHandler,
 		searchHandler:          searchHandler,
+		deeprStorage:           deeprStorage,
 	})
 
 	// Initialize GraphQL server for Telegram
@@ -290,6 +294,7 @@ type restServerInput struct {
 	iapHandler             *iap.Handler
 	mcpHandler             *mcp.Handler
 	searchHandler          *search.Handler
+	deeprStorage           deepr.MessageStorage
 }
 
 func setupRESTServer(input restServerInput) *gin.Engine {
@@ -364,7 +369,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		api.POST("/exa/search", input.searchHandler.PostExaSearchHandler) // POST /api/v1/exa/search (Exa AI)
 
 		// Deep Research WebSocket endpoint (protected)
-		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient)) // WebSocket proxy for deep research
+		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage)) // WebSocket proxy for deep research
 	}
 
 	// Protected proxy routes

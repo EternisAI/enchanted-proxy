@@ -58,3 +58,6 @@ tests/
 
 # Scripts
 __pycache__/
+
+# Deep research session files (deprecated, now using database)
+deepr_sessions/
