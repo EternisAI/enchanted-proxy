@@ -34,11 +34,14 @@ func (s *DBStorage) AddMessage(userID, chatID, message string, sent bool, messag
 	messageID := uuid.New().String()
 	// Use double underscore as separator to match Firestore format
 	sessionID := fmt.Sprintf("%s__%s", userID, chatID)
-	now := time.Now()
+	now := time.Now().UTC()
 
-	var sentAt *time.Time
+	sentAt := sql.NullTime{}
 	if sent {
-		sentAt = &now
+		sentAt = sql.NullTime{
+			Time:  now,
+			Valid: true,
+		}
 	}
 
 	query := `

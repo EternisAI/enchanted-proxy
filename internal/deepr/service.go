@@ -768,8 +768,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 					slog.String("message_type", messageType),
 					slog.Bool("has_final_report", msg.FinalReport != ""),
 					slog.Int("client_count", clientCount),
-					slog.Bool("broadcast_success", broadcastErr == nil),
-					slog.String("raw_message", string(message)))
+					slog.Bool("broadcast_success", broadcastErr == nil))
 
 				// Store message with sent status
 				if err := s.storage.AddMessage(userID, chatID, string(message), messageSent, messageType); err != nil {
@@ -887,8 +886,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 					slog.String("chat_id", chatID),
 					slog.String("message_type", messageType),
 					slog.Bool("has_final_report", msg.FinalReport != ""),
-					slog.Bool("broadcast_success", broadcastErr == nil),
-					slog.String("raw_message", string(message)))
+					slog.Bool("broadcast_success", broadcastErr == nil))
 				if broadcastErr != nil {
 					log.Warn("failed to broadcast message without storage",
 						slog.String("user_id", userID),
