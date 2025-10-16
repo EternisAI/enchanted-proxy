@@ -51,32 +51,25 @@ func (f *FirebaseClient) Close() error {
 
 // DeepResearchUsage represents a user's deep research usage record
 type DeepResearchUsage struct {
-	UserID                  string    `firestore:"user_id"`
-	HasUsedFreeDeepResearch bool      `firestore:"has_used_free_deep_research"`
-	FirstUsedAt             time.Time `firestore:"first_used_at"`
-	LastUsedAt              time.Time `firestore:"last_used_at"`
-	UsageCount              int64     `firestore:"usage_count"`
+	UserID            string               `firestore:"user_id"`
+	FirstUsedAt       time.Time            `firestore:"first_used_at"`
+	LastUsedAt        time.Time            `firestore:"last_used_at"`
+	UsageCount        int64                `firestore:"usage_count"`
+	CompletedSessions map[string]time.Time `firestore:"completed_sessions"` // Map of chat_id to completion timestamp
 }
 
-// HasUsedFreeDeepResearch checks if a freemium user has already used deep research
-func (f *FirebaseClient) HasUsedFreeDeepResearch(ctx context.Context, userID string) (bool, error) {
-	docRef := f.firestoreClient.Collection("deep_research_usage").Doc(userID)
-	doc, err := docRef.Get(ctx)
-
-	if err != nil {
-		// If document doesn't exist, user hasn't used it yet
-		if status.Code(err) == codes.NotFound {
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to get deep research usage: %w", err)
-	}
-
-	var usage DeepResearchUsage
-	if err := doc.DataTo(&usage); err != nil {
-		return false, fmt.Errorf("failed to parse deep research usage: %w", err)
-	}
-
-	return usage.HasUsedFreeDeepResearch, nil
+// DeepResearchQuotaStatus represents the quota status for a user
+type DeepResearchQuotaStatus struct {
+	IsPro              bool       `json:"is_pro"`
+	Used               int        `json:"used"`
+	Limit              int        `json:"limit"`
+	Remaining          int        `json:"remaining"`
+	QuotaExceeded      bool       `json:"quota_exceeded"`
+	ResetsAt           *time.Time `json:"resets_at,omitempty"` // Only for pro users
+	ErrorCode          string     `json:"error_code,omitempty"`
+	ErrorMessage       string     `json:"error_message,omitempty"`
+	CompletedSessions  int        `json:"completed_sessions"` // Total completed sessions (all time)
+	CompletedThisMonth int        `json:"completed_this_month,omitempty"`
 }
 
 // MarkFreeDeepResearchUsed marks that a freemium user has used their free deep research
@@ -90,11 +83,10 @@ func (f *FirebaseClient) MarkFreeDeepResearchUsed(ctx context.Context, userID st
 	if err != nil {
 		// Document doesn't exist, create new one
 		usage := DeepResearchUsage{
-			UserID:                  userID,
-			HasUsedFreeDeepResearch: true,
-			FirstUsedAt:             now,
-			LastUsedAt:              now,
-			UsageCount:              1,
+			UserID:      userID,
+			FirstUsedAt: now,
+			LastUsedAt:  now,
+			UsageCount:  1,
 		}
 		_, err := docRef.Set(ctx, usage)
 		if err != nil {
@@ -111,9 +103,8 @@ func (f *FirebaseClient) MarkFreeDeepResearchUsed(ctx context.Context, userID st
 
 	// Update the record
 	_, err = docRef.Set(ctx, map[string]interface{}{
-		"has_used_free_deep_research": true,
-		"last_used_at":                now,
-		"usage_count":                 usage.UsageCount + 1,
+		"last_used_at": now,
+		"usage_count":  usage.UsageCount + 1,
 	}, firestore.MergeAll)
 
 	if err != nil {
@@ -132,11 +123,10 @@ func (f *FirebaseClient) IncrementDeepResearchUsage(ctx context.Context, userID 
 	if err != nil {
 		// Create new record for pro user
 		usage := DeepResearchUsage{
-			UserID:                  userID,
-			HasUsedFreeDeepResearch: false, // Pro users don't count as "free" usage
-			FirstUsedAt:             now,
-			LastUsedAt:              now,
-			UsageCount:              1,
+			UserID:      userID,
+			FirstUsedAt: now,
+			LastUsedAt:  now,
+			UsageCount:  1,
 		}
 		_, err := docRef.Set(ctx, usage)
 		return err
@@ -157,17 +147,33 @@ func (f *FirebaseClient) IncrementDeepResearchUsage(ctx context.Context, userID 
 }
 
 // SaveDeepResearchCompletion saves completion data when deep research finishes successfully
-// Note: This only saves completion metadata. Usage tracking (has_used_free_deep_research)
-// should be handled separately via MarkFreeDeepResearchUsed or IncrementDeepResearchUsage
+// This stores the completion in the completed_sessions map and updates metadata
+// Note: Usage tracking should be handled separately via MarkFreeDeepResearchUsed or IncrementDeepResearchUsage
 func (f *FirebaseClient) SaveDeepResearchCompletion(ctx context.Context, userID, chatID string) error {
 	docRef := f.firestoreClient.Collection("deep_research_usage").Doc(userID)
 	now := time.Now()
 
-	// Always use merge to avoid overwriting existing fields like has_used_free_deep_research
-	_, err := docRef.Set(ctx, map[string]interface{}{
+	// Get existing document to access the completed_sessions map
+	doc, err := docRef.Get(ctx)
+	completedSessions := make(map[string]time.Time)
+
+	if err == nil {
+		// Document exists, get the current completed_sessions map
+		var usage DeepResearchUsage
+		if err := doc.DataTo(&usage); err == nil && usage.CompletedSessions != nil {
+			completedSessions = usage.CompletedSessions
+		}
+	}
+
+	// Add the new session to the map
+	completedSessions[chatID] = now
+
+	// Always use merge to avoid overwriting existing fields
+	_, err = docRef.Set(ctx, map[string]interface{}{
 		"user_id":                userID,
 		"last_completed_chat_id": chatID,
 		"completed_at":           now,
+		"completed_sessions":     completedSessions,
 	}, firestore.MergeAll)
 
 	if err != nil {
@@ -299,4 +305,80 @@ func (f *FirebaseClient) GetCompletedSessionCountForUser(ctx context.Context, us
 	}
 
 	return len(docs), nil
+}
+
+// GetDeepResearchQuotaStatus calculates and returns the quota status for a user
+// For free users: 1 session lifetime
+// For pro users: 2 sessions per calendar month
+func (f *FirebaseClient) GetDeepResearchQuotaStatus(ctx context.Context, userID string, isPro bool) (*DeepResearchQuotaStatus, error) {
+	docRef := f.firestoreClient.Collection("deep_research_usage").Doc(userID)
+	doc, err := docRef.Get(ctx)
+
+	var completedSessions map[string]time.Time
+	totalCompleted := 0
+
+	if err == nil {
+		// Document exists, get the completed_sessions map
+		var usage DeepResearchUsage
+		if err := doc.DataTo(&usage); err == nil && usage.CompletedSessions != nil {
+			completedSessions = usage.CompletedSessions
+			totalCompleted = len(completedSessions)
+		}
+	} else if status.Code(err) != codes.NotFound {
+		return nil, fmt.Errorf("failed to get deep research usage: %w", err)
+	}
+
+	now := time.Now()
+	status := &DeepResearchQuotaStatus{
+		IsPro:             isPro,
+		CompletedSessions: totalCompleted,
+	}
+
+	if isPro {
+		// Pro users: 2 sessions per calendar month
+		status.Limit = 2
+
+		// Calculate sessions completed in current calendar month
+		currentMonthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		nextMonthStart := currentMonthStart.AddDate(0, 1, 0)
+		status.ResetsAt = &nextMonthStart
+
+		completedThisMonth := 0
+		for _, completionTime := range completedSessions {
+			if completionTime.After(currentMonthStart) && completionTime.Before(nextMonthStart) {
+				completedThisMonth++
+			}
+		}
+
+		status.Used = completedThisMonth
+		status.CompletedThisMonth = completedThisMonth
+		status.Remaining = status.Limit - status.Used
+		if status.Remaining < 0 {
+			status.Remaining = 0
+		}
+
+		status.QuotaExceeded = status.Used >= status.Limit
+
+		if status.QuotaExceeded {
+			status.ErrorCode = "deep_research_quota_exceeded"
+			status.ErrorMessage = fmt.Sprintf("You've exceeded your monthly quota (2 uses per month). You can use Deep Research again on %s", nextMonthStart.Format("January 2, 2006"))
+		}
+	} else {
+		// Free users: 1 session lifetime
+		status.Limit = 1
+		status.Used = totalCompleted
+		status.Remaining = status.Limit - status.Used
+		if status.Remaining < 0 {
+			status.Remaining = 0
+		}
+
+		status.QuotaExceeded = status.Used >= status.Limit
+
+		if status.QuotaExceeded {
+			status.ErrorCode = "deep_research_quota_exceeded"
+			status.ErrorMessage = "You've exceeded the free user quota. Please upgrade to Pro keep using Deep Research."
+		}
+	}
+
+	return status, nil
 }

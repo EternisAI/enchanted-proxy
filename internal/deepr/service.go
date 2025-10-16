@@ -78,9 +78,10 @@ func (s *Service) canForwardMessage(ctx context.Context, userID, chatID string) 
 	return true, sessionState.State, nil
 }
 
-// validateFreemiumAccess checks if a freemium user can start or continue a deep research session
+// validateFreemiumAccess checks if a user can start or continue a deep research session
 // Returns error if user is not allowed to proceed
-// Premium users can have multiple sessions but still cannot write during 'in_progress' state
+// Free users: 1 session lifetime
+// Pro users: 2 sessions per calendar month
 func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websocket.Conn, userID, chatID string, isReconnection bool) error {
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 
@@ -95,18 +96,10 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 		return fmt.Errorf("failed to check subscription status: %w", err)
 	}
 
-	// Premium users can have multiple sessions - no restrictions on session creation
-	if hasActivePro {
-		log.Info("premium user, multiple sessions allowed",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID))
-		return nil
-	}
-
-	// Freemium user - check restrictions
-	log.Info("freemium user detected, checking access restrictions",
+	log.Info("checking deep research quota",
 		slog.String("user_id", userID),
 		slog.String("chat_id", chatID),
+		slog.Bool("is_pro", hasActivePro),
 		slog.Bool("is_reconnection", isReconnection))
 
 	// Get current session state
@@ -129,78 +122,97 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 
 		// Allow reconnection/continuation if state is 'clarify' or 'in_progress'
 		if sessionState.State == "clarify" || sessionState.State == "in_progress" {
-			log.Info("freemium user allowed to continue existing session",
+			log.Info("user allowed to continue existing session",
 				slog.String("user_id", userID),
 				slog.String("chat_id", chatID),
-				slog.String("session_state", sessionState.State))
+				slog.String("session_state", sessionState.State),
+				slog.Bool("is_pro", hasActivePro))
 			return nil
 		}
 
-		// If state is 'complete' or 'error', check if user has other completed sessions
+		// If state is 'complete' or 'error', check quota for new session
 		if sessionState.State == "complete" || sessionState.State == "error" {
-			completedCount, err := s.firebaseClient.GetCompletedSessionCountForUser(ctx, userID)
-			if err != nil {
-				log.Error("failed to get completed session count",
-					slog.String("user_id", userID),
-					slog.String("error", err.Error()))
-				clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify usage status"}`))
-				return fmt.Errorf("failed to get completed session count: %w", err)
+			log.Info("existing session is complete or error, checking quota for new session",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("session_state", sessionState.State))
+			// Fall through to quota check below
+		}
+	}
+
+	// For new sessions or completed sessions, check quota
+	if sessionState == nil || sessionState.State == "complete" || sessionState.State == "error" {
+		// Get quota status
+		quotaStatus, err := s.firebaseClient.GetDeepResearchQuotaStatus(ctx, userID, hasActivePro)
+		if err != nil {
+			log.Error("failed to get quota status",
+				slog.String("user_id", userID),
+				slog.String("error", err.Error()))
+			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify usage quota"}`))
+			return fmt.Errorf("failed to get quota status: %w", err)
+		}
+
+		log.Info("quota status retrieved",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.Bool("is_pro", quotaStatus.IsPro),
+			slog.Int("used", quotaStatus.Used),
+			slog.Int("limit", quotaStatus.Limit),
+			slog.Int("remaining", quotaStatus.Remaining),
+			slog.Bool("quota_exceeded", quotaStatus.QuotaExceeded))
+
+		// Check if quota is exceeded
+		if quotaStatus.QuotaExceeded {
+			log.Warn("deep research quota exceeded",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.Bool("is_pro", quotaStatus.IsPro),
+				slog.Int("used", quotaStatus.Used),
+				slog.Int("limit", quotaStatus.Limit),
+				slog.String("error_code", quotaStatus.ErrorCode))
+
+			// Send error message to client
+			errorResponse := map[string]string{
+				"error":      quotaStatus.ErrorMessage,
+				"error_code": quotaStatus.ErrorCode,
+			}
+			if responseBytes, err := json.Marshal(errorResponse); err == nil {
+				clientConn.WriteMessage(websocket.TextMessage, responseBytes)
+			} else {
+				clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Quota exceeded", "error_code": "deep_research_quota_exceeded"}`))
 			}
 
-			if completedCount >= 1 {
-				log.Warn("freemium quota exhausted - user has completed session",
+			return fmt.Errorf("deep research quota exceeded for user %s", userID)
+		}
+
+		// For free users, check if they have any active sessions
+		if !hasActivePro {
+			activeSessions, err := s.firebaseClient.GetActiveSessionsForUser(ctx, userID)
+			if err != nil {
+				log.Error("failed to get active sessions",
+					slog.String("user_id", userID),
+					slog.String("error", err.Error()))
+				clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify active sessions"}`))
+				return fmt.Errorf("failed to get active sessions: %w", err)
+			}
+
+			if len(activeSessions) > 0 {
+				log.Warn("freemium user already has an active session",
 					slog.String("user_id", userID),
 					slog.String("chat_id", chatID),
-					slog.Int("completed_count", completedCount))
-				clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You have already used your free deep research. Please upgrade to Pro for unlimited access.", "error_code": "FREE_LIMIT_REACHED"}`))
-				return fmt.Errorf("freemium quota exhausted for user %s", userID)
+					slog.Int("active_sessions_count", len(activeSessions)))
+				clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You already have an active deep research session. Please complete or cancel it before starting a new one.", "error_code": "ACTIVE_SESSION_EXISTS"}`))
+				return fmt.Errorf("freemium user %s already has active session", userID)
 			}
 		}
 
-		return nil
-	}
-
-	// New session - check if user already has completed research
-	completedCount, err := s.firebaseClient.GetCompletedSessionCountForUser(ctx, userID)
-	if err != nil {
-		log.Error("failed to get completed session count",
-			slog.String("user_id", userID),
-			slog.String("error", err.Error()))
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify usage status"}`))
-		return fmt.Errorf("failed to get completed session count: %w", err)
-	}
-
-	if completedCount >= 1 {
-		log.Warn("freemium quota exhausted - user already has completed research",
+		log.Info("user allowed to start new session",
 			slog.String("user_id", userID),
 			slog.String("chat_id", chatID),
-			slog.Int("completed_count", completedCount))
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You have already used your free deep research. Please upgrade to Pro for unlimited access.", "error_code": "FREE_LIMIT_REACHED"}`))
-		return fmt.Errorf("freemium quota exhausted for user %s", userID)
+			slog.Bool("is_pro", hasActivePro),
+			slog.Int("remaining_quota", quotaStatus.Remaining))
 	}
 
-	// Check if user has any active (in_progress or clarify) sessions
-	activeSessions, err := s.firebaseClient.GetActiveSessionsForUser(ctx, userID)
-	if err != nil {
-		log.Error("failed to get active sessions",
-			slog.String("user_id", userID),
-			slog.String("error", err.Error()))
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify active sessions"}`))
-		return fmt.Errorf("failed to get active sessions: %w", err)
-	}
-
-	if len(activeSessions) > 0 {
-		log.Warn("freemium user already has an active session",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.Int("active_sessions_count", len(activeSessions)))
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You already have an active deep research session. Please complete or cancel it before starting a new one.", "error_code": "ACTIVE_SESSION_EXISTS"}`))
-		return fmt.Errorf("freemium user %s already has active session", userID)
-	}
-
-	log.Info("freemium user allowed to start new session",
-		slog.String("user_id", userID),
-		slog.String("chat_id", chatID))
 	return nil
 }
 
@@ -894,7 +906,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 						slog.String("error", broadcastErr.Error()))
 				}
 
-				// Track usage only when research_complete event is sent (even without storage)
+				// Track usage only when research_complete event is sent
 				if msg.Type == "research_complete" {
 					log.Info("research complete event detected, tracking usage (no storage)",
 						slog.String("user_id", userID),
@@ -921,7 +933,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 							}
 							log.Info("pro user completed research, incrementing usage counter (no storage)", logAttrs...)
 
-							if err := s.firebaseClient.IncrementDeepResearchUsage(ctx, userID); err != nil {
+							if err := s.firebaseClient.IncrementDeepResearchUsage(ctx, userID); err != nil{
 								log.Error("failed to increment pro user usage counter",
 									slog.String("user_id", userID),
 									slog.String("chat_id", chatID),

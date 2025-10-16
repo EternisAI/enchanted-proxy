@@ -10,7 +10,7 @@ import (
 )
 
 // RateLimitStatusHandler returns the current rate limit status for the authenticated user.
-func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
+func RateLimitStatusHandler(trackingService *Service, firebaseClient *auth.FirebaseClient) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, exists := auth.GetUserUUID(c)
 		if !exists {
@@ -35,6 +35,18 @@ func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get active pro"})
 			return
 		}
+
+		// Get deep research quota status
+		var deepResearchQuota *auth.DeepResearchQuotaStatus
+		if firebaseClient != nil {
+			deepResearchQuota, err = firebaseClient.GetDeepResearchQuotaStatus(c.Request.Context(), userID, isPro)
+			if err != nil {
+				// Log error but don't fail the request - deep research quota is supplementary info
+				// We can still return the rate limit info
+				deepResearchQuota = nil
+			}
+		}
+
 		if isPro {
 			used, err := trackingService.GetUserTokenUsageToday(c.Request.Context(), userID)
 			if err != nil {
@@ -46,7 +58,7 @@ func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
 			if remaining < 0 {
 				remaining = 0
 			}
-			c.JSON(http.StatusOK, gin.H{
+			response := gin.H{
 				"enabled":       config.AppConfig.RateLimitEnabled,
 				"tier":          "pro",
 				"limit":         limit,
@@ -55,7 +67,12 @@ func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
 				"resets_at":     dayStart.Add(24 * time.Hour),
 				"under_limit":   used < limit,
 				"log_only_mode": config.AppConfig.RateLimitLogOnly,
-			})
+			}
+			// Add deep research quota if available
+			if deepResearchQuota != nil {
+				response["deep_research_quota"] = deepResearchQuota
+			}
+			c.JSON(http.StatusOK, response)
 			return
 		}
 
@@ -72,7 +89,7 @@ func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
 			if remaining < 0 {
 				remaining = 0
 			}
-			c.JSON(http.StatusOK, gin.H{
+			response := gin.H{
 				"enabled":       config.AppConfig.RateLimitEnabled,
 				"tier":          "free",
 				"limit":         limit,
@@ -81,7 +98,12 @@ func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
 				"resets_at":     nil,
 				"under_limit":   used < limit,
 				"log_only_mode": config.AppConfig.RateLimitLogOnly,
-			})
+			}
+			// Add deep research quota if available
+			if deepResearchQuota != nil {
+				response["deep_research_quota"] = deepResearchQuota
+			}
+			c.JSON(http.StatusOK, response)
 			return
 		}
 
@@ -96,7 +118,7 @@ func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
 		if remaining < 0 {
 			remaining = 0
 		}
-		c.JSON(http.StatusOK, gin.H{
+		response := gin.H{
 			"enabled":       config.AppConfig.RateLimitEnabled,
 			"tier":          "drip",
 			"limit":         limit,
@@ -105,6 +127,11 @@ func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
 			"resets_at":     dayStart.Add(24 * time.Hour),
 			"under_limit":   reqs < limit,
 			"log_only_mode": config.AppConfig.RateLimitLogOnly,
-		})
+		}
+		// Add deep research quota if available
+		if deepResearchQuota != nil {
+			response["deep_research_quota"] = deepResearchQuota
+		}
+		c.JSON(http.StatusOK, response)
 	}
 }

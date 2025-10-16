@@ -35,9 +35,9 @@ GET /api/deepresearch/ws?chat_id=<chat_id>
 The system implements a two-tier access model:
 
 #### Pro Users
-- Users with active Pro subscriptions have unlimited access
-- Usage is tracked for analytics purposes
-- No restrictions on usage frequency
+- Users with active Pro subscriptions get **2 sessions per calendar month**
+- Usage is tracked for quota enforcement and analytics
+- Quota resets on the 1st of each month
 
 #### Freemium Users
 - Limited to **one free deep research session** per user
@@ -98,25 +98,28 @@ Document ID: `{user_id}`
 
 ```go
 type DeepResearchUsage struct {
-    UserID                  string    `firestore:"user_id"`
-    HasUsedFreeDeepResearch bool      `firestore:"has_used_free_deep_research"`
-    FirstUsedAt             time.Time `firestore:"first_used_at"`
-    LastUsedAt              time.Time `firestore:"last_used_at"`
-    UsageCount              int64     `firestore:"usage_count"`
+    UserID            string               `firestore:"user_id"`
+    FirstUsedAt       time.Time            `firestore:"first_used_at"`
+    LastUsedAt        time.Time            `firestore:"last_used_at"`
+    UsageCount        int64                `firestore:"usage_count"`
+    CompletedSessions map[string]time.Time `firestore:"completed_sessions"` // Map of chat_id to completion timestamp
 }
 ```
 
 ### Tracking Logic
 
 #### Freemium Users
-- `HasUsedFreeDeepResearch`: Set to `true` after first use
-- Prevents subsequent free usage
-- Error code: `FREE_LIMIT_REACHED`
+- **Quota**: 1 completed session lifetime
+- `CompletedSessions`: Tracks all completed sessions with their completion timestamps
+- Quota is checked by counting total completed sessions
+- Error code: `deep_research_quota_exceeded`
 
 #### Pro Users
-- `HasUsedFreeDeepResearch`: Always `false`
-- `UsageCount`: Incremented for analytics
-- No usage restrictions
+- **Quota**: 2 completed sessions per calendar month
+- `CompletedSessions`: Tracks all completed sessions with their completion timestamps
+- Quota is checked by counting sessions completed in the current calendar month
+- Quota resets on the 1st of each month
+- `UsageCount`: Also incremented for analytics
 
 ## Error Handling
 
@@ -125,7 +128,8 @@ type DeepResearchUsage struct {
 - **400 Bad Request**: Missing `chat_id` parameter
 
 ### Subscription Errors
-- **FREE_LIMIT_REACHED**: Freemium user exceeded free usage
+- **deep_research_quota_exceeded**: User exceeded their quota (freemium: 1 lifetime, pro: 2/month)
+- **ACTIVE_SESSION_EXISTS**: Freemium user attempting to start a new session while another is active
 - **Subscription verification failure**: Database errors
 
 ### Connection Errors
@@ -173,25 +177,34 @@ All logs include structured fields for user ID, chat ID, and request context.
 ```
 1. Client connects with valid JWT
 2. Server validates Pro subscription
-3. Backend connection established
-4. Bidirectional message relay begins
+3. Server checks quota (completed sessions this month < 2)
+4. Backend connection established
+5. Bidirectional message relay begins
 ```
 
 ### Freemium User (First Use)
 ```
 1. Client connects with valid JWT
-2. Server checks usage history (none found)
-3. Usage record created in Firebase
-4. Backend connection established
-5. Session proceeds normally
+2. Server checks quota (completed sessions count = 0)
+3. Backend connection established
+4. Session proceeds normally
+5. On completion, session added to completed_sessions map
 ```
 
-### Freemium User (Subsequent Use)
+### Freemium User (Quota Exceeded)
 ```
 1. Client connects with valid JWT
-2. Server finds existing usage record
-3. Connection rejected with FREE_LIMIT_REACHED error
+2. Server checks quota (completed sessions count >= 1)
+3. Connection rejected with deep_research_quota_exceeded error
 4. Upgrade prompt sent to client
+```
+
+### Pro User (Monthly Quota Exceeded)
+```
+1. Client connects with valid JWT
+2. Server checks quota (completed sessions this month >= 2)
+3. Connection rejected with deep_research_quota_exceeded error
+4. Error message includes reset date (1st of next month)
 ```
 
 This architecture provides a scalable, secure, and monetizable deep research service with proper usage controls and comprehensive monitoring.
