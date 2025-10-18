@@ -7,12 +7,14 @@ import (
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
+	tasksdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/queries/tasks"
 	_ "github.com/lib/pq"
 )
 
 type Database struct {
-	DB      *sql.DB
-	Queries *pgdb.Queries
+	DB           *sql.DB
+	Queries      *pgdb.Queries
+	TasksQueries *tasksdb.Queries
 }
 
 // InitDatabase initializes the database connection and runs migrations.
@@ -39,9 +41,11 @@ func InitDatabase(databaseURL string) (*Database, error) {
 
 	// Create queries
 	queries := pgdb.New(db)
+	tasksQueries := tasksdb.New(db)
 
 	return &Database{
-		DB:      db,
-		Queries: queries,
+		DB:           db,
+		Queries:      queries,
+		TasksQueries: tasksQueries,
 	}, nil
 }

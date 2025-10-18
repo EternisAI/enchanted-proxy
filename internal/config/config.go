@@ -83,6 +83,12 @@ type Config struct {
 	// Logging
 	LogLevel  string
 	LogFormat string
+
+	// Temporal
+	TemporalAddress     string
+	TemporalNamespace   string
+	TemporalCloudAPIKey string
+	TemporalTaskQueue   string
 }
 
 var AppConfig *Config
@@ -192,6 +198,12 @@ func LoadConfig() {
 		// Logging
 		LogLevel:  getEnvOrDefault("LOG_LEVEL", "debug"),
 		LogFormat: getEnvOrDefault("LOG_FORMAT", "text"),
+
+		// Temporal
+		TemporalAddress:     getEnvOrDefault("TEMPORAL_ADDRESS", "localhost:7233"),
+		TemporalNamespace:   getEnvOrDefault("TEMPORAL_NAMESPACE", "default"),
+		TemporalCloudAPIKey: getEnvOrDefault("TEMPORAL_CLOUD_API_KEY", ""),
+		TemporalTaskQueue:   getEnvOrDefault("TEMPORAL_TASK_QUEUE", "tasks-queue"),
 	}
 
 	// Validate required configs
