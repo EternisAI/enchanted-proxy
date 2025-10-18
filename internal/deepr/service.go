@@ -205,13 +205,13 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 }
 
 // NewService creates a new deep research service with database storage
-func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage) *Service {
+func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager) *Service {
 	return &Service{
 		logger:          logger,
 		trackingService: trackingService,
 		firebaseClient:  firebaseClient,
 		storage:         storage,
-		sessionManager:  NewSessionManager(logger),
+		sessionManager:  sessionManager,
 	}
 }
 
@@ -228,6 +228,12 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 
 	// Check if this is a reconnection
 	isReconnection := s.sessionManager.HasActiveBackend(userID, chatID)
+
+	log.Info("reconnection check performed",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.String("client_id", clientID),
+		slog.Bool("has_active_backend", isReconnection))
 
 	if isReconnection {
 		log.Info("reconnection to existing session detected",
@@ -666,9 +672,10 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 		}()
 	}
 
-	// Create session context derived from incoming context but independent of any single client
-	// This ensures cleanup on server shutdown while allowing session to outlive individual clients
-	sessionCtx, cancel := context.WithCancel(ctx)
+	// Create session context independent of any single client's request context
+	// This allows the backend connection to outlive individual client disconnections
+	// while still allowing cleanup when the session completes
+	sessionCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Create and register session
