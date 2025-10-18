@@ -30,7 +30,9 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"github.com/eternisai/enchanted-proxy/internal/search"
 	"github.com/eternisai/enchanted-proxy/internal/storage/pg"
+	"github.com/eternisai/enchanted-proxy/internal/tasks"
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
+	"github.com/eternisai/enchanted-proxy/internal/temporal"
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -87,6 +89,19 @@ func main() {
 	}
 	log.Info("database connection established")
 
+	// Initialize Temporal client
+	log.Info("initializing temporal client",
+		slog.String("address", config.AppConfig.TemporalAddress),
+		slog.String("namespace", config.AppConfig.TemporalNamespace),
+		slog.String("task_queue", config.AppConfig.TemporalTaskQueue),
+	)
+	temporalClient, err := temporal.NewTemporalClientFromConfig(config.AppConfig)
+	if err != nil {
+		log.Error("failed to initialize temporal client", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	log.Info("temporal client initialized")
+
 	tokenValidator, err := NewTokenValidator(config.AppConfig, logger)
 	if err != nil {
 		log.Error("failed to initialize token validator", slog.String("error", err.Error()))
@@ -139,6 +154,7 @@ func main() {
 	iapHandler := iap.NewHandler(iapService, logger.WithComponent("iap"))
 	mcpHandler := mcp.NewHandler(mcpService)
 	searchHandler := search.NewHandler(searchService, logger.WithComponent("search"))
+	tasksHandler := tasks.NewHandler(db.TasksQueries, temporalClient)
 
 	// Initialize NATS for Telegram
 	var natsClient *nats.Conn
@@ -193,6 +209,7 @@ func main() {
 		iapHandler:             iapHandler,
 		mcpHandler:             mcpHandler,
 		searchHandler:          searchHandler,
+		tasksHandler:           tasksHandler,
 		deeprStorage:           deeprStorage,
 	})
 
@@ -294,6 +311,7 @@ type restServerInput struct {
 	iapHandler             *iap.Handler
 	mcpHandler             *mcp.Handler
 	searchHandler          *search.Handler
+	tasksHandler           *tasks.Handler
 	deeprStorage           deepr.MessageStorage
 }
 
@@ -367,6 +385,14 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		// Search API routes (protected)
 		api.POST("/search", input.searchHandler.PostSearchHandler)        // POST /api/v1/search (SerpAPI)
 		api.POST("/exa/search", input.searchHandler.PostExaSearchHandler) // POST /api/v1/exa/search (Exa AI)
+
+		// Tasks API routes (protected)
+		tasksGroup := api.Group("/tasks")
+		{
+			tasksGroup.POST("", input.tasksHandler.CreateTask)       // POST /api/v1/tasks
+			tasksGroup.GET("", input.tasksHandler.GetTasks)          // GET /api/v1/tasks
+			tasksGroup.DELETE("/:id", input.tasksHandler.DeleteTask) // DELETE /api/v1/tasks/:id
+		}
 
 		// Deep Research WebSocket endpoint (protected)
 		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage)) // WebSocket proxy for deep research

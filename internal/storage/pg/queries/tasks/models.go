@@ -2,13 +2,11 @@
 // versions:
 //   sqlc v1.30.0
 
-package pgdb
+package tasks
 
 import (
 	"database/sql"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type DeepResearchMessage struct {
@@ -30,19 +28,19 @@ type Entitlement struct {
 }
 
 type InviteCode struct {
-	ID         int64      `json:"id"`
-	Code       string     `json:"code"`
-	CodeHash   string     `json:"codeHash"`
-	BoundEmail *string    `json:"boundEmail"`
-	CreatedBy  int64      `json:"createdBy"`
-	IsUsed     bool       `json:"isUsed"`
-	RedeemedBy *string    `json:"redeemedBy"`
-	RedeemedAt *time.Time `json:"redeemedAt"`
-	ExpiresAt  *time.Time `json:"expiresAt"`
-	IsActive   bool       `json:"isActive"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	UpdatedAt  time.Time  `json:"updatedAt"`
-	DeletedAt  *time.Time `json:"deletedAt"`
+	ID         int64        `json:"id"`
+	Code       string       `json:"code"`
+	CodeHash   string       `json:"codeHash"`
+	BoundEmail *string      `json:"boundEmail"`
+	CreatedBy  int64        `json:"createdBy"`
+	IsUsed     bool         `json:"isUsed"`
+	RedeemedBy *string      `json:"redeemedBy"`
+	RedeemedAt sql.NullTime `json:"redeemedAt"`
+	ExpiresAt  sql.NullTime `json:"expiresAt"`
+	IsActive   bool         `json:"isActive"`
+	CreatedAt  time.Time    `json:"createdAt"`
+	UpdatedAt  time.Time    `json:"updatedAt"`
+	DeletedAt  sql.NullTime `json:"deletedAt"`
 }
 
 type RequestLog struct {
@@ -58,7 +56,7 @@ type RequestLog struct {
 }
 
 type Task struct {
-	ID        uuid.UUID `json:"id"`
+	ID        string    `json:"id"`
 	UserID    string    `json:"userId"`
 	ChatID    string    `json:"chatId"`
 	Name      string    `json:"name"`
@@ -77,16 +75,16 @@ type TelegramChat struct {
 }
 
 type UserRequestCountsDaily struct {
-	UserID       string    `json:"userId"`
-	DayBucket    time.Time `json:"dayBucket"`
-	RequestCount int64     `json:"requestCount"`
+	UserID       string `json:"userId"`
+	DayBucket    int64  `json:"dayBucket"`
+	RequestCount int64  `json:"requestCount"`
 }
 
 type UserTokenUsageDaily struct {
-	UserID                string    `json:"userId"`
-	DayBucket             time.Time `json:"dayBucket"`
-	RequestCount          int64     `json:"requestCount"`
-	TotalPromptTokens     int64     `json:"totalPromptTokens"`
-	TotalCompletionTokens int64     `json:"totalCompletionTokens"`
-	TotalTokensUsed       int64     `json:"totalTokensUsed"`
+	UserID                string      `json:"userId"`
+	DayBucket             int64       `json:"dayBucket"`
+	RequestCount          int64       `json:"requestCount"`
+	TotalPromptTokens     interface{} `json:"totalPromptTokens"`
+	TotalCompletionTokens interface{} `json:"totalCompletionTokens"`
+	TotalTokensUsed       interface{} `json:"totalTokensUsed"`
 }

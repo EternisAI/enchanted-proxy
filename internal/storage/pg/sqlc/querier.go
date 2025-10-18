@@ -9,18 +9,24 @@ import (
 )
 
 type Querier interface {
+	AddDeepResearchMessage(ctx context.Context, arg AddDeepResearchMessageParams) error
 	AtomicUseInviteCode(ctx context.Context, arg AtomicUseInviteCodeParams) error
 	CountInviteCodesByRedeemedBy(ctx context.Context, redeemedBy *string) (int64, error)
 	CreateInviteCode(ctx context.Context, arg CreateInviteCodeParams) (InviteCode, error)
 	CreateRequestLog(ctx context.Context, arg CreateRequestLogParams) error
 	CreateTelegramChat(ctx context.Context, arg CreateTelegramChatParams) (TelegramChat, error)
+	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	DeleteTelegramChat(ctx context.Context, chatID int64) error
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
 	GetEntitlement(ctx context.Context, userID string) (Entitlement, error)
 	GetInviteCodeByCodeHash(ctx context.Context, codeHash string) (InviteCode, error)
 	GetInviteCodeByID(ctx context.Context, id int64) (InviteCode, error)
+	GetSessionMessageCount(ctx context.Context, sessionID string) (int64, error)
+	GetSessionMessages(ctx context.Context, sessionID string) ([]DeepResearchMessage, error)
 	GetTelegramChatByChatID(ctx context.Context, chatID int64) (TelegramChat, error)
 	GetTelegramChatByChatUUID(ctx context.Context, chatUuid string) (TelegramChat, error)
+	GetUnsentMessageCount(ctx context.Context, sessionID string) (int64, error)
+	GetUnsentMessages(ctx context.Context, sessionID string) ([]DeepResearchMessage, error)
 	GetUserLifetimeTokenUsage(ctx context.Context, userID string) (int64, error)
 	GetUserRequestCountInLastDay(ctx context.Context, userID string) (int64, error)
 	GetUserRequestCountInTimeWindow(ctx context.Context, arg GetUserRequestCountInTimeWindowParams) (int64, error)
@@ -29,6 +35,8 @@ type Querier interface {
 	GetUserTokenUsageInTimeWindow(ctx context.Context, arg GetUserTokenUsageInTimeWindowParams) (int64, error)
 	GetUserTokenUsageToday(ctx context.Context, userID string) (int64, error)
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
+	MarkAllMessagesAsSent(ctx context.Context, sessionID string) error
+	MarkMessageAsSent(ctx context.Context, id string) error
 	RefreshUserRequestCountsView(ctx context.Context) error
 	RefreshUserTokenUsageView(ctx context.Context) error
 	ResetInviteCode(ctx context.Context, codeHash string) error

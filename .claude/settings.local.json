@@ -6,7 +6,10 @@
       "Bash(rm:*)",
       "Bash(make:*)",
       "Bash(timeout 5s make run)",
-      "Bash(deadcode:*)"
+      "Bash(deadcode:*)",
+      "Bash(sqlc generate)",
+      "Bash(pg_isready -h localhost -p 5432)",
+      "Bash(psql -h localhost -p 5432 -U postgres -c \"SELECT 1\")"
     ],
     "deny": []
   }
