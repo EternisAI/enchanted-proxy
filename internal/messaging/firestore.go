@@ -59,6 +59,8 @@ func (f *FirestoreClient) SaveMessage(ctx context.Context, userID string, msg *C
 	if userID == "" || msg == nil || msg.ChatID == "" || msg.ID == "" {
 		return status.Error(codes.InvalidArgument, "userID, chatID, and messageID must be non-empty")
 	}
+	// NOTE: EncryptedContent can be either base64 encrypted data OR plaintext (when publicEncryptionKey = "none")
+	// This validation only checks non-empty - encryption verification happens at service layer
 	if len(msg.EncryptedContent) == 0 {
 		return status.Error(codes.InvalidArgument, "encrypted content must be non-empty")
 	}

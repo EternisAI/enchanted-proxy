@@ -93,6 +93,16 @@ func (s *Service) handleMessage(msg MessageToStore) {
 
 	publicKey, err := s.getPublicKey(ctx, msg.UserID)
 	if err != nil {
+		// GRACEFUL DEGRADATION: Store as plaintext if no public key available
+		// This allows gradual rollout - users without encryption setup still get message storage
+		// Set MESSAGE_STORAGE_REQUIRE_ENCRYPTION=true for strict E2EE mode (rejects storage on encryption failure)
+		if config.AppConfig.MessageStorageRequireEncryption {
+			log.Error("cannot store message without encryption (strict mode enabled)",
+				slog.String("user_id", msg.UserID),
+				slog.String("error", err.Error()))
+			return // Fail-safe: refuse to store
+		}
+
 		log.Warn("failed to get public key, storing unencrypted",
 			slog.String("user_id", msg.UserID),
 			slog.String("error", err.Error()))
@@ -101,6 +111,14 @@ func (s *Service) handleMessage(msg MessageToStore) {
 	} else {
 		encrypted, err := s.encryptionService.EncryptMessage(msg.Content, publicKey.Public)
 		if err != nil {
+			// GRACEFUL DEGRADATION: Store as plaintext if encryption fails
+			if config.AppConfig.MessageStorageRequireEncryption {
+				log.Error("encryption failed, refusing to store (strict mode enabled)",
+					slog.String("user_id", msg.UserID),
+					slog.String("error", err.Error()))
+				return // Fail-safe: refuse to store
+			}
+
 			log.Error("encryption failed, storing unencrypted",
 				slog.String("user_id", msg.UserID),
 				slog.String("error", err.Error()))
