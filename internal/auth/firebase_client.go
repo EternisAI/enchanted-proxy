@@ -49,6 +49,11 @@ func (f *FirebaseClient) Close() error {
 	return nil
 }
 
+// GetFirestoreClient returns the Firestore client instance
+func (f *FirebaseClient) GetFirestoreClient() *firestore.Client {
+	return f.firestoreClient
+}
+
 // DeepResearchUsage represents a user's deep research usage record
 type DeepResearchUsage struct {
 	UserID                  string    `firestore:"user_id"`
