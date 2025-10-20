@@ -58,6 +58,19 @@ func (sm *SessionManager) CreateSession(userID, chatID string, backendConn *webs
 
 	key := sm.getSessionKey(userID, chatID)
 
+	// Check if session already exists
+	if existingSession, exists := sm.sessions[key]; exists {
+		sm.logger.WithComponent("deepr-session").Warn("OVERWRITING existing session",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("session_key", key),
+			slog.Int("existing_client_count", len(existingSession.clientConns)))
+		// Cancel the existing session's context
+		if existingSession.CancelFunc != nil {
+			existingSession.CancelFunc()
+		}
+	}
+
 	session := &ActiveSession{
 		UserID:      userID,
 		ChatID:      chatID,
@@ -84,6 +97,11 @@ func (sm *SessionManager) RemoveSession(userID, chatID string) {
 	defer sm.mu.Unlock()
 
 	key := sm.getSessionKey(userID, chatID)
+
+	sm.logger.WithComponent("deepr-session").Info("RemoveSession called",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.String("session_key", key))
 
 	if session, exists := sm.sessions[key]; exists {
 		// Close all client connections
@@ -238,7 +256,23 @@ func (sm *SessionManager) HasActiveBackend(userID, chatID string) bool {
 	defer sm.mu.RUnlock()
 
 	key := sm.getSessionKey(userID, chatID)
-	_, exists := sm.sessions[key]
+	session, exists := sm.sessions[key]
+
+	var clientCount int
+	if exists {
+		session.mu.RLock()
+		clientCount = len(session.clientConns)
+		session.mu.RUnlock()
+	}
+
+	sm.logger.WithComponent("deepr-session").Debug("HasActiveBackend called",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.String("session_key", key),
+		slog.Bool("session_exists", exists),
+		slog.Int("client_count", clientCount),
+		slog.Int("total_sessions", len(sm.sessions)))
+
 	return exists
 }
 
