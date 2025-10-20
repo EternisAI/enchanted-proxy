@@ -153,6 +153,11 @@ func (s *Service) getPublicKey(ctx context.Context, userID string) (*UserPublicK
 		return nil, err
 	}
 
+	// Check if key is valid
+	if key == nil || key.Public == "" {
+		return nil, fmt.Errorf("no public key found for user %s", userID)
+	}
+
 	// Validate key
 	if err := s.encryptionService.ValidatePublicKey(key.Public); err != nil {
 		return nil, fmt.Errorf("invalid public key: %w", err)

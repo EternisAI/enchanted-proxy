@@ -254,7 +254,8 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 		logRequestToDatabase(c, trackingService, model, tokenUsage)
 
 		// Save message to Firestore asynchronously
-		saveMessageAsync(c, messageService, fullContent.String(), false)
+		isError := resp.StatusCode >= 400
+		saveMessageAsync(c, messageService, fullContent.String(), isError)
 	}()
 
 	// Remove Content-Length for chunked encoding.

@@ -76,6 +76,11 @@ func saveMessageAsync(c *gin.Context, messageService *messaging.Service, content
 		return
 	}
 
+	// Skip if content is empty
+	if strings.TrimSpace(content) == "" {
+		return
+	}
+
 	// Extract user ID
 	userID, exists := auth.GetUserUUID(c)
 	if !exists {
@@ -99,8 +104,9 @@ func saveMessageAsync(c *gin.Context, messageService *messaging.Service, content
 		IsError:    isError,
 	}
 
-	// Store asynchronously
-	if err := messageService.StoreMessageAsync(c.Request.Context(), msg); err != nil {
+	// Store asynchronously using background context
+	// Service applies its own timeout, don't use request context which gets cancelled when handler returns
+	if err := messageService.StoreMessageAsync(context.Background(), msg); err != nil {
 		// Log error but don't fail the request
 		// The error is already logged within the service
 	}
