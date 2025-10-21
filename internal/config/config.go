@@ -83,6 +83,11 @@ type Config struct {
 	// Logging
 	LogLevel  string
 	LogFormat string
+
+	// Temporal
+	TemporalAPIKey   string
+	TemporalEndpoint string
+	TemporalNamespace string
 }
 
 var AppConfig *Config
@@ -192,6 +197,11 @@ func LoadConfig() {
 		// Logging
 		LogLevel:  getEnvOrDefault("LOG_LEVEL", "debug"),
 		LogFormat: getEnvOrDefault("LOG_FORMAT", "text"),
+
+		// Temporal
+		TemporalAPIKey:   getEnvOrDefault("TEMPORAL_API_KEY", ""),
+		TemporalEndpoint: getEnvOrDefault("TEMPORAL_ENDPOINT", ""),
+		TemporalNamespace: getEnvOrDefault("TEMPORAL_NAMESPACE", ""),
 	}
 
 	// Validate required configs
