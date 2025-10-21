@@ -82,8 +82,8 @@ func saveMessageAsync(c *gin.Context, messageService *messaging.Service, content
 		return
 	}
 
-	// Extract user ID
-	userID, exists := auth.GetUserUUID(c)
+	// Extract user ID (Firebase UID for Firestore paths)
+	userID, exists := auth.GetUserID(c)
 	if !exists {
 		return
 	}

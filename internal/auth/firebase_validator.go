@@ -59,3 +59,35 @@ func (f *FirebaseTokenValidator) ValidateToken(tokenString string) (string, erro
 
 	return "", fmt.Errorf("no user ID found in Firebase token")
 }
+
+// ExtractUserID extracts the Firebase UID (prioritizes sub/user_id over email).
+// This should be used for Firestore paths.
+func (f *FirebaseTokenValidator) ExtractUserID(tokenString string) (string, error) {
+	ctx := context.Background()
+
+	token, err := f.authClient.VerifyIDToken(ctx, tokenString)
+	if err != nil {
+		return "", err
+	}
+
+	// Prioritize sub (Firebase UID), then user_id, then email as fallback.
+	if token.Claims["sub"] != nil {
+		if sub, ok := token.Claims["sub"].(string); ok && sub != "" {
+			return sub, nil
+		}
+	}
+
+	if token.Claims["user_id"] != nil {
+		if userID, ok := token.Claims["user_id"].(string); ok && userID != "" {
+			return userID, nil
+		}
+	}
+
+	if token.Claims["email"] != nil {
+		if email, ok := token.Claims["email"].(string); ok && email != "" {
+			return email, nil
+		}
+	}
+
+	return "", fmt.Errorf("no user ID found in Firebase token")
+}

@@ -107,7 +107,7 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 		if titleService != nil && len(requestBody) > 0 {
 			if isFirst, firstMessage := isFirstUserMessage(requestBody); isFirst {
 				chatID := c.GetHeader("X-Chat-ID")
-				userID, exists := auth.GetUserUUID(c)
+				userID, exists := auth.GetUserID(c)
 
 				if exists && chatID != "" {
 					// Queue async title generation (non-blocking)
