@@ -117,3 +117,32 @@ func (f *FirestoreClient) GetMessage(ctx context.Context, userID, chatID, messag
 
 	return &msg, nil
 }
+
+// SaveChatTitle saves/updates encrypted chat title
+// Path: /users/{userId}/chats/{chatId}
+func (f *FirestoreClient) SaveChatTitle(ctx context.Context, userID, chatID string, title *ChatTitle) error {
+	if f == nil || f.client == nil {
+		return status.Error(codes.Internal, "firestore client is nil")
+	}
+	if userID == "" || chatID == "" || title == nil {
+		return status.Error(codes.InvalidArgument, "userID, chatID, and title must be non-empty")
+	}
+	if len(title.EncryptedTitle) == 0 {
+		return status.Error(codes.InvalidArgument, "encrypted title must be non-empty")
+	}
+
+	// Update chat document with title fields
+	docRef := f.client.Collection("users").Doc(userID).Collection("chats").Doc(chatID)
+
+	_, err := docRef.Set(ctx, map[string]interface{}{
+		"encryptedTitle":           title.EncryptedTitle,
+		"titlePublicEncryptionKey": title.TitlePublicEncryptionKey,
+		"updatedAt":                title.UpdatedAt,
+	}, firestore.MergeAll) // Merge to preserve existing fields
+
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to save title user=%s chat=%s: %v", userID, chatID, err)
+	}
+
+	return nil
+}

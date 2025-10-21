@@ -19,6 +19,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
+	"github.com/eternisai/enchanted-proxy/internal/title_generation"
 	"github.com/gin-gonic/gin"
 )
 
@@ -57,7 +58,7 @@ func createReverseProxyWithPooling(target *url.URL) *httputil.ReverseProxy {
 	return proxy
 }
 
-func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Service, messageService *messaging.Service) gin.HandlerFunc {
+func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Service, messageService *messaging.Service, titleService *title_generation.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		log := logger.WithContext(c.Request.Context()).WithComponent("proxy")
@@ -95,11 +96,35 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 		}
 
 		// Check if base URL is in our allowed dictionary
-		apiKey := getAPIKey(baseURL, platform, config.AppConfig)
+		apiKey := GetAPIKey(baseURL, platform, config.AppConfig)
 		if apiKey == "" {
 			log.Warn("unauthorized base url", slog.String("base_url", baseURL))
 			c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized base URL"})
 			return
+		}
+
+		// Check if this is the first user message and trigger title generation
+		if titleService != nil && len(requestBody) > 0 {
+			if isFirst, firstMessage := isFirstUserMessage(requestBody); isFirst {
+				chatID := c.GetHeader("X-Chat-ID")
+				userID, exists := auth.GetUserUUID(c)
+
+				if exists && chatID != "" {
+					// Queue async title generation (non-blocking)
+					go titleService.QueueTitleGeneration(c.Request.Context(), title_generation.TitleGenerationRequest{
+						UserID:       userID,
+						ChatID:       chatID,
+						FirstMessage: firstMessage,
+						Model:        model,
+						BaseURL:      baseURL,
+						Platform:     platform,
+					}, apiKey)
+
+					log.Debug("queued title generation",
+						slog.String("chat_id", chatID),
+						slog.String("model", model))
+				}
+			}
 		}
 
 		// Parse the target URL

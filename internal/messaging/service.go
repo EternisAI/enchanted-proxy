@@ -215,3 +215,13 @@ func (s *Service) Shutdown() {
 	close(s.messageChan)
 	s.logger.Info("message storage service shutdown complete")
 }
+
+// GetPublicKey exposes getPublicKey for title service
+func (s *Service) GetPublicKey(ctx context.Context, userID string) (*UserPublicKey, error) {
+	return s.getPublicKey(ctx, userID)
+}
+
+// EncryptContent exposes encryption function for title service
+func (s *Service) EncryptContent(content string, publicKeyJWK string) (string, error) {
+	return s.encryptionService.EncryptMessage(content, publicKeyJWK)
+}

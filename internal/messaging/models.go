@@ -44,3 +44,10 @@ type MessageToStore struct {
 	Content    string // Plaintext content to be encrypted
 	IsError    bool
 }
+
+// ChatTitle represents a stored chat title in Firestore
+type ChatTitle struct {
+	EncryptedTitle           string    `firestore:"encryptedTitle"`           // Encrypted title content or plaintext
+	TitlePublicEncryptionKey string    `firestore:"titlePublicEncryptionKey"` // Public key used (JSON string or "none")
+	UpdatedAt                time.Time `firestore:"updatedAt"`                // Last update timestamp
+}
