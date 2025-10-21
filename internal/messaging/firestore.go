@@ -2,7 +2,6 @@ package messaging
 
 import (
 	"context"
-	"fmt"
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/grpc/codes"
@@ -65,11 +64,12 @@ func (f *FirestoreClient) SaveMessage(ctx context.Context, userID string, msg *C
 		return status.Error(codes.InvalidArgument, "encrypted content must be non-empty")
 	}
 
-	// Use correct path with "messages" subcollection
+	// Path: /users/{userId}/chats/{chatId}/messages/{messageId}
 	docRef := f.client.
-		Collection("chats").
+		Collection("users").
 		Doc(userID).
-		Collection(msg.ChatID).
+		Collection("chats").
+		Doc(msg.ChatID).
 		Collection("messages").
 		Doc(msg.ID)
 
@@ -94,11 +94,12 @@ func (f *FirestoreClient) GetMessage(ctx context.Context, userID, chatID, messag
 		return nil, status.Error(codes.InvalidArgument, "userID, chatID, and messageID must be non-empty")
 	}
 
-	// Use correct path with "messages" subcollection
+	// Path: /users/{userId}/chats/{chatId}/messages/{messageId}
 	docRef := f.client.
-		Collection("chats").
+		Collection("users").
 		Doc(userID).
-		Collection(chatID).
+		Collection("chats").
+		Doc(chatID).
 		Collection("messages").
 		Doc(messageID)
 
