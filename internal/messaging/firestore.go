@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"context"
+	"time"
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/grpc/codes"
@@ -22,7 +23,7 @@ func NewFirestoreClient(client *firestore.Client) *FirestoreClient {
 }
 
 // GetUserPublicKey retrieves a user's public key
-// Path: /users/{userId}/accountKey
+// Path: /users/{userId} -> accountKey field
 func (f *FirestoreClient) GetUserPublicKey(ctx context.Context, userID string) (*UserPublicKey, error) {
 	if f == nil || f.client == nil {
 		return nil, status.Error(codes.Internal, "firestore client is nil")
@@ -31,19 +32,58 @@ func (f *FirestoreClient) GetUserPublicKey(ctx context.Context, userID string) (
 		return nil, status.Error(codes.InvalidArgument, "userID must be non-empty")
 	}
 
-	// Get documents from accountKey subcollection
-	docs, err := f.client.Collection("users").Doc(userID).Collection("accountKey").Documents(ctx).GetAll()
+	// Get user document
+	docRef := f.client.Collection("users").Doc(userID)
+	doc, err := docRef.Get(ctx)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to query public key for user %s: %v", userID, err)
+		if status.Code(err) == codes.NotFound {
+			return nil, status.Errorf(codes.NotFound, "user document not found for user %s", userID)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get user document for user %s: %v", userID, err)
 	}
 
-	if len(docs) == 0 {
+	// Extract accountKey field
+	accountKeyData, err := doc.DataAt("accountKey")
+	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "no public key found for user %s", userID)
 	}
 
+	// Parse accountKey map into UserPublicKey struct
+	accountKeyMap, ok := accountKeyData.(map[string]interface{})
+	if !ok {
+		return nil, status.Errorf(codes.Internal, "accountKey field is not a map for user %s", userID)
+	}
+
 	var key UserPublicKey
-	if err := docs[0].DataTo(&key); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to parse public key for user %s: %v", userID, err)
+	// Manually map fields from the accountKey map
+	if createdAt, ok := accountKeyMap["createdAt"].(time.Time); ok {
+		key.CreatedAt = createdAt
+	}
+	if encryptedPrivate, ok := accountKeyMap["encryptedPrivate"].(string); ok {
+		key.EncryptedPrivate = encryptedPrivate
+	}
+	if nonce, ok := accountKeyMap["nonce"].(string); ok {
+		key.Nonce = nonce
+	}
+	if prfSalt, ok := accountKeyMap["prfSalt"].(string); ok {
+		key.PrfSalt = prfSalt
+	}
+	if provider, ok := accountKeyMap["provider"].(string); ok {
+		key.Provider = provider
+	}
+	if public, ok := accountKeyMap["public"].(string); ok {
+		key.Public = public
+	}
+	if updatedAt, ok := accountKeyMap["updatedAt"].(time.Time); ok {
+		key.UpdatedAt = updatedAt
+	}
+	if version, ok := accountKeyMap["version"].(int64); ok {
+		key.Version = int(version)
+	}
+
+	// Validate that public key exists
+	if key.Public == "" {
+		return nil, status.Errorf(codes.NotFound, "public key is empty for user %s", userID)
 	}
 
 	return &key, nil
