@@ -132,7 +132,15 @@ func main() {
 
 	// Initialize task service (Temporal)
 	var taskService *task.Service
+	log.Info("checking temporal configuration",
+		slog.Bool("has_endpoint", config.AppConfig.TemporalEndpoint != ""),
+		slog.Bool("has_namespace", config.AppConfig.TemporalNamespace != ""),
+		slog.Bool("has_api_key", config.AppConfig.TemporalAPIKey != ""),
+		slog.String("endpoint", config.AppConfig.TemporalEndpoint),
+		slog.String("namespace", config.AppConfig.TemporalNamespace))
+
 	if config.AppConfig.TemporalEndpoint != "" && config.AppConfig.TemporalNamespace != "" && config.AppConfig.TemporalAPIKey != "" {
+		log.Info("temporal configuration complete, initializing task service")
 		taskSvc, err := task.NewService(
 			config.AppConfig.TemporalEndpoint,
 			config.AppConfig.TemporalNamespace,
@@ -149,7 +157,10 @@ func main() {
 			log.Info("task service initialized successfully")
 		}
 	} else {
-		log.Info("temporal configuration not provided - task scheduling disabled")
+		log.Warn("temporal configuration incomplete - task scheduling disabled",
+			slog.Bool("has_endpoint", config.AppConfig.TemporalEndpoint != ""),
+			slog.Bool("has_namespace", config.AppConfig.TemporalNamespace != ""),
+			slog.Bool("has_api_key", config.AppConfig.TemporalAPIKey != ""))
 	}
 
 	// Initialize deep research storage
@@ -415,6 +426,10 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 				tasks.GET("", input.taskHandler.GetTasks)              // GET /api/v1/tasks - Get all tasks for user
 				tasks.DELETE("/:taskId", input.taskHandler.DeleteTask) // DELETE /api/v1/tasks/:taskId - Delete a task
 			}
+			input.logger.WithComponent("routes").Info("task routes registered",
+				slog.String("path", "/api/v1/tasks"))
+		} else {
+			input.logger.WithComponent("routes").Warn("task routes NOT registered - task handler is nil")
 		}
 
 		// Deep Research WebSocket endpoint (protected)
