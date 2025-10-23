@@ -25,3 +25,9 @@ type StandardClaims struct {
 type TokenValidator interface {
 	ValidateToken(tokenString string) (string, error)
 }
+
+// FirebaseUIDProvider is an optional interface that token validators can implement
+// to provide the Firebase UID in addition to the user identifier.
+type FirebaseUIDProvider interface {
+	GetFirebaseUID(tokenString string) (string, error)
+}

@@ -17,7 +17,7 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-// DeepResearchHandler handles WebSocket connections for deep research streaming
+// DeepResearchHandler handles WebSocket connections for deep research streaming.
 func DeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := logger.WithContext(c.Request.Context()).WithComponent("deepr")

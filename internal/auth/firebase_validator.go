@@ -59,3 +59,16 @@ func (f *FirebaseTokenValidator) ValidateToken(tokenString string) (string, erro
 
 	return "", fmt.Errorf("no user ID found in Firebase token")
 }
+
+// GetFirebaseUID validates the token and returns the Firebase UID.
+func (f *FirebaseTokenValidator) GetFirebaseUID(tokenString string) (string, error) {
+	ctx := context.Background()
+
+	token, err := f.authClient.VerifyIDToken(ctx, tokenString)
+	if err != nil {
+		return "", err
+	}
+
+	// Return the Firebase UID
+	return token.UID, nil
+}

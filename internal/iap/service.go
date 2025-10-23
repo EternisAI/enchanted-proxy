@@ -7,10 +7,9 @@ import (
 	"strings"
 	"time"
 
-	appstore "github.com/richzw/appstore"
-
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
+	appstore "github.com/richzw/appstore"
 )
 
 type Service struct {

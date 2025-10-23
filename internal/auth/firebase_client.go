@@ -12,12 +12,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// FirebaseClient wraps Firebase services
+// FirebaseClient wraps Firebase services.
 type FirebaseClient struct {
 	firestoreClient *firestore.Client
 }
 
-// NewFirebaseClient creates a new Firebase client with Firestore access
+// NewFirebaseClient creates a new Firebase client with Firestore access.
 func NewFirebaseClient(ctx context.Context, projectID, credJSON string) (*FirebaseClient, error) {
 	opt := option.WithCredentialsJSON([]byte(credJSON))
 
@@ -41,7 +41,7 @@ func NewFirebaseClient(ctx context.Context, projectID, credJSON string) (*Fireba
 	}, nil
 }
 
-// Close closes the Firestore client
+// Close closes the Firestore client.
 func (f *FirebaseClient) Close() error {
 	if f.firestoreClient != nil {
 		return f.firestoreClient.Close()
@@ -49,7 +49,7 @@ func (f *FirebaseClient) Close() error {
 	return nil
 }
 
-// DeepResearchUsage represents a user's deep research usage record
+// DeepResearchUsage represents a user's deep research usage record.
 type DeepResearchUsage struct {
 	UserID                  string    `firestore:"user_id"`
 	HasUsedFreeDeepResearch bool      `firestore:"has_used_free_deep_research"`
@@ -58,11 +58,10 @@ type DeepResearchUsage struct {
 	UsageCount              int64     `firestore:"usage_count"`
 }
 
-// HasUsedFreeDeepResearch checks if a freemium user has already used deep research
+// HasUsedFreeDeepResearch checks if a freemium user has already used deep research.
 func (f *FirebaseClient) HasUsedFreeDeepResearch(ctx context.Context, userID string) (bool, error) {
 	docRef := f.firestoreClient.Collection("deep_research_usage").Doc(userID)
 	doc, err := docRef.Get(ctx)
-
 	if err != nil {
 		// If document doesn't exist, user hasn't used it yet
 		if status.Code(err) == codes.NotFound {
@@ -79,7 +78,7 @@ func (f *FirebaseClient) HasUsedFreeDeepResearch(ctx context.Context, userID str
 	return usage.HasUsedFreeDeepResearch, nil
 }
 
-// MarkFreeDeepResearchUsed marks that a freemium user has used their free deep research
+// MarkFreeDeepResearchUsed marks that a freemium user has used their free deep research.
 func (f *FirebaseClient) MarkFreeDeepResearchUsed(ctx context.Context, userID string) error {
 	docRef := f.firestoreClient.Collection("deep_research_usage").Doc(userID)
 
@@ -115,7 +114,6 @@ func (f *FirebaseClient) MarkFreeDeepResearchUsed(ctx context.Context, userID st
 		"last_used_at":                now,
 		"usage_count":                 usage.UsageCount + 1,
 	}, firestore.MergeAll)
-
 	if err != nil {
 		return fmt.Errorf("failed to update deep research usage record: %w", err)
 	}
@@ -123,7 +121,7 @@ func (f *FirebaseClient) MarkFreeDeepResearchUsed(ctx context.Context, userID st
 	return nil
 }
 
-// IncrementDeepResearchUsage increments usage counter for pro users (for analytics)
+// IncrementDeepResearchUsage increments usage counter for pro users (for analytics).
 func (f *FirebaseClient) IncrementDeepResearchUsage(ctx context.Context, userID string) error {
 	docRef := f.firestoreClient.Collection("deep_research_usage").Doc(userID)
 	now := time.Now()
@@ -158,7 +156,7 @@ func (f *FirebaseClient) IncrementDeepResearchUsage(ctx context.Context, userID 
 
 // SaveDeepResearchCompletion saves completion data when deep research finishes successfully
 // Note: This only saves completion metadata. Usage tracking (has_used_free_deep_research)
-// should be handled separately via MarkFreeDeepResearchUsed or IncrementDeepResearchUsage
+// should be handled separately via MarkFreeDeepResearchUsed or IncrementDeepResearchUsage.
 func (f *FirebaseClient) SaveDeepResearchCompletion(ctx context.Context, userID, chatID string) error {
 	docRef := f.firestoreClient.Collection("deep_research_usage").Doc(userID)
 	now := time.Now()
@@ -169,7 +167,6 @@ func (f *FirebaseClient) SaveDeepResearchCompletion(ctx context.Context, userID,
 		"last_completed_chat_id": chatID,
 		"completed_at":           now,
 	}, firestore.MergeAll)
-
 	if err != nil {
 		return fmt.Errorf("failed to save deep research completion record: %w", err)
 	}
@@ -177,7 +174,7 @@ func (f *FirebaseClient) SaveDeepResearchCompletion(ctx context.Context, userID,
 	return nil
 }
 
-// DeepResearchSessionState represents the state of a deep research session
+// DeepResearchSessionState represents the state of a deep research session.
 type DeepResearchSessionState struct {
 	UserID      string    `firestore:"user_id"`
 	ChatID      string    `firestore:"chat_id"`
@@ -187,13 +184,12 @@ type DeepResearchSessionState struct {
 	CompletedAt time.Time `firestore:"completed_at,omitempty"`
 }
 
-// GetSessionState retrieves the current state of a deep research session
+// GetSessionState retrieves the current state of a deep research session.
 func (f *FirebaseClient) GetSessionState(ctx context.Context, userID, chatID string) (*DeepResearchSessionState, error) {
 	// Use underscore as separator since forward slash is not allowed in Firestore document IDs
 	sessionID := fmt.Sprintf("%s__%s", userID, chatID)
 	docRef := f.firestoreClient.Collection("deep_research_sessions").Doc(sessionID)
 	doc, err := docRef.Get(ctx)
-
 	if err != nil {
 		// If document doesn't exist, session hasn't been created yet
 		if status.Code(err) == codes.NotFound {
@@ -210,7 +206,7 @@ func (f *FirebaseClient) GetSessionState(ctx context.Context, userID, chatID str
 	return &state, nil
 }
 
-// UpdateSessionState updates the state of a deep research session
+// UpdateSessionState updates the state of a deep research session.
 func (f *FirebaseClient) UpdateSessionState(ctx context.Context, userID, chatID, state string) error {
 	// Use underscore as separator since forward slash is not allowed in Firestore document IDs
 	sessionID := fmt.Sprintf("%s__%s", userID, chatID)
@@ -219,7 +215,6 @@ func (f *FirebaseClient) UpdateSessionState(ctx context.Context, userID, chatID,
 
 	// Check if document exists
 	_, err := docRef.Get(ctx)
-
 	if err != nil {
 		// Document doesn't exist, create new one
 		if status.Code(err) == codes.NotFound {
@@ -264,7 +259,7 @@ func (f *FirebaseClient) UpdateSessionState(ctx context.Context, userID, chatID,
 	return nil
 }
 
-// GetActiveSessionsForUser retrieves all active (non-complete, non-error) sessions for a user
+// GetActiveSessionsForUser retrieves all active (non-complete, non-error) sessions for a user.
 func (f *FirebaseClient) GetActiveSessionsForUser(ctx context.Context, userID string) ([]DeepResearchSessionState, error) {
 	query := f.firestoreClient.Collection("deep_research_sessions").
 		Where("user_id", "==", userID).
@@ -287,7 +282,7 @@ func (f *FirebaseClient) GetActiveSessionsForUser(ctx context.Context, userID st
 	return sessions, nil
 }
 
-// GetCompletedSessionCountForUser returns the number of completed deep research sessions for a user
+// GetCompletedSessionCountForUser returns the number of completed deep research sessions for a user.
 func (f *FirebaseClient) GetCompletedSessionCountForUser(ctx context.Context, userID string) (int, error) {
 	query := f.firestoreClient.Collection("deep_research_sessions").
 		Where("user_id", "==", userID).

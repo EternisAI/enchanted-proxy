@@ -11,13 +11,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// DBStorage handles persistence of deep research messages to PostgreSQL
+// DBStorage handles persistence of deep research messages to PostgreSQL.
 type DBStorage struct {
 	logger *logger.Logger
 	db     *sql.DB
 }
 
-// NewDBStorage creates a new database storage instance
+// NewDBStorage creates a new database storage instance.
 func NewDBStorage(logger *logger.Logger, db *sql.DB) *DBStorage {
 	logger.WithComponent("deepr-db-storage").Info("database storage initialized")
 
@@ -27,7 +27,7 @@ func NewDBStorage(logger *logger.Logger, db *sql.DB) *DBStorage {
 	}
 }
 
-// AddMessage adds a new message to the database
+// AddMessage adds a new message to the database.
 func (s *DBStorage) AddMessage(userID, chatID, message string, sent bool, messageType string) error {
 	log := s.logger.WithComponent("deepr-db-storage")
 
@@ -69,7 +69,7 @@ func (s *DBStorage) AddMessage(userID, chatID, message string, sent bool, messag
 	return nil
 }
 
-// GetUnsentMessages retrieves all unsent messages for a session
+// GetUnsentMessages retrieves all unsent messages for a session.
 func (s *DBStorage) GetUnsentMessages(userID, chatID string) ([]PersistedMessage, error) {
 	log := s.logger.WithComponent("deepr-db-storage")
 
@@ -123,7 +123,7 @@ func (s *DBStorage) GetUnsentMessages(userID, chatID string) ([]PersistedMessage
 	return messages, nil
 }
 
-// MarkMessageAsSent marks a specific message as sent
+// MarkMessageAsSent marks a specific message as sent.
 func (s *DBStorage) MarkMessageAsSent(userID, chatID, messageID string) error {
 	log := s.logger.WithComponent("deepr-db-storage")
 
@@ -159,7 +159,7 @@ func (s *DBStorage) MarkMessageAsSent(userID, chatID, messageID string) error {
 	return nil
 }
 
-// MarkAllMessagesAsSent marks all unsent messages for a session as sent
+// MarkAllMessagesAsSent marks all unsent messages for a session as sent.
 func (s *DBStorage) MarkAllMessagesAsSent(userID, chatID string) error {
 	log := s.logger.WithComponent("deepr-db-storage")
 
@@ -198,13 +198,13 @@ func (s *DBStorage) MarkAllMessagesAsSent(userID, chatID string) error {
 }
 
 // UpdateBackendConnectionStatus is a no-op for database storage
-// Connection status is tracked via session state in Firebase
+// Connection status is tracked via session state in Firebase.
 func (s *DBStorage) UpdateBackendConnectionStatus(userID, chatID string, connected bool) error {
 	// No-op: backend connection status is tracked via Firebase session state
 	return nil
 }
 
-// IsSessionComplete checks if a session has completed (has research_complete or error message)
+// IsSessionComplete checks if a session has completed (has research_complete or error message).
 func (s *DBStorage) IsSessionComplete(userID, chatID string) (bool, error) {
 	log := s.logger.WithComponent("deepr-db-storage")
 
@@ -236,7 +236,7 @@ func (s *DBStorage) IsSessionComplete(userID, chatID string) (bool, error) {
 	return isComplete, nil
 }
 
-// CleanupOldSessions removes messages older than the specified duration
+// CleanupOldSessions removes messages older than the specified duration.
 func (s *DBStorage) CleanupOldSessions(ctx context.Context, maxAge time.Duration) error {
 	log := s.logger.WithComponent("deepr-db-storage")
 

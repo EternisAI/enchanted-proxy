@@ -13,7 +13,7 @@ import (
 	"go.temporal.io/sdk/client"
 )
 
-// Service handles task scheduling operations
+// Service handles task scheduling operations.
 type Service struct {
 	temporalClient client.Client
 	queries        *pgdb.Queries
@@ -21,7 +21,7 @@ type Service struct {
 	namespace      string
 }
 
-// NewService creates a new task service
+// NewService creates a new task service.
 func NewService(endpoint, namespace, apiKey string, queries *pgdb.Queries, logger *logger.Logger) (*Service, error) {
 	log := logger.WithComponent("task-service")
 
@@ -65,14 +65,14 @@ func NewService(endpoint, namespace, apiKey string, queries *pgdb.Queries, logge
 	}, nil
 }
 
-// Close closes the Temporal client
+// Close closes the Temporal client.
 func (s *Service) Close() {
 	if s.temporalClient != nil {
 		s.temporalClient.Close()
 	}
 }
 
-// CreateTask creates a new scheduled task
+// CreateTask creates a new scheduled task.
 func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTaskRequest) (*Task, error) {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
 
@@ -213,7 +213,7 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 	return task, nil
 }
 
-// GetTasksByUserID retrieves all tasks for a specific user
+// GetTasksByUserID retrieves all tasks for a specific user.
 func (s *Service) GetTasksByUserID(ctx context.Context, userID string) ([]*Task, error) {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
 
@@ -244,7 +244,7 @@ func (s *Service) GetTasksByUserID(ctx context.Context, userID string) ([]*Task,
 	return tasks, nil
 }
 
-// DeleteTask deletes a task by task ID
+// DeleteTask deletes a task by task ID.
 func (s *Service) DeleteTask(ctx context.Context, taskID string) error {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
 

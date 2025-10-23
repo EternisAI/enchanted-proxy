@@ -85,8 +85,8 @@ type Config struct {
 	LogFormat string
 
 	// Temporal
-	TemporalAPIKey   string
-	TemporalEndpoint string
+	TemporalAPIKey    string
+	TemporalEndpoint  string
 	TemporalNamespace string
 }
 
@@ -199,8 +199,8 @@ func LoadConfig() {
 		LogFormat: getEnvOrDefault("LOG_FORMAT", "text"),
 
 		// Temporal
-		TemporalAPIKey:   getEnvOrDefault("TEMPORAL_API_KEY", ""),
-		TemporalEndpoint: getEnvOrDefault("TEMPORAL_ENDPOINT", ""),
+		TemporalAPIKey:    getEnvOrDefault("TEMPORAL_API_KEY", ""),
+		TemporalEndpoint:  getEnvOrDefault("TEMPORAL_ENDPOINT", ""),
 		TemporalNamespace: getEnvOrDefault("TEMPORAL_NAMESPACE", ""),
 	}
 

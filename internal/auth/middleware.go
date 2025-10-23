@@ -12,8 +12,10 @@ import (
 type contextKey string
 
 const (
-	// UserUUIDKey is the context key for user UUID.
+	// UserUUIDKey is the context key for user UUID (email/user_id/sub).
 	UserUUIDKey contextKey = "user_uuid"
+	// FirebaseUIDKey is the context key for Firebase UID.
+	FirebaseUIDKey contextKey = "firebase_uid"
 )
 
 type FirebaseAuthMiddleware struct {
@@ -65,11 +67,20 @@ func (f *FirebaseAuthMiddleware) RequireAuth() gin.HandlerFunc {
 		ctx := logger.WithUserID(c.Request.Context(), userUUID)
 		c.Request = c.Request.WithContext(ctx)
 		c.Set(string(UserUUIDKey), userUUID)
+
+		// If the validator supports Firebase UID extraction, extract and store it
+		if uidProvider, ok := f.validator.(FirebaseUIDProvider); ok {
+			firebaseUID, err := uidProvider.GetFirebaseUID(token)
+			if err == nil && firebaseUID != "" {
+				c.Set(string(FirebaseUIDKey), firebaseUID)
+			}
+		}
+
 		c.Next()
 	}
 }
 
-// GetUserUUID extracts the user UUID from the Gin context.
+// GetUserUUID extracts the user UUID (email/user_id/sub) from the Gin context.
 func GetUserUUID(c *gin.Context) (string, bool) {
 	userUUID, exists := c.Get(string(UserUUIDKey))
 	if !exists {
@@ -78,4 +89,15 @@ func GetUserUUID(c *gin.Context) (string, bool) {
 
 	uuid, ok := userUUID.(string)
 	return uuid, ok
+}
+
+// GetFirebaseUID extracts the Firebase UID from the Gin context.
+func GetFirebaseUID(c *gin.Context) (string, bool) {
+	firebaseUID, exists := c.Get(string(FirebaseUIDKey))
+	if !exists {
+		return "", false
+	}
+
+	uid, ok := firebaseUID.(string)
+	return uid, ok
 }
