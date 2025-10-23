@@ -39,7 +39,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 	}
 
 	// Get Firebase UID from context - this will be used as the user_id
-	userID, ok := auth.GetUserUUID(c)
+	userID, ok := auth.GetFirebaseUID(c)
 	if !ok {
 		log.Error("firebase_uid not found in context")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "firebase uid not found"})

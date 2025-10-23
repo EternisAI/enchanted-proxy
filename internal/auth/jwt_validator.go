@@ -163,3 +163,23 @@ func (v *JWTTokenValidator) ValidateToken(tokenString string) (string, error) {
 
 	return claims.Sub, nil
 }
+
+// GetFirebaseUID extracts the Firebase UID from the JWT token's sub claim.
+// For Firebase ID tokens validated via JWKS, the sub claim contains the Firebase UID.
+func (v *JWTTokenValidator) GetFirebaseUID(tokenString string) (string, error) {
+	// Parse the token without validation to extract the sub claim
+	// We don't need to validate again here since ValidateToken is called first by middleware
+	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, &StandardClaims{})
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInvalidToken, err)
+	}
+
+	if claims, ok := token.Claims.(*StandardClaims); ok {
+		if claims.Sub == "" {
+			return "", fmt.Errorf("%w: no subject (sub) found in token claims", ErrInvalidToken)
+		}
+		return claims.Sub, nil
+	}
+
+	return "", ErrInvalidToken
+}
