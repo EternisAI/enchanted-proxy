@@ -26,6 +26,7 @@ env:
   OPENROUTER_DESKTOP_PROVISIONING_KEY: ${{ secrets.OPENROUTER_DESKTOP_PROVISIONING_KEY }}
   OPENROUTER_FREYSA_IDENTITY_PROVISIONING_KEY: ${{ secrets.OPENROUTER_FREYSA_IDENTITY_PROVISIONING_KEY }}
   OPENROUTER_RESEARCH_PROVISIONING_KEY: ${{ secrets.OPENROUTER_RESEARCH_PROVISIONING_KEY }}
+  OPENROUTER_WEB_PROVISIONING_KEY: ${{ secrets.OPENROUTER_WEB_PROVISIONING_KEY }}
 
 jobs:
   fetch-and-send-analytics:
@@ -45,6 +46,9 @@ jobs:
           - key_name: OPENROUTER_RESEARCH_PROVISIONING_KEY
             event_name: openrouter_daily_activity_research
             account: Research
+          - key_name: OPENROUTER_WEB_PROVISIONING_KEY
+            event_name: openrouter_daily_activity_web
+            account: Web
 
     name: Sync ${{ matrix.account }} account
 
