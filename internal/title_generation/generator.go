@@ -36,8 +36,8 @@ func GenerateTitle(ctx context.Context, req TitleGenerationRequest, apiKey strin
 			{"role": "system", "content": titleSystemPrompt},
 			{"role": "user", "content": req.FirstMessage},
 		},
-		"max_tokens":  10,   // Short title
-		"temperature": 0.7,  // Some creativity
+		"max_tokens":  1000,  // Title generation limit
+		"temperature": 0.7,   // Some creativity
 		"stream":      false, // Non-streaming
 	}
 
