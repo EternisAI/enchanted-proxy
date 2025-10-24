@@ -60,15 +60,30 @@ func (sm *SessionManager) CreateSession(userID, chatID string, backendConn *webs
 
 	// Check if session already exists
 	if existingSession, exists := sm.sessions[key]; exists {
+		// Safely read client count
+		existingSession.mu.RLock()
+		existingClientCount := len(existingSession.clientConns)
+		existingSession.mu.RUnlock()
+
 		sm.logger.WithComponent("deepr-session").Warn("OVERWRITING existing session",
 			slog.String("user_id", userID),
 			slog.String("chat_id", chatID),
 			slog.String("session_key", key),
-			slog.Int("existing_client_count", len(existingSession.clientConns)))
-		// Cancel the existing session's context
+			slog.Int("existing_client_count", existingClientCount))
+
+		// Proactively cancel and close sockets to avoid leaks
 		if existingSession.CancelFunc != nil {
 			existingSession.CancelFunc()
 		}
+		if existingSession.BackendConn != nil {
+			_ = existingSession.BackendConn.Close()
+		}
+		existingSession.mu.Lock()
+		for _, c := range existingSession.clientConns {
+			_ = c.Close()
+		}
+		existingSession.clientConns = make(map[string]*websocket.Conn)
+		existingSession.mu.Unlock()
 	}
 
 	session := &ActiveSession{
