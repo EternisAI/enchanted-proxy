@@ -25,6 +25,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/invitecode"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/mcp"
+	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/oauth"
 	"github.com/eternisai/enchanted-proxy/internal/proxy"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
@@ -32,6 +33,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/storage/pg"
 	"github.com/eternisai/enchanted-proxy/internal/task"
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
+	"github.com/eternisai/enchanted-proxy/internal/title_generation"
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -167,6 +169,39 @@ func main() {
 	deeprStorage := deepr.NewDBStorage(logger.WithComponent("deepr-storage"), db.DB)
 	deeprSessionManager := deepr.NewSessionManager(logger.WithComponent("deepr-session"))
 
+	// Initialize message storage service
+	var messageService *messaging.Service
+	if config.AppConfig.MessageStorageEnabled && firebaseClient != nil {
+		// Access Firestore client from FirebaseClient
+		messageService = messaging.NewService(firebaseClient.GetFirestoreClient(), logger.WithComponent("messaging"))
+		log.Info("message storage service initialized")
+
+		// Ensure cleanup on shutdown
+		defer messageService.Shutdown()
+	} else {
+		if !config.AppConfig.MessageStorageEnabled {
+			log.Info("message storage disabled by configuration")
+		} else {
+			log.Warn("firebase client not available - message storage will not work")
+		}
+	}
+
+	// Initialize title generation service
+	var titleService *title_generation.Service
+	if config.AppConfig.MessageStorageEnabled && messageService != nil && firebaseClient != nil {
+		titleService = title_generation.NewService(
+			logger.WithComponent("title_generation"),
+			messageService,
+			messaging.NewFirestoreClient(firebaseClient.GetFirestoreClient()),
+		)
+		log.Info("title generation service initialized")
+
+		// Ensure cleanup on shutdown
+		defer titleService.Shutdown()
+	} else {
+		log.Info("title generation service disabled (requires message storage)")
+	}
+
 	// Initialize handlers
 	oauthHandler := oauth.NewHandler(oauthService, logger.WithComponent("oauth"))
 	composioHandler := composio.NewHandler(composioService, logger.WithComponent("composio"))
@@ -227,6 +262,8 @@ func main() {
 		firebaseAuth:           firebaseAuth,
 		firebaseClient:         firebaseClient,
 		requestTrackingService: requestTrackingService,
+		messageService:         messageService,
+		titleService:           titleService,
 		oauthHandler:           oauthHandler,
 		composioHandler:        composioHandler,
 		inviteCodeHandler:      inviteCodeHandler,
@@ -336,6 +373,8 @@ type restServerInput struct {
 	firebaseAuth           *auth.FirebaseAuthMiddleware
 	firebaseClient         *auth.FirebaseClient
 	requestTrackingService *request_tracking.Service
+	messageService         *messaging.Service
+	titleService           *title_generation.Service
 	oauthHandler           *oauth.Handler
 	composioHandler        *composio.Handler
 	inviteCodeHandler      *invitecode.Handler
@@ -441,13 +480,13 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger))
 	{
 		// AI service endpoints
-		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService))
-		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService))
-		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService))
-		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService))
-		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService))
-		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService))
-		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService))
+		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
+		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
+		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
+		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
+		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
+		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
+		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
 	}
 
 	return router

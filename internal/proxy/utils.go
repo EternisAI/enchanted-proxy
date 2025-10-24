@@ -42,7 +42,8 @@ func logRequestBody(body []byte, maxSize int) string {
 	return bodyStr[:maxSize] + "..."
 }
 
-func getAPIKey(baseURL string, platform string, config *config.Config) string {
+// GetAPIKey returns the appropriate API key for a base URL and platform
+func GetAPIKey(baseURL string, platform string, config *config.Config) string {
 	switch baseURL {
 	case "https://openrouter.ai/api/v1":
 		return getOpenRouterAPIKey(platform, config)

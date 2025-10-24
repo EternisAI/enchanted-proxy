@@ -17,7 +17,9 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
+	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
+	"github.com/eternisai/enchanted-proxy/internal/title_generation"
 	"github.com/gin-gonic/gin"
 )
 
@@ -56,7 +58,7 @@ func createReverseProxyWithPooling(target *url.URL) *httputil.ReverseProxy {
 	return proxy
 }
 
-func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Service) gin.HandlerFunc {
+func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Service, messageService *messaging.Service, titleService *title_generation.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		log := logger.WithContext(c.Request.Context()).WithComponent("proxy")
@@ -94,11 +96,36 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 		}
 
 		// Check if base URL is in our allowed dictionary
-		apiKey := getAPIKey(baseURL, platform, config.AppConfig)
+		apiKey := GetAPIKey(baseURL, platform, config.AppConfig)
 		if apiKey == "" {
 			log.Warn("unauthorized base url", slog.String("base_url", baseURL))
 			c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized base URL"})
 			return
+		}
+
+		// Check if this is the first user message and trigger title generation
+		if titleService != nil && len(requestBody) > 0 {
+			if isFirst, firstMessage := isFirstUserMessage(requestBody); isFirst {
+				chatID := c.GetHeader("X-Chat-ID")
+				userID, exists := auth.GetUserID(c)
+
+				if exists && chatID != "" {
+					// Queue async title generation (non-blocking)
+					// Use background context since this runs async and shouldn't be tied to request lifecycle
+					go titleService.QueueTitleGeneration(context.Background(), title_generation.TitleGenerationRequest{
+						UserID:       userID,
+						ChatID:       chatID,
+						FirstMessage: firstMessage,
+						Model:        model,
+						BaseURL:      baseURL,
+						Platform:     platform,
+					}, apiKey)
+
+					log.Debug("queued title generation",
+						slog.String("chat_id", chatID),
+						slog.String("model", model))
+				}
+			}
 		}
 
 		// Parse the target URL
@@ -140,9 +167,9 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
 			if isStreaming {
-				return handleStreamingResponse(resp, log, model, upstreamLatency, c, trackingService)
+				return handleStreamingResponse(resp, log, model, upstreamLatency, c, trackingService, messageService)
 			} else {
-				return handleNonStreamingResponse(resp, log, model, upstreamLatency, c, trackingService)
+				return handleNonStreamingResponse(resp, log, model, upstreamLatency, c, trackingService, messageService)
 			}
 		}
 
@@ -184,7 +211,7 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 }
 
 // handleStreamingResponse extracts token usage from streaming responses.
-func handleStreamingResponse(resp *http.Response, log *logger.Logger, model string, upstreamLatency time.Duration, c *gin.Context, trackingService *request_tracking.Service) error {
+func handleStreamingResponse(resp *http.Response, log *logger.Logger, model string, upstreamLatency time.Duration, c *gin.Context, trackingService *request_tracking.Service, messageService *messaging.Service) error {
 	pr, pw := io.Pipe()
 	originalBody := resp.Body
 	resp.Body = pr
@@ -209,6 +236,7 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 64KB initial, 1MB max.
 		var tokenUsage *Usage
 		var firstChunk string
+		var fullContent strings.Builder // Accumulate full response content
 
 		ctx := c.Request.Context()
 		for scanner.Scan() {
@@ -231,6 +259,11 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 				firstChunk = line
 			}
 
+			// Extract and accumulate content for message storage
+			if content := extractContentFromSSELine(line); content != "" {
+				fullContent.WriteString(content)
+			}
+
 			// Extract the token usage from second to last chunk which contains a usage field.
 			// See: https://openrouter.ai/docs/use-cases/usage-accounting#streaming-with-usage-information
 			if usage := extractTokenUsageFromSSELine(line); usage != nil {
@@ -245,6 +278,10 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 		logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, []byte(firstChunk), c.Request.Context())
 
 		logRequestToDatabase(c, trackingService, model, tokenUsage)
+
+		// Save message to Firestore asynchronously
+		isError := resp.StatusCode >= 400
+		saveMessageAsync(c, messageService, fullContent.String(), isError)
 	}()
 
 	// Remove Content-Length for chunked encoding.
@@ -253,7 +290,7 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 }
 
 // handleNonStreamingResponse extracts token usage from non-streaming responses.
-func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model string, upstreamLatency time.Duration, c *gin.Context, trackingService *request_tracking.Service) error {
+func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model string, upstreamLatency time.Duration, c *gin.Context, trackingService *request_tracking.Service, messageService *messaging.Service) error {
 	var responseBody []byte
 	if resp.Body != nil {
 		responseBody, _ = io.ReadAll(resp.Body)
@@ -261,8 +298,10 @@ func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model s
 	}
 
 	var tokenUsage *Usage
+	var content string
 	if len(responseBody) > 0 {
 		tokenUsage = extractTokenUsage(responseBody)
+		content = extractContentFromResponse(responseBody)
 
 		if tokenUsage == nil {
 			log.Debug("No token usage found in response",
@@ -276,6 +315,10 @@ func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model s
 	logProxyResponse(log, resp, false, upstreamLatency, model, tokenUsage, responseBody, c.Request.Context())
 
 	logRequestToDatabase(c, trackingService, model, tokenUsage)
+
+	// Save message to Firestore asynchronously
+	isError := resp.StatusCode >= 400
+	saveMessageAsync(c, messageService, content, isError)
 
 	return nil
 }

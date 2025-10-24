@@ -88,6 +88,15 @@ type Config struct {
 	TemporalAPIKey    string
 	TemporalEndpoint  string
 	TemporalNamespace string
+
+	// Message Storage
+	MessageStorageEnabled           bool // Enable/disable encrypted message storage to Firestore
+	MessageStorageRequireEncryption bool // If true, refuse to store messages when encryption fails (strict E2EE mode). If false, fallback to plaintext storage (default: graceful degradation)
+	MessageStorageWorkerPoolSize    int  // Number of worker goroutines processing message queue (higher = more concurrent Firestore writes)
+	MessageStorageBufferSize        int  // Size of message queue channel (higher = handles bigger traffic spikes without dropping messages)
+	MessageStorageTimeoutSeconds    int  // Firestore operation timeout in seconds (prevents workers from hanging on slow/failed operations)
+	MessageStorageCacheSize         int  // Number of user public keys to cache in memory (higher = fewer Firestore reads for key lookups)
+	MessageStorageCacheTTLMinutes   int  // How long to cache public keys before re-fetching (balances freshness vs performance)
 }
 
 var AppConfig *Config
@@ -202,6 +211,15 @@ func LoadConfig() {
 		TemporalAPIKey:    getEnvOrDefault("TEMPORAL_API_KEY", ""),
 		TemporalEndpoint:  getEnvOrDefault("TEMPORAL_ENDPOINT", ""),
 		TemporalNamespace: getEnvOrDefault("TEMPORAL_NAMESPACE", ""),
+
+		// Message Storage
+		MessageStorageEnabled:           getEnvOrDefault("MESSAGE_STORAGE_ENABLED", "true") == "true",
+		MessageStorageRequireEncryption: getEnvOrDefault("MESSAGE_STORAGE_REQUIRE_ENCRYPTION", "false") == "true",
+		MessageStorageWorkerPoolSize:    getEnvAsInt("MESSAGE_STORAGE_WORKER_POOL_SIZE", 5),
+		MessageStorageBufferSize:        getEnvAsInt("MESSAGE_STORAGE_BUFFER_SIZE", 500),
+		MessageStorageTimeoutSeconds:    getEnvAsInt("MESSAGE_STORAGE_TIMEOUT_SECONDS", 30),
+		MessageStorageCacheSize:         getEnvAsInt("MESSAGE_STORAGE_CACHE_SIZE", 1000),
+		MessageStorageCacheTTLMinutes:   getEnvAsInt("MESSAGE_STORAGE_CACHE_TTL_MINUTES", 60),
 	}
 
 	// Validate required configs
