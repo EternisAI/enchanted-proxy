@@ -111,7 +111,8 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 
 				if exists && chatID != "" {
 					// Queue async title generation (non-blocking)
-					go titleService.QueueTitleGeneration(c.Request.Context(), title_generation.TitleGenerationRequest{
+					// Use background context since this runs async and shouldn't be tied to request lifecycle
+					go titleService.QueueTitleGeneration(context.Background(), title_generation.TitleGenerationRequest{
 						UserID:       userID,
 						ChatID:       chatID,
 						FirstMessage: firstMessage,
