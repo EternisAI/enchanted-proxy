@@ -6,6 +6,7 @@ package pgdb
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Querier interface {
@@ -17,7 +18,7 @@ type Querier interface {
 	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
 	CreateTelegramChat(ctx context.Context, arg CreateTelegramChatParams) (TelegramChat, error)
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
-	DeleteTask(ctx context.Context, taskID string) error
+	DeleteTask(ctx context.Context, arg DeleteTaskParams) (sql.Result, error)
 	DeleteTelegramChat(ctx context.Context, chatID int64) error
 	GetAllActiveTasks(ctx context.Context) ([]Task, error)
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
