@@ -1,7 +1,7 @@
 package deepr
 
 // MessageStorage defines the interface for storing deep research messages
-// Implementations: DBStorage (database-backed, recommended)
+// Implementations: DBStorage (database-backed, recommended).
 type MessageStorage interface {
 	AddMessage(userID, chatID, message string, sent bool, messageType string) error
 	GetUnsentMessages(userID, chatID string) ([]PersistedMessage, error)

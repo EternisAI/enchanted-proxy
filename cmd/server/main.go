@@ -31,6 +31,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"github.com/eternisai/enchanted-proxy/internal/search"
 	"github.com/eternisai/enchanted-proxy/internal/storage/pg"
+	"github.com/eternisai/enchanted-proxy/internal/task"
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
 	"github.com/gin-gonic/gin"
@@ -131,8 +132,22 @@ func main() {
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
 
+	taskService, err := task.NewService(
+		config.AppConfig.TemporalEndpoint,
+		config.AppConfig.TemporalNamespace,
+		config.AppConfig.TemporalAPIKey,
+		db.Queries,
+		logger.WithComponent("task"),
+	)
+	if err != nil {
+		log.Error("failed to initialize task service", slog.String("error", err.Error()))
+		// Don't exit, just disable task scheduling feature
+		log.Warn("task scheduling feature disabled")
+	}
+
 	// Initialize deep research storage
 	deeprStorage := deepr.NewDBStorage(logger.WithComponent("deepr-storage"), db.DB)
+	deeprSessionManager := deepr.NewSessionManager(logger.WithComponent("deepr-session"))
 
 	// Initialize message storage service
 	var messageService *messaging.Service
@@ -174,6 +189,7 @@ func main() {
 	iapHandler := iap.NewHandler(iapService, logger.WithComponent("iap"))
 	mcpHandler := mcp.NewHandler(mcpService)
 	searchHandler := search.NewHandler(searchService, logger.WithComponent("search"))
+	taskHandler := task.NewHandler(taskService, logger.WithComponent("task"))
 
 	// Initialize NATS for Telegram
 	var natsClient *nats.Conn
@@ -230,7 +246,9 @@ func main() {
 		iapHandler:             iapHandler,
 		mcpHandler:             mcpHandler,
 		searchHandler:          searchHandler,
+		taskHandler:            taskHandler,
 		deeprStorage:           deeprStorage,
+		deeprSessionManager:    deeprSessionManager,
 	})
 
 	// Initialize GraphQL server for Telegram
@@ -295,6 +313,12 @@ func main() {
 	requestTrackingService.Shutdown()
 	log.Info("request tracking service shutdown complete")
 
+	// Shutdown the task service (close Temporal client)
+	if taskService != nil {
+		taskService.Close()
+		log.Info("task service shutdown complete")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.AppConfig.ServerShutdownTimeoutSeconds)*time.Second)
 	defer cancel()
 
@@ -333,7 +357,9 @@ type restServerInput struct {
 	iapHandler             *iap.Handler
 	mcpHandler             *mcp.Handler
 	searchHandler          *search.Handler
+	taskHandler            *task.Handler
 	deeprStorage           deepr.MessageStorage
+	deeprSessionManager    *deepr.SessionManager
 }
 
 func setupRESTServer(input restServerInput) *gin.Engine {
@@ -407,8 +433,22 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		api.POST("/search", input.searchHandler.PostSearchHandler)        // POST /api/v1/search (SerpAPI)
 		api.POST("/exa/search", input.searchHandler.PostExaSearchHandler) // POST /api/v1/exa/search (Exa AI)
 
+		// Task API routes (protected)
+		if input.taskHandler != nil {
+			tasks := api.Group("/tasks")
+			{
+				tasks.POST("", input.taskHandler.CreateTask)           // POST /api/v1/tasks - Create a new task
+				tasks.GET("", input.taskHandler.GetTasks)              // GET /api/v1/tasks - Get all tasks for user
+				tasks.DELETE("/:taskId", input.taskHandler.DeleteTask) // DELETE /api/v1/tasks/:taskId - Delete a task
+			}
+			input.logger.WithComponent("routes").Info("task routes registered",
+				slog.String("path", "/api/v1/tasks"))
+		} else {
+			input.logger.WithComponent("routes").Warn("task routes NOT registered - task handler is nil")
+		}
+
 		// Deep Research WebSocket endpoint (protected)
-		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage)) // WebSocket proxy for deep research
+		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager)) // WebSocket proxy for deep research
 	}
 
 	// Protected proxy routes

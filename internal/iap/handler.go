@@ -18,7 +18,7 @@ func NewHandler(service *Service, logger *logger.Logger) *Handler {
 }
 
 // AttachAppStoreSubscription validates a signed transaction JWS and marks user as Pro.
-// Request body: { "jwsTransactionInfo": "<JWS>" }
+// Request body: { "jwsTransactionInfo": "<JWS>" }.
 func (h *Handler) AttachAppStoreSubscription(c *gin.Context) {
 	var body struct {
 		JWSTransactionInfo string `json:"jwsTransactionInfo"`
