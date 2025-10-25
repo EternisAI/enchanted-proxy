@@ -189,11 +189,7 @@ func main() {
 	iapHandler := iap.NewHandler(iapService, logger.WithComponent("iap"))
 	mcpHandler := mcp.NewHandler(mcpService)
 	searchHandler := search.NewHandler(searchService, logger.WithComponent("search"))
-
-	var taskHandler *task.Handler
-	if taskService != nil {
-		taskHandler = task.NewHandler(taskService, logger.WithComponent("task"))
-	}
+	taskHandler := task.NewHandler(taskService, logger.WithComponent("task"))
 
 	// Initialize NATS for Telegram
 	var natsClient *nats.Conn
