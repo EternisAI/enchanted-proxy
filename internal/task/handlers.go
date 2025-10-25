@@ -149,12 +149,18 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 		return
 	}
 
-	// TODO: Verify that the task belongs to the user before deleting
-	// For now, we'll delete without verification, but in production you should verify ownership
-
-	// Delete the task
-	err := h.service.DeleteTask(c.Request.Context(), taskID)
+	// Delete the task with ownership verification
+	err := h.service.DeleteTask(c.Request.Context(), userID, taskID)
 	if err != nil {
+		// Check if task not found or unauthorized
+		if err.Error() == "task not found or unauthorized" {
+			log.Warn("task not found or unauthorized",
+				slog.String("task_id", taskID),
+				slog.String("user_id", userID))
+			c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+			return
+		}
+
 		log.Error("failed to delete task",
 			slog.String("error", err.Error()),
 			slog.String("task_id", taskID),

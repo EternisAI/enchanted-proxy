@@ -132,37 +132,17 @@ func main() {
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
 
-	// Initialize task service (Temporal)
-	var taskService *task.Service
-	log.Info("checking temporal configuration",
-		slog.Bool("has_endpoint", config.AppConfig.TemporalEndpoint != ""),
-		slog.Bool("has_namespace", config.AppConfig.TemporalNamespace != ""),
-		slog.Bool("has_api_key", config.AppConfig.TemporalAPIKey != ""),
-		slog.String("endpoint", config.AppConfig.TemporalEndpoint),
-		slog.String("namespace", config.AppConfig.TemporalNamespace))
-
-	if config.AppConfig.TemporalEndpoint != "" && config.AppConfig.TemporalNamespace != "" && config.AppConfig.TemporalAPIKey != "" {
-		log.Info("temporal configuration complete, initializing task service")
-		taskSvc, err := task.NewService(
-			config.AppConfig.TemporalEndpoint,
-			config.AppConfig.TemporalNamespace,
-			config.AppConfig.TemporalAPIKey,
-			db.Queries,
-			logger.WithComponent("task"),
-		)
-		if err != nil {
-			log.Error("failed to initialize task service", slog.String("error", err.Error()))
-			// Don't exit, just disable task scheduling feature
-			log.Warn("task scheduling feature disabled")
-		} else {
-			taskService = taskSvc
-			log.Info("task service initialized successfully")
-		}
-	} else {
-		log.Warn("temporal configuration incomplete - task scheduling disabled",
-			slog.Bool("has_endpoint", config.AppConfig.TemporalEndpoint != ""),
-			slog.Bool("has_namespace", config.AppConfig.TemporalNamespace != ""),
-			slog.Bool("has_api_key", config.AppConfig.TemporalAPIKey != ""))
+	taskService, err := task.NewService(
+		config.AppConfig.TemporalEndpoint,
+		config.AppConfig.TemporalNamespace,
+		config.AppConfig.TemporalAPIKey,
+		db.Queries,
+		logger.WithComponent("task"),
+	)
+	if err != nil {
+		log.Error("failed to initialize task service", slog.String("error", err.Error()))
+		// Don't exit, just disable task scheduling feature
+		log.Warn("task scheduling feature disabled")
 	}
 
 	// Initialize deep research storage

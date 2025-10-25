@@ -10,6 +10,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/google/uuid"
+	"github.com/robfig/cron/v3"
 	"go.temporal.io/sdk/client"
 )
 
@@ -142,14 +143,28 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 	}
 
 	// For one-time tasks, we need to limit execution to just once
-	// We'll set the schedule to end after 2 minutes from now to ensure it only fires once
 	if req.Type == string(TaskTypeOneTime) {
 		log.Info("configuring one-time schedule with cron", slog.String("cron_expression", req.Time))
-		// Calculate when this cron would first fire, then set end time shortly after
-		// This ensures the schedule only executes once and then automatically completes
-		endTime := time.Now().Add(2 * time.Minute)
+		// Parse the cron to find next fire time, then set EndAt shortly after
+		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+		schedule, err := parser.Parse(req.Time)
+		if err != nil {
+			log.Error("invalid cron expression for one-time task",
+				slog.String("error", err.Error()),
+				slog.String("cron_expression", req.Time))
+			// Clean up the database entry
+			_, _ = s.queries.DeleteTask(ctx, pgdb.DeleteTaskParams{
+				TaskID: taskID,
+				UserID: userID,
+			})
+			return nil, fmt.Errorf("invalid cron expression: %w", err)
+		}
+		nextRun := schedule.Next(time.Now())
+		endTime := nextRun.Add(5 * time.Minute) // End shortly after the expected run
 		scheduleSpec.EndAt = endTime
-		log.Info("one-time schedule will end at", slog.Time("end_time", endTime))
+		log.Info("one-time schedule configured",
+			slog.Time("expected_run", nextRun),
+			slog.Time("end_time", endTime))
 	} else {
 		log.Info("configuring recurring schedule with cron", slog.String("cron_expression", req.Time))
 	}
@@ -175,7 +190,10 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 			slog.String("task_id", taskID))
 		// Clean up the database entry
 		log.Info("cleaning up database entry due to schedule creation failure")
-		_ = s.queries.DeleteTask(ctx, taskID)
+		_, _ = s.queries.DeleteTask(ctx, pgdb.DeleteTaskParams{
+			TaskID: taskID,
+			UserID: userID,
+		})
 		return nil, fmt.Errorf("failed to create schedule: %w", err)
 	}
 
@@ -191,9 +209,20 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 		Status: string(TaskStatusActive),
 	})
 	if err != nil {
-		log.Warn("failed to update task status to active",
+		log.Error("failed to update task status to active",
 			slog.String("error", err.Error()),
 			slog.String("task_id", taskID))
+		// Status update failed - try to clean up the schedule
+		if delErr := scheduleHandle.Delete(ctx); delErr != nil {
+			log.Error("failed to delete schedule during cleanup",
+				slog.String("error", delErr.Error()),
+				slog.String("task_id", taskID))
+		}
+		_, _ = s.queries.DeleteTask(ctx, pgdb.DeleteTaskParams{
+			TaskID: taskID,
+			UserID: userID,
+		})
+		return nil, fmt.Errorf("failed to update task status: %w", err)
 	}
 
 	task := &Task{
@@ -244,29 +273,51 @@ func (s *Service) GetTasksByUserID(ctx context.Context, userID string) ([]*Task,
 	return tasks, nil
 }
 
-// DeleteTask deletes a task by task ID.
-func (s *Service) DeleteTask(ctx context.Context, taskID string) error {
+// DeleteTask deletes a task by task ID with ownership verification.
+func (s *Service) DeleteTask(ctx context.Context, userID, taskID string) error {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
 
-	// Delete the Temporal schedule
+	// Delete from database with ownership enforcement
+	result, err := s.queries.DeleteTask(ctx, pgdb.DeleteTaskParams{
+		TaskID: taskID,
+		UserID: userID,
+	})
+	if err != nil {
+		log.Error("failed to delete task from database",
+			slog.String("error", err.Error()),
+			slog.String("task_id", taskID),
+			slog.String("user_id", userID))
+		return fmt.Errorf("failed to delete task: %w", err)
+	}
+
+	// Check if any rows were affected (task exists and belongs to user)
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Error("failed to get rows affected",
+			slog.String("error", err.Error()),
+			slog.String("task_id", taskID))
+		return fmt.Errorf("failed to verify task deletion: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		log.Warn("task not found or unauthorized",
+			slog.String("task_id", taskID),
+			slog.String("user_id", userID))
+		return fmt.Errorf("task not found or unauthorized")
+	}
+
+	// Delete the Temporal schedule (only after successful DB deletion)
 	scheduleHandle := s.temporalClient.ScheduleClient().GetHandle(ctx, taskID)
-	err := scheduleHandle.Delete(ctx)
+	err = scheduleHandle.Delete(ctx)
 	if err != nil {
 		log.Warn("failed to delete temporal schedule",
 			slog.String("error", err.Error()),
 			slog.String("task_id", taskID))
-		// Continue with deletion even if schedule deletion fails
+		// Schedule deletion failure is not critical since DB record is already gone
 	}
 
-	// Delete from database
-	err = s.queries.DeleteTask(ctx, taskID)
-	if err != nil {
-		log.Error("failed to delete task from database",
-			slog.String("error", err.Error()),
-			slog.String("task_id", taskID))
-		return fmt.Errorf("failed to delete task: %w", err)
-	}
-
-	log.Info("task deleted successfully", slog.String("task_id", taskID))
+	log.Info("task deleted successfully",
+		slog.String("task_id", taskID),
+		slog.String("user_id", userID))
 	return nil
 }

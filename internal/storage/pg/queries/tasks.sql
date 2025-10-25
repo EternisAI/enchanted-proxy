@@ -22,9 +22,9 @@ UPDATE tasks
 SET status = $2, updated_at = NOW()
 WHERE task_id = $1;
 
--- name: DeleteTask :exec
+-- name: DeleteTask :execresult
 DELETE FROM tasks
-WHERE task_id = $1;
+WHERE task_id = $1 AND user_id = $2;
 
 -- name: GetAllActiveTasks :many
 SELECT * FROM tasks

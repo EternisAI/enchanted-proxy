@@ -7,6 +7,7 @@ package pgdb
 
 import (
 	"context"
+	"database/sql"
 )
 
 const createTask = `-- name: CreateTask :one
@@ -53,14 +54,18 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 	return i, err
 }
 
-const deleteTask = `-- name: DeleteTask :exec
+const deleteTask = `-- name: DeleteTask :execresult
 DELETE FROM tasks
-WHERE task_id = $1
+WHERE task_id = $1 AND user_id = $2
 `
 
-func (q *Queries) DeleteTask(ctx context.Context, taskID string) error {
-	_, err := q.db.ExecContext(ctx, deleteTask, taskID)
-	return err
+type DeleteTaskParams struct {
+	TaskID string `json:"taskId"`
+	UserID string `json:"userId"`
+}
+
+func (q *Queries) DeleteTask(ctx context.Context, arg DeleteTaskParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, deleteTask, arg.TaskID, arg.UserID)
 }
 
 const getAllActiveTasks = `-- name: GetAllActiveTasks :many
