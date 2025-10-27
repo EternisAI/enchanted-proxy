@@ -16,7 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Service handles WebSocket connections for deep research
+// Service handles WebSocket connections for deep research.
 type Service struct {
 	logger          *logger.Logger
 	trackingService *request_tracking.Service
@@ -25,7 +25,7 @@ type Service struct {
 	sessionManager  *SessionManager
 }
 
-// mapEventTypeToState maps event types from deep research server to session states
+// mapEventTypeToState maps event types from deep research server to session states.
 func mapEventTypeToState(eventType string) string {
 	switch eventType {
 	case "clarification_needed":
@@ -41,7 +41,7 @@ func mapEventTypeToState(eventType string) string {
 }
 
 // canForwardMessage checks if a message from the client should be forwarded to the backend
-// based on the current session state. Messages can only be forwarded when state is 'clarify' or 'error'
+// based on the current session state. Messages can only be forwarded when state is 'clarify' or 'error'.
 func (s *Service) canForwardMessage(ctx context.Context, userID, chatID string) (bool, string, error) {
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 
@@ -78,14 +78,15 @@ func (s *Service) canForwardMessage(ctx context.Context, userID, chatID string) 
 	return true, sessionState.State, nil
 }
 
-// validateFreemiumAccess checks if a freemium user can start or continue a deep research session
-// Returns error if user is not allowed to proceed
-// Premium users can have multiple sessions but still cannot write during 'in_progress' state
+// validateFreemiumAccess checks if a user can start or continue a deep research session
+// Premium users (HasActivePro = true): Can have UNLIMITED parallel deep research sessions with no restrictions
+// Freemium users: Limited to 1 active session at a time and 1 total completed session lifetime
+// Returns nil if user is allowed to proceed, error otherwise.
 func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websocket.Conn, userID, chatID string, isReconnection bool) error {
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 
 	// Check if user has active pro subscription
-	hasActivePro, _, err := s.trackingService.HasActivePro(ctx, userID)
+	hasActivePro, proExpiresAt, err := s.trackingService.HasActivePro(ctx, userID)
 	if err != nil {
 		log.Error("failed to check subscription status",
 			slog.String("user_id", userID),
@@ -95,11 +96,18 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 		return fmt.Errorf("failed to check subscription status: %w", err)
 	}
 
-	// Premium users can have multiple sessions - no restrictions on session creation
+	// Premium users can have UNLIMITED parallel sessions - bypass all restrictions
 	if hasActivePro {
-		log.Info("premium user, multiple sessions allowed",
+		expiryInfo := "unlimited"
+		if proExpiresAt != nil {
+			expiryInfo = proExpiresAt.Format("2006-01-02 15:04:05 MST")
+		}
+		log.Info("PREMIUM user detected - allowing parallel deep research sessions (no limits)",
 			slog.String("user_id", userID),
-			slog.String("chat_id", chatID))
+			slog.String("chat_id", chatID),
+			slog.String("pro_expires_at", expiryInfo),
+			slog.Bool("is_reconnection", isReconnection))
+		// Immediately return success - premium users bypass ALL freemium restrictions
 		return nil
 	}
 
@@ -190,11 +198,12 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 	}
 
 	if len(activeSessions) > 0 {
-		log.Warn("freemium user already has an active session",
+		log.Warn("FREEMIUM user blocked - already has an active session (premium users would have bypassed this check)",
 			slog.String("user_id", userID),
 			slog.String("chat_id", chatID),
-			slog.Int("active_sessions_count", len(activeSessions)))
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You already have an active deep research session. Please complete or cancel it before starting a new one.", "error_code": "ACTIVE_SESSION_EXISTS"}`))
+			slog.Int("active_sessions_count", len(activeSessions)),
+			slog.Bool("has_active_pro", false)) // This should always be false here
+		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You already have an active deep research session. Please complete or cancel it before starting a new one. Upgrade to Pro for unlimited parallel sessions.", "error_code": "ACTIVE_SESSION_EXISTS"}`))
 		return fmt.Errorf("freemium user %s already has active session", userID)
 	}
 
@@ -204,18 +213,18 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 	return nil
 }
 
-// NewService creates a new deep research service with database storage
-func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage) *Service {
+// NewService creates a new deep research service with database storage.
+func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager) *Service {
 	return &Service{
 		logger:          logger,
 		trackingService: trackingService,
 		firebaseClient:  firebaseClient,
 		storage:         storage,
-		sessionManager:  NewSessionManager(logger),
+		sessionManager:  sessionManager,
 	}
 }
 
-// HandleConnection manages the WebSocket connection and streaming
+// HandleConnection manages the WebSocket connection and streaming.
 func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Conn, userID, chatID string) {
 	// startTime := time.Now() // DISABLED: Not needed when limit checks are disabled
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
@@ -228,6 +237,12 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 
 	// Check if this is a reconnection
 	isReconnection := s.sessionManager.HasActiveBackend(userID, chatID)
+
+	log.Info("reconnection check performed",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.String("client_id", clientID),
+		slog.Bool("has_active_backend", isReconnection))
 
 	if isReconnection {
 		log.Info("reconnection to existing session detected",
@@ -263,7 +278,7 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 
 // checkAndTrackSubscription checks user subscription and tracks usage
 // NOTE: This function is currently DISABLED - all limit checks are commented out
-// to allow unrestricted access to deep research for all users
+// to allow unrestricted access to deep research for all users.
 func (s *Service) checkAndTrackSubscription(ctx context.Context, clientConn *websocket.Conn, userID string) error {
 	startTime := time.Now()
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
@@ -346,7 +361,7 @@ func (s *Service) checkAndTrackSubscription(ctx context.Context, clientConn *web
 	return nil
 }
 
-// handleReconnection handles a client reconnecting to an existing session
+// handleReconnection handles a client reconnecting to an existing session.
 func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
 	startTime := time.Now()
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
@@ -509,7 +524,7 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 	<-done
 }
 
-// handleClientMessages handles forwarding messages from a client to the backend
+// handleClientMessages handles forwarding messages from a client to the backend.
 func (s *Service) handleClientMessages(ctx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 
@@ -522,7 +537,7 @@ func (s *Service) handleClientMessages(ctx context.Context, clientConn *websocke
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info("client message handler stopped - context cancelled",
+			log.Info("client message handler stopped - context canceled",
 				slog.String("user_id", userID),
 				slog.String("chat_id", chatID),
 				slog.String("client_id", clientID),
@@ -596,7 +611,7 @@ func (s *Service) handleClientMessages(ctx context.Context, clientConn *websocke
 	}
 }
 
-// handleNewConnection creates a new backend connection and manages message flow
+// handleNewConnection creates a new backend connection and manages message flow.
 func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
 	startTime := time.Now()
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
@@ -666,14 +681,24 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 		}()
 	}
 
-	// Create session context derived from incoming context but independent of any single client
-	// This ensures cleanup on server shutdown while allowing session to outlive individual clients
-	sessionCtx, cancel := context.WithCancel(ctx)
+	// Create session context independent of any single client's request context
+	// This allows the backend connection to outlive individual client disconnections
+	// while still allowing cleanup when the session completes
+	sessionCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Create and register session
 	_ = s.sessionManager.CreateSession(userID, chatID, serverConn, sessionCtx, cancel)
 	defer s.sessionManager.RemoveSession(userID, chatID)
+
+	// Check if user has premium to log parallel session creation
+	hasActivePro, _, _ := s.trackingService.HasActivePro(ctx, userID)
+	if hasActivePro {
+		log.Info("PREMIUM user - new deep research session created (parallel sessions enabled)",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("client_id", clientID))
+	}
 
 	// Add initial client
 	s.sessionManager.AddClientConnection(userID, chatID, clientID, clientConn)
@@ -691,7 +716,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 	for {
 		select {
 		case <-sessionCtx.Done():
-			log.Info("session context cancelled",
+			log.Info("session context canceled",
 				slog.String("user_id", userID),
 				slog.String("chat_id", chatID),
 				slog.Int("messages_received", messageCount),

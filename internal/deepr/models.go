@@ -2,7 +2,7 @@ package deepr
 
 import "time"
 
-// Message represents a WebSocket message for deep research
+// Message represents a WebSocket message for deep research.
 type Message struct {
 	Type        string `json:"type"`
 	Content     string `json:"content"`
@@ -11,20 +11,20 @@ type Message struct {
 	Error       string `json:"error,omitempty"`
 }
 
-// Request represents a request to the deep research service
+// Request represents a request to the deep research service.
 type Request struct {
 	Query string `json:"query"`
 	Type  string `json:"type"`
 }
 
-// Response represents a response from the deep research service
+// Response represents a response from the deep research service.
 type Response struct {
 	Type    string `json:"type"`
 	Content string `json:"content"`
 	Status  string `json:"status,omitempty"`
 }
 
-// PersistedMessage represents a message stored in the database
+// PersistedMessage represents a message stored in the database.
 type PersistedMessage struct {
 	ID          string    `json:"id"`
 	UserID      string    `json:"user_id"`
