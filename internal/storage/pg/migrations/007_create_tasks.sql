@@ -15,8 +15,10 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks (user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_chat_id ON tasks (chat_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);
+CREATE INDEX IF NOT EXISTS idx_tasks_user_task ON tasks (user_id, task_id);
 
 -- +goose Down
+DROP INDEX IF EXISTS idx_tasks_user_task;
 DROP INDEX IF EXISTS idx_tasks_status;
 DROP INDEX IF EXISTS idx_tasks_chat_id;
 DROP INDEX IF EXISTS idx_tasks_user_id;

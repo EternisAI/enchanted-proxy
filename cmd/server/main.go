@@ -141,8 +141,7 @@ func main() {
 	)
 	if err != nil {
 		log.Error("failed to initialize task service", slog.String("error", err.Error()))
-		// Don't exit, just disable task scheduling feature
-		log.Warn("task scheduling feature disabled")
+		os.Exit(1)
 	}
 
 	// Initialize deep research storage
@@ -434,17 +433,11 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		api.POST("/exa/search", input.searchHandler.PostExaSearchHandler) // POST /api/v1/exa/search (Exa AI)
 
 		// Task API routes (protected)
-		if input.taskHandler != nil {
-			tasks := api.Group("/tasks")
-			{
-				tasks.POST("", input.taskHandler.CreateTask)           // POST /api/v1/tasks - Create a new task
-				tasks.GET("", input.taskHandler.GetTasks)              // GET /api/v1/tasks - Get all tasks for user
-				tasks.DELETE("/:taskId", input.taskHandler.DeleteTask) // DELETE /api/v1/tasks/:taskId - Delete a task
-			}
-			input.logger.WithComponent("routes").Info("task routes registered",
-				slog.String("path", "/api/v1/tasks"))
-		} else {
-			input.logger.WithComponent("routes").Warn("task routes NOT registered - task handler is nil")
+		tasks := api.Group("/tasks")
+		{
+			tasks.POST("", input.taskHandler.CreateTask)           // POST /api/v1/tasks - Create a new task
+			tasks.GET("", input.taskHandler.GetTasks)              // GET /api/v1/tasks - Get all tasks for user
+			tasks.DELETE("/:taskId", input.taskHandler.DeleteTask) // DELETE /api/v1/tasks/:taskId - Delete a task
 		}
 
 		// Deep Research WebSocket endpoint (protected)
