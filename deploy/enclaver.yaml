@@ -42,6 +42,7 @@ egress:
   - serpapi.com
   - api.exa.ai
   - cloud-api.near.ai
+  - us-east-1.aws.api.temporal.io
   # aws-0-us-east-2.pooler.supabase.com
   - 3.13.175.194
   - 3.139.14.59
@@ -102,12 +103,12 @@ env:
 - SLACK_CLIENT_ID
 - SLACK_CLIENT_SECRET
 - TELEGRAM_TOKEN
-- TINFOIL_API_KEY
-- TWITTER_CLIENT_ID
-- VALIDATOR_TYPE
 - TEMPORAL_API_KEY
 - TEMPORAL_ENDPOINT
 - TEMPORAL_NAMESPACE
+- TINFOIL_API_KEY
+- TWITTER_CLIENT_ID
+- VALIDATOR_TYPE
 files:
 - /var/run/secrets/tls/tls.crt
 - /var/run/secrets/tls/tls.key
