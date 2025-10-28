@@ -419,7 +419,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		// Rate limiting routes (protected)
 		rateLimit := api.Group("/rate-limit")
 		{
-			rateLimit.GET("/status", request_tracking.RateLimitStatusHandler(input.requestTrackingService))
+			rateLimit.GET("/status", request_tracking.RateLimitStatusHandler(input.requestTrackingService, input.logger))
 		}
 
 		// IAP (protected)

@@ -1,22 +1,26 @@
 package request_tracking
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 )
 
 // RateLimitStatusHandler returns the current rate limit status for the authenticated user.
-func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
+func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, exists := auth.GetUserUUID(c)
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 			return
 		}
+
+		reqLog := log.WithContext(c.Request.Context()).WithComponent("rate_limit_status")
 
 		if !config.AppConfig.RateLimitEnabled {
 			c.JSON(http.StatusOK, gin.H{
@@ -32,6 +36,9 @@ func RateLimitStatusHandler(trackingService *Service) gin.HandlerFunc {
 		// Pro tier.
 		isPro, _, err := trackingService.HasActivePro(c.Request.Context(), userID)
 		if err != nil {
+			reqLog.Error("failed to check pro status in rate limit status endpoint",
+				slog.String("error", err.Error()),
+				slog.String("user_id", userID))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get active pro"})
 			return
 		}
