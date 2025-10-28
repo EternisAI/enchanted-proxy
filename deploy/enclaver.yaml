@@ -105,6 +105,9 @@ env:
 - TINFOIL_API_KEY
 - TWITTER_CLIENT_ID
 - VALIDATOR_TYPE
+- TEMPORAL_API_KEY
+- TEMPORAL_ENDPOINT
+- TEMPORAL_NAMESPACE
 files:
 - /var/run/secrets/tls/tls.crt
 - /var/run/secrets/tls/tls.key
