@@ -36,6 +36,16 @@ func (f *FirebaseAuthMiddleware) RequireAuth() gin.HandlerFunc {
 		// Extract Authorization header
 
 		authHeader := c.GetHeader("Authorization")
+
+		// Fallback for WebSocket connections: accept token from query parameter
+		// Browser WebSocket API doesn't support custom headers during upgrade
+		if authHeader == "" && c.Request.Header.Get("Upgrade") == "websocket" {
+			token := c.Query("token")
+			if token != "" {
+				authHeader = "Bearer " + token
+			}
+		}
+
 		if authHeader == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
 			c.Abort()
