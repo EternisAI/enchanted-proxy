@@ -395,9 +395,9 @@ static_resources:
         common_tls_context:
           validation_context:
             trusted_ca:
-              filename: /var/run/secrets/tls/llm-ca.pem
+              filename: /etc/ssl/certs/eternis/llm-ca.pem
             watched_directory:
-              path: var/run/secrets/tls
+              path: /etc/ssl/certs/eternis
   # transparent proxy endpoint
   - name: enclaver_odyn_egress
     connect_timeout: 1s
