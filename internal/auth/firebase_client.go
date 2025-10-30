@@ -300,3 +300,4 @@ func (f *FirebaseClient) GetCompletedSessionCountForUser(ctx context.Context, us
 
 	return len(docs), nil
 }
+
