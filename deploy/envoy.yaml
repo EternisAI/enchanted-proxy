@@ -150,6 +150,7 @@ static_resources:
                   prefix: /
                 route:
                   cluster: internal_glm-46
+                  timeout: 0s
   - name: egress_postgresql
     address:
       socket_address:
