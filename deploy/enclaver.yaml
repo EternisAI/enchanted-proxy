@@ -43,6 +43,8 @@ egress:
   - api.exa.ai
   - cloud-api.near.ai
   - us-east-1.aws.api.temporal.io
+  # Internal inference API endpoints
+  - glm-46.llm.eternisai.net
   # aws-0-us-east-2.pooler.supabase.com
   - 3.13.175.194
   - 3.139.14.59
@@ -67,6 +69,7 @@ env:
 - DEEP_RESEARCH_WS
 - DRIP_DAILY_MESSAGES
 - ENABLE_TELEGRAM_SERVER
+- ETERNIS_INFERENCE_API_KEY
 - EXA_API_KEY
 - FIREBASE_CRED_JSON
 - FIREBASE_PROJECT_ID

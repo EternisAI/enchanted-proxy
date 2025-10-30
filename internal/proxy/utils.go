@@ -53,6 +53,8 @@ func GetAPIKey(baseURL string, platform string, config *config.Config) string {
 		return config.TinfoilAPIKey
 	case "https://cloud-api.near.ai/v1":
 		return config.NearAPIKey
+	case "http://127.0.0.1:20001/v1":
+		return config.EternisInferenceAPIKey
 	default:
 		return ""
 	}
