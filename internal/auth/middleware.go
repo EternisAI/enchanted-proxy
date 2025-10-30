@@ -12,7 +12,7 @@ import (
 type contextKey string
 
 const (
-	// UserUUIDKey is the context key for user UUID (email/user_id/sub).
+	// UserUUIDKey is the context key for user UUID.
 	UserUUIDKey contextKey = "user_uuid"
 	// UserIDKey is the context key for Firebase UID (for Firestore paths).
 	UserIDKey contextKey = "user_id"
@@ -101,7 +101,7 @@ func (f *FirebaseAuthMiddleware) RequireAuth() gin.HandlerFunc {
 	}
 }
 
-// GetUserUUID extracts the user UUID (email/user_id/sub) from the Gin context.
+// GetUserUUID extracts the user UUID from the Gin context.
 func GetUserUUID(c *gin.Context) (string, bool) {
 	userUUID, exists := c.Get(string(UserUUIDKey))
 	if !exists {

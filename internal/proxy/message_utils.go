@@ -95,11 +95,18 @@ func saveMessageAsync(c *gin.Context, messageService *messaging.Service, content
 		chatID = uuid.New().String()
 	}
 
+	// Extract or generate message ID
+	messageID := c.GetHeader("X-Message-ID")
+	if messageID == "" {
+		// Fallback: generate a new message ID if client doesn't provide one
+		messageID = uuid.New().String()
+	}
+
 	// Build message (assistant response)
 	msg := messaging.MessageToStore{
 		UserID:     userID,
 		ChatID:     chatID,
-		MessageID:  uuid.New().String(),
+		MessageID:  messageID,
 		IsFromUser: false, // This is an assistant response
 		Content:    content,
 		IsError:    isError,

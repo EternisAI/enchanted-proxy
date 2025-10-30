@@ -39,7 +39,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 	}
 
 	// Get Firebase UID from context - this will be used as the user_id
-	userID, ok := auth.GetFirebaseUID(c)
+	userID, ok := auth.GetUserID(c)
 	if !ok {
 		log.Error("firebase_uid not found in context")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "firebase uid not found"})
@@ -96,7 +96,7 @@ func (h *Handler) GetTasks(c *gin.Context) {
 	}
 
 	// Get Firebase UID from context - this will be used as the user_id
-	userID, ok := auth.GetFirebaseUID(c)
+	userID, ok := auth.GetUserID(c)
 	if !ok {
 		log.Error("firebase_uid not found in context")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "firebase uid not found"})
@@ -134,7 +134,7 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 	}
 
 	// Get Firebase UID from context - this will be used as the user_id
-	userID, ok := auth.GetFirebaseUID(c)
+	userID, ok := auth.GetUserID(c)
 	if !ok {
 		log.Error("firebase_uid not found in context")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "firebase uid not found"})

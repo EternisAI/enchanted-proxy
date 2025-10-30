@@ -73,6 +73,7 @@ func (f *FirebaseTokenValidator) GetFirebaseUID(tokenString string) (string, err
 	return token.UID, nil
 }
 
+
 // ExtractUserID extracts the Firebase UID (prioritizes sub/user_id over email).
 // This should be used for Firestore paths.
 func (f *FirebaseTokenValidator) ExtractUserID(tokenString string) (string, error) {
