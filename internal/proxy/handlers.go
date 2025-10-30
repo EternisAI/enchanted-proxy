@@ -44,7 +44,7 @@ func initProxyTransport() {
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
 			TLSHandshakeTimeout:   30 * time.Second,
-			ResponseHeaderTimeout: 30 * time.Second,
+			ResponseHeaderTimeout: 120 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 		}
 	})
