@@ -60,7 +60,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		slog.String("chat_id", req.ChatID),
 		slog.String("task_name", req.TaskName),
 		slog.String("task_type", req.Type),
-		slog.String("time", req.Time))
+		slog.String("cron_expression", req.Time))
 
 	// Create the task
 	log.Info("calling service.CreateTask")

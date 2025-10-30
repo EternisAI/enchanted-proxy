@@ -90,7 +90,7 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 	}
 
 	// Validate cron format (both types use cron)
-	log.Info("validating cron format", slog.String("time", req.Time))
+	log.Info("validating cron format", slog.String("cron_expression", req.Time))
 	// Basic cron validation - Temporal will do more thorough validation
 	if req.Time == "" {
 		log.Error("time is empty")
