@@ -56,11 +56,11 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		return
 	}
 
-	log.Info("request body parsed",
-		slog.String("chat_id", req.ChatID),
-		slog.String("task_name", req.TaskName),
-		slog.String("task_type", req.Type),
-		slog.String("time", req.Time))
+	// log.Info("request body parsed",
+	// 	slog.String("chat_id", req.ChatID),
+	// 	slog.String("task_name", req.TaskName),
+	// 	slog.String("task_type", req.Type),
+	// 	slog.String("time", req.Time))
 
 	// Create the task
 	log.Info("calling service.CreateTask")
