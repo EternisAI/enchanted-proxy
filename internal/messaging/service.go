@@ -90,6 +90,7 @@ func (s *Service) handleMessage(msg MessageToStore) {
 	// Encrypt message content
 	var encryptedContent string
 	var publicKeyUsed string
+	var passkeyID string
 
 	publicKey, err := s.getPublicKey(ctx, msg.UserID)
 	if err != nil {
@@ -108,6 +109,7 @@ func (s *Service) handleMessage(msg MessageToStore) {
 			slog.String("error", err.Error()))
 		encryptedContent = msg.Content
 		publicKeyUsed = "none"
+		passkeyID = "" // No passkey when no encryption
 	} else {
 		encrypted, err := s.encryptionService.EncryptMessage(msg.Content, publicKey.Public)
 		if err != nil {
@@ -124,9 +126,11 @@ func (s *Service) handleMessage(msg MessageToStore) {
 				slog.String("error", err.Error()))
 			encryptedContent = msg.Content
 			publicKeyUsed = "none"
+			passkeyID = "" // No passkey when encryption fails
 		} else {
 			encryptedContent = encrypted
 			publicKeyUsed = publicKey.Public // Store the full JWK
+			passkeyID = publicKey.CredentialID // Store credential ID for tracking
 		}
 	}
 
@@ -139,6 +143,7 @@ func (s *Service) handleMessage(msg MessageToStore) {
 		IsError:             msg.IsError,
 		Timestamp:           time.Now(),
 		PublicEncryptionKey: publicKeyUsed,
+		PasskeyID:           passkeyID, // Include passkey credential ID for tracking
 	}
 
 	// Save to Firestore
