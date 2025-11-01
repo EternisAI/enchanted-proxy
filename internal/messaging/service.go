@@ -23,7 +23,6 @@ type Service struct {
 	workerPool        sync.WaitGroup
 	shutdown          chan struct{}
 	closed            atomic.Bool
-	publicKeyCache    *PublicKeyCache
 }
 
 // NewService creates a new message storage service
@@ -34,7 +33,6 @@ func NewService(firestoreClient *firestore.Client, logger *logger.Logger) *Servi
 		logger:            logger,
 		messageChan:       make(chan MessageToStore, config.AppConfig.MessageStorageBufferSize), // Buffered channel to queue messages waiting for workers
 		shutdown:          make(chan struct{}),
-		publicKeyCache:    NewPublicKeyCache(config.AppConfig.MessageStorageCacheSize, time.Duration(config.AppConfig.MessageStorageCacheTTLMinutes)*time.Minute), // Cache user public keys to reduce Firestore reads
 	}
 
 	// Start worker pool - each worker processes messages concurrently from the queue
@@ -46,7 +44,6 @@ func NewService(firestoreClient *firestore.Client, logger *logger.Logger) *Servi
 	logger.Info("message storage service started",
 		slog.Int("worker_pool_size", config.AppConfig.MessageStorageWorkerPoolSize),
 		slog.Int("buffer_size", config.AppConfig.MessageStorageBufferSize),
-		slog.Int("cache_size", config.AppConfig.MessageStorageCacheSize),
 	)
 
 	return s
@@ -163,19 +160,9 @@ func (s *Service) handleMessage(msg MessageToStore) {
 		slog.Bool("encrypted", publicKeyUsed != "none"))
 }
 
-// getPublicKey retrieves public key with caching
+// getPublicKey retrieves public key from Firestore (no caching - simpler and always fresh)
 func (s *Service) getPublicKey(ctx context.Context, userID string) (*UserPublicKey, error) {
 	log := s.logger.WithContext(ctx)
-
-	// Check cache
-	if key := s.publicKeyCache.Get(userID); key != nil {
-		log.Debug("public key retrieved from cache",
-			slog.String("user_id", userID),
-			slog.String("credential_id", key.CredentialID),
-			slog.String("provider", key.Provider),
-		)
-		return key, nil
-	}
 
 	// Fetch from Firestore
 	key, err := s.firestoreClient.GetUserPublicKey(ctx, userID)
@@ -204,10 +191,7 @@ func (s *Service) getPublicKey(ctx context.Context, userID string) (*UserPublicK
 		return nil, fmt.Errorf("invalid public key: %w", err)
 	}
 
-	// Cache it
-	s.publicKeyCache.Set(userID, key)
-
-	log.Info("public key fetched and cached",
+	log.Debug("public key fetched successfully",
 		slog.String("user_id", userID),
 		slog.String("credential_id", key.CredentialID),
 		slog.String("provider", key.Provider),
