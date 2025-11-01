@@ -11,6 +11,7 @@ import (
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
+	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -18,11 +19,13 @@ import (
 
 // Service handles WebSocket connections for deep research.
 type Service struct {
-	logger          *logger.Logger
-	trackingService *request_tracking.Service
-	firebaseClient  *auth.FirebaseClient
-	storage         MessageStorage
-	sessionManager  *SessionManager
+	logger            *logger.Logger
+	trackingService   *request_tracking.Service
+	firebaseClient    *auth.FirebaseClient
+	storage           MessageStorage
+	sessionManager    *SessionManager
+	encryptionService *messaging.EncryptionService
+	firestoreClient   *messaging.FirestoreClient
 }
 
 // mapEventTypeToState maps event types from deep research server to session states.
@@ -215,12 +218,177 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 
 // NewService creates a new deep research service with database storage.
 func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager) *Service {
+	var encryptionService *messaging.EncryptionService
+	var firestoreClient *messaging.FirestoreClient
+
+	if firebaseClient != nil {
+		encryptionService = messaging.NewEncryptionService()
+		firestoreClient = messaging.NewFirestoreClient(firebaseClient.GetFirestoreClient())
+	}
+
 	return &Service{
-		logger:          logger,
-		trackingService: trackingService,
-		firebaseClient:  firebaseClient,
-		storage:         storage,
-		sessionManager:  sessionManager,
+		logger:            logger,
+		trackingService:   trackingService,
+		firebaseClient:    firebaseClient,
+		storage:           storage,
+		sessionManager:    sessionManager,
+		encryptionService: encryptionService,
+		firestoreClient:   firestoreClient,
+	}
+}
+
+// handleBackendMessages processes messages from the backend websocket for POST API initiated sessions.
+func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSession, userID, chatID string) {
+	log := s.logger.WithContext(ctx).WithComponent("deepr")
+	startTime := time.Now()
+	messageCount := 0
+
+	defer func() {
+		s.sessionManager.RemoveSession(userID, chatID)
+		if s.storage != nil {
+			if err := s.storage.UpdateBackendConnectionStatus(userID, chatID, false); err != nil {
+				log.Error("failed to update backend disconnection status",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("error", err.Error()))
+			}
+		}
+		log.Info("backend message handler stopped",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.Int("total_messages", messageCount),
+			slog.Duration("duration", time.Since(startTime)))
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info("context canceled, stopping backend message handler",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID))
+			return
+		default:
+			_, message, err := session.BackendConn.ReadMessage()
+			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					log.Error("unexpected error reading from backend",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("error", err.Error()))
+				} else {
+					log.Info("backend connection closed",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID))
+				}
+				return
+			}
+
+			messageCount++
+			log.Info("message received from backend",
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.Int("message_size", len(message)),
+				slog.Int("message_number", messageCount))
+
+			// Determine message type
+			var msg Message
+			messageType := "status"
+			if err := json.Unmarshal(message, &msg); err == nil {
+				if msg.Type != "" {
+					messageType = msg.Type
+				}
+			}
+
+			// Update session state in Firebase
+			sessionState := mapEventTypeToState(messageType)
+			if s.firebaseClient != nil {
+				if err := s.firebaseClient.UpdateSessionState(ctx, userID, chatID, sessionState); err != nil {
+					log.Error("failed to update session state",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("error", err.Error()))
+				}
+			}
+
+			// Broadcast to connected websocket clients
+			clientCount := s.sessionManager.GetClientCount(userID, chatID)
+			messageSent := false
+			broadcastErr := s.sessionManager.BroadcastToClients(userID, chatID, message)
+			if broadcastErr == nil && clientCount > 0 {
+				messageSent = true
+			}
+
+			// Store message in database
+			if s.storage != nil {
+				if err := s.storage.AddMessage(userID, chatID, string(message), messageSent, messageType); err != nil {
+					log.Error("failed to store message",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("error", err.Error()))
+				}
+			}
+
+			// Encrypt and store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
+			if s.encryptionService != nil && s.firestoreClient != nil {
+				// Generate message UUID
+				messageID := uuid.New().String()
+
+				// Get user's public key
+				publicKey, err := s.firestoreClient.GetUserPublicKey(ctx, userID)
+				if err != nil {
+					log.Warn("failed to get user public key for encryption",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("message_id", messageID),
+						slog.String("error", err.Error()))
+				} else {
+					// Encrypt the message (JSON string)
+					encryptedContent, err := s.encryptionService.EncryptMessage(string(message), publicKey.Public)
+					if err != nil {
+						log.Error("failed to encrypt message",
+							slog.String("user_id", userID),
+							slog.String("chat_id", chatID),
+							slog.String("message_id", messageID),
+							slog.String("error", err.Error()))
+					} else {
+						// Create ChatMessage for Firestore
+						chatMessage := &messaging.ChatMessage{
+							ID:                  messageID,
+							EncryptedContent:    encryptedContent,
+							IsFromUser:          false, // Deep research messages are from assistant
+							ChatID:              chatID,
+							IsError:             messageType == "error" || msg.Error != "",
+							Timestamp:           time.Now(),
+							PublicEncryptionKey: publicKey.Public,
+						}
+
+						// Store encrypted message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
+						if err := s.firestoreClient.SaveMessage(ctx, userID, chatMessage); err != nil {
+							log.Error("failed to save encrypted message to Firestore",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("message_id", messageID),
+								slog.String("error", err.Error()))
+						} else {
+							log.Debug("encrypted message saved to Firestore",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("message_id", messageID),
+								slog.String("message_type", messageType))
+						}
+					}
+				}
+			}
+
+			// Check if session is complete
+			if msg.Type == "research_complete" || msg.Type == "error" || msg.FinalReport != "" || msg.Error != "" {
+				log.Info("research session complete",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("message_type", messageType))
+				return
+			}
+		}
 	}
 }
 
@@ -811,6 +979,58 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 						slog.Int("client_count", clientCount))
 				}
 
+				// Encrypt and store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
+				if s.encryptionService != nil && s.firestoreClient != nil {
+					// Generate message UUID
+					messageID := uuid.New().String()
+
+					// Get user's public key
+					publicKey, err := s.firestoreClient.GetUserPublicKey(ctx, userID)
+					if err != nil {
+						log.Warn("failed to get user public key for encryption, skipping encrypted storage",
+							slog.String("user_id", userID),
+							slog.String("chat_id", chatID),
+							slog.String("message_id", messageID),
+							slog.String("error", err.Error()))
+					} else {
+						// Encrypt the message (JSON string)
+						encryptedContent, err := s.encryptionService.EncryptMessage(string(message), publicKey.Public)
+						if err != nil {
+							log.Error("failed to encrypt message",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("message_id", messageID),
+								slog.String("error", err.Error()))
+						} else {
+							// Create ChatMessage for Firestore
+							chatMessage := &messaging.ChatMessage{
+								ID:                  messageID,
+								EncryptedContent:    encryptedContent,
+								IsFromUser:          false, // Deep research messages are from assistant
+								ChatID:              chatID,
+								IsError:             messageType == "error" || msg.Error != "",
+								Timestamp:           time.Now(),
+								PublicEncryptionKey: publicKey.Public,
+							}
+
+							// Store encrypted message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
+							if err := s.firestoreClient.SaveMessage(ctx, userID, chatMessage); err != nil {
+								log.Error("failed to save encrypted message to Firestore",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("message_id", messageID),
+									slog.String("error", err.Error()))
+							} else {
+								log.Debug("encrypted message saved to Firestore",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("message_id", messageID),
+									slog.String("message_type", messageType))
+							}
+						}
+					}
+				}
+
 				// Track usage only when research_complete event is sent
 				if msg.Type == "research_complete" {
 					log.Info("research complete event detected, tracking usage",
@@ -917,6 +1137,58 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 						slog.String("user_id", userID),
 						slog.String("chat_id", chatID),
 						slog.String("error", broadcastErr.Error()))
+				}
+
+				// Encrypt and store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID} (even without storage)
+				if s.encryptionService != nil && s.firestoreClient != nil {
+					// Generate message UUID
+					messageID := uuid.New().String()
+
+					// Get user's public key
+					publicKey, err := s.firestoreClient.GetUserPublicKey(ctx, userID)
+					if err != nil {
+						log.Warn("failed to get user public key for encryption, skipping encrypted storage (no storage)",
+							slog.String("user_id", userID),
+							slog.String("chat_id", chatID),
+							slog.String("message_id", messageID),
+							slog.String("error", err.Error()))
+					} else {
+						// Encrypt the message (JSON string)
+						encryptedContent, err := s.encryptionService.EncryptMessage(string(message), publicKey.Public)
+						if err != nil {
+							log.Error("failed to encrypt message (no storage)",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("message_id", messageID),
+								slog.String("error", err.Error()))
+						} else {
+							// Create ChatMessage for Firestore
+							chatMessage := &messaging.ChatMessage{
+								ID:                  messageID,
+								EncryptedContent:    encryptedContent,
+								IsFromUser:          false, // Deep research messages are from assistant
+								ChatID:              chatID,
+								IsError:             messageType == "error" || msg.Error != "",
+								Timestamp:           time.Now(),
+								PublicEncryptionKey: publicKey.Public,
+							}
+
+							// Store encrypted message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
+							if err := s.firestoreClient.SaveMessage(ctx, userID, chatMessage); err != nil {
+								log.Error("failed to save encrypted message to Firestore (no storage)",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("message_id", messageID),
+									slog.String("error", err.Error()))
+							} else {
+								log.Debug("encrypted message saved to Firestore (no storage)",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("message_id", messageID),
+									slog.String("message_type", messageType))
+							}
+						}
+					}
 				}
 
 				// Track usage only when research_complete event is sent (even without storage)
