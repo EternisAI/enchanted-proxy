@@ -144,12 +144,9 @@ func (m *WebSocketManager) SendToSession(sessionID string, message WebSocketMess
 			slog.String("session_id", sessionID),
 			slog.String("message_type", message.Type))
 
-		// Close connection after successful delivery (one-time use)
-		if message.Type == WSMessageTypeKeyReceived {
-			conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Key delivered successfully"))
-			conn.Close()
-			m.UnregisterConnection(conn)
-		}
+		// Note: We don't immediately close the connection here
+		// Let the WebSocket handler manage the connection lifecycle naturally
+		// This avoids race conditions where the close happens before the message is flushed
 	}
 
 	return nil
