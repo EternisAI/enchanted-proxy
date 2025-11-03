@@ -23,6 +23,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/deepr"
 	"github.com/eternisai/enchanted-proxy/internal/iap"
 	"github.com/eternisai/enchanted-proxy/internal/invitecode"
+	"github.com/eternisai/enchanted-proxy/internal/keyshare"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/mcp"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
@@ -182,6 +183,34 @@ func main() {
 		log.Info("title generation service disabled (requires message storage)")
 	}
 
+	// Initialize key sharing service
+	var keyshareHandler *keyshare.Handler
+	if firebaseClient != nil {
+		keyshareWSManager := keyshare.NewWebSocketManager(logger.WithComponent("keyshare-ws"))
+		keyshareFirestore := keyshare.NewFirestoreClient(firebaseClient.GetFirestoreClient())
+		keyshareService := keyshare.NewService(keyshareFirestore, keyshareWSManager, logger.WithComponent("keyshare"))
+		keyshareHandler = keyshare.NewHandler(keyshareService, keyshareWSManager, logger.WithComponent("keyshare"))
+		log.Info("key sharing service initialized")
+
+		// Start cleanup job for expired sessions
+		go func() {
+			cleanupTicker := time.NewTicker(5 * time.Minute)
+			defer cleanupTicker.Stop()
+
+			for range cleanupTicker.C {
+				ctx := context.Background()
+				deleted, err := keyshareService.CleanupExpiredSessions(ctx)
+				if err != nil {
+					log.Error("key share cleanup job failed", slog.String("error", err.Error()))
+				} else if deleted > 0 {
+					log.Info("key share cleanup job completed", slog.Int("deleted", deleted))
+				}
+			}
+		}()
+	} else {
+		log.Info("key sharing service disabled (requires firebase client)")
+	}
+
 	// Initialize handlers
 	oauthHandler := oauth.NewHandler(oauthService, logger.WithComponent("oauth"))
 	composioHandler := composio.NewHandler(composioService, logger.WithComponent("composio"))
@@ -247,6 +276,7 @@ func main() {
 		mcpHandler:             mcpHandler,
 		searchHandler:          searchHandler,
 		taskHandler:            taskHandler,
+		keyshareHandler:        keyshareHandler,
 		deeprStorage:           deeprStorage,
 		deeprSessionManager:    deeprSessionManager,
 	})
@@ -358,6 +388,7 @@ type restServerInput struct {
 	mcpHandler             *mcp.Handler
 	searchHandler          *search.Handler
 	taskHandler            *task.Handler
+	keyshareHandler        *keyshare.Handler
 	deeprStorage           deepr.MessageStorage
 	deeprSessionManager    *deepr.SessionManager
 }
@@ -443,6 +474,19 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 
 		// Deep Research WebSocket endpoint (protected)
 		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager)) // WebSocket proxy for deep research
+
+		// Key Sharing API routes (protected)
+		if input.keyshareHandler != nil {
+			encryption := api.Group("/encryption")
+			{
+				keyShare := encryption.Group("/key-share")
+				{
+					keyShare.POST("/session", input.keyshareHandler.CreateSession)                   // POST /api/v1/encryption/key-share/session
+					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)            // POST /api/v1/encryption/key-share/session/:sessionId
+					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen) // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
+				}
+			}
+		}
 	}
 
 	// Protected proxy routes
