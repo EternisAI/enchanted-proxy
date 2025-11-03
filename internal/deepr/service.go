@@ -308,6 +308,30 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 						slog.String("chat_id", chatID),
 						slog.String("error", err.Error()))
 				}
+
+				// Also update chat document state for UI access
+				chatState := &auth.DeepResearchState{
+					StartedAt: time.Now(), // Will be overwritten on merge if already exists
+					Status:    sessionState,
+				}
+
+				// Parse error message if this is an error event
+				if messageType == "error" {
+					var errMsg Message
+					if err := json.Unmarshal(message, &errMsg); err == nil && errMsg.Error != "" {
+						chatState.Error = &auth.DeepResearchError{
+							UnderlyingError: errMsg.Error,
+							UserMessage:     "An error occurred during deep research. Please try again.",
+						}
+					}
+				}
+
+				if err := s.firebaseClient.UpdateChatDeepResearchState(ctx, userID, chatID, chatState); err != nil {
+					log.Error("failed to update chat deep research state",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID),
+						slog.String("error", err.Error()))
+				}
 			}
 
 			// Broadcast to connected websocket clients
@@ -943,6 +967,30 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 					slog.String("chat_id", chatID),
 					slog.String("message_type", messageType),
 					slog.String("session_state", sessionState))
+			}
+
+			// Also update chat document state for UI access
+			chatState := &auth.DeepResearchState{
+				StartedAt: time.Now(), // Will be overwritten on merge if already exists
+				Status:    sessionState,
+			}
+
+			// Parse error message if this is an error event
+			if messageType == "error" {
+				var errMsg Message
+				if err := json.Unmarshal(message, &errMsg); err == nil && errMsg.Error != "" {
+					chatState.Error = &auth.DeepResearchError{
+						UnderlyingError: errMsg.Error,
+						UserMessage:     "An error occurred during deep research. Please try again.",
+					}
+				}
+			}
+
+			if err := s.firebaseClient.UpdateChatDeepResearchState(ctx, userID, chatID, chatState); err != nil {
+				log.Error("failed to update chat deep research state",
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("error", err.Error()))
 			}
 
 			// Store message

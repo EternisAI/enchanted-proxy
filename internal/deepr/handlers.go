@@ -192,6 +192,22 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			slog.String("user_id", userID),
 			slog.String("chat_id", req.ChatID))
 
+		// Initialize deep research state on chat document for UI access
+		if firebaseClient != nil {
+			initialState := &auth.DeepResearchState{
+				StartedAt: time.Now(),
+				Status:    "in_progress",
+				Error:     nil,
+			}
+			if err := firebaseClient.UpdateChatDeepResearchState(c.Request.Context(), userID, req.ChatID, initialState); err != nil {
+				log.Error("failed to update chat deep research state",
+					slog.String("user_id", userID),
+					slog.String("chat_id", req.ChatID),
+					slog.String("error", err.Error()))
+				// Don't fail the request - session is already started
+			}
+		}
+
 		// Start goroutine to handle backend messages
 		go service.handleBackendMessages(sessionCtx, session, userID, req.ChatID)
 
