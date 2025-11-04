@@ -189,6 +189,20 @@ type DeepResearchSessionState struct {
 	CompletedAt time.Time `firestore:"completed_at,omitempty"`
 }
 
+// DeepResearchState represents the state of a deep research session on a chat document.
+type DeepResearchState struct {
+	StartedAt     time.Time          `firestore:"startedAt" json:"startedAt"`
+	Status        string             `firestore:"status" json:"status"` // "in_progress", "clarify", "error", "complete"
+	ThinkingState string             `firestore:"thinkingState,omitempty" json:"thinkingState,omitempty"` // Latest progress message
+	Error         *DeepResearchError `firestore:"error,omitempty" json:"error,omitempty"`
+}
+
+// DeepResearchError contains error information for a failed deep research session.
+type DeepResearchError struct {
+	UnderlyingError string `firestore:"underlyingError" json:"underlyingError"` // Technical error details
+	UserMessage     string `firestore:"userMessage" json:"userMessage"`         // User-friendly error message
+}
+
 // GetSessionState retrieves the current state of a deep research session.
 func (f *FirebaseClient) GetSessionState(ctx context.Context, userID, chatID string) (*DeepResearchSessionState, error) {
 	// Use underscore as separator since forward slash is not allowed in Firestore document IDs
@@ -300,3 +314,77 @@ func (f *FirebaseClient) GetCompletedSessionCountForUser(ctx context.Context, us
 
 	return len(docs), nil
 }
+
+// UpdateChatDeepResearchState updates the deep research state on a chat document.
+// This provides easy UI access to deep research status without querying the sessions collection.
+func (f *FirebaseClient) UpdateChatDeepResearchState(ctx context.Context, userID, chatID string, state *DeepResearchState) error {
+	if state == nil {
+		return fmt.Errorf("state cannot be nil")
+	}
+
+	docRef := f.firestoreClient.Collection("users").Doc(userID).Collection("chats").Doc(chatID)
+
+	// Use MergeAll to preserve other chat fields like encryptedTitle, etc.
+	_, err := docRef.Set(ctx, map[string]interface{}{
+		"deepResearchState": state,
+	}, firestore.MergeAll)
+
+	if err != nil {
+		return fmt.Errorf("failed to update chat deep research state: %w", err)
+	}
+
+	return nil
+}
+
+// GetChatDeepResearchState retrieves the deep research state from a chat document.
+// Returns nil if the chat doesn't have a deep research state.
+func (f *FirebaseClient) GetChatDeepResearchState(ctx context.Context, userID, chatID string) (*DeepResearchState, error) {
+	docRef := f.firestoreClient.Collection("users").Doc(userID).Collection("chats").Doc(chatID)
+
+	doc, err := docRef.Get(ctx)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get chat document: %w", err)
+	}
+
+	// Get the deepResearchState field
+	stateData := doc.Data()["deepResearchState"]
+	if stateData == nil {
+		return nil, nil
+	}
+
+	// Convert to DeepResearchState struct
+	var state DeepResearchState
+	stateMap, ok := stateData.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("deepResearchState is not a map")
+	}
+
+	// Parse the fields
+	if startedAt, ok := stateMap["startedAt"].(time.Time); ok {
+		state.StartedAt = startedAt
+	}
+	if status, ok := stateMap["status"].(string); ok {
+		state.Status = status
+	}
+	if thinkingState, ok := stateMap["thinkingState"].(string); ok {
+		state.ThinkingState = thinkingState
+	}
+	if errorData, ok := stateMap["error"].(map[string]interface{}); ok {
+		drErr := &DeepResearchError{}
+		if underlying, ok := errorData["underlyingError"].(string); ok {
+			drErr.UnderlyingError = underlying
+		}
+		if userMsg, ok := errorData["userMessage"].(string); ok {
+			drErr.UserMessage = userMsg
+		}
+		if drErr.UnderlyingError != "" || drErr.UserMessage != "" {
+			state.Error = drErr
+		}
+	}
+
+	return &state, nil
+}
+

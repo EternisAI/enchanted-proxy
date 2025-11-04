@@ -279,6 +279,7 @@ func main() {
 		keyshareHandler:        keyshareHandler,
 		deeprStorage:           deeprStorage,
 		deeprSessionManager:    deeprSessionManager,
+		config:                 config.AppConfig,
 	})
 
 	// Initialize GraphQL server for Telegram
@@ -391,6 +392,7 @@ type restServerInput struct {
 	keyshareHandler        *keyshare.Handler
 	deeprStorage           deepr.MessageStorage
 	deeprSessionManager    *deepr.SessionManager
+	config                 *config.Config
 }
 
 func setupRESTServer(input restServerInput) *gin.Engine {
@@ -472,8 +474,8 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 			tasks.DELETE("/:taskId", input.taskHandler.DeleteTask) // DELETE /api/v1/tasks/:taskId - Delete a task
 		}
 
-		// Deep Research WebSocket endpoint (protected)
-		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager)) // WebSocket proxy for deep research
+		// Deep Research endpoints (protected)
+		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled)) // POST API to start deep research
 
 		// Key Sharing API routes (protected)
 		if input.keyshareHandler != nil {
@@ -481,9 +483,11 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 			{
 				keyShare := encryption.Group("/key-share")
 				{
-					keyShare.POST("/session", input.keyshareHandler.CreateSession)                   // POST /api/v1/encryption/key-share/session
-					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)            // POST /api/v1/encryption/key-share/session/:sessionId
-					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen) // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
+					api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.deeprSessionManager))                                                                                                       // POST API to submit clarification response
+					api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled)) // WebSocket proxy for deep research
+					keyShare.POST("/session", input.keyshareHandler.CreateSession)                                                                                                                                                     // POST /api/v1/encryption/key-share/session
+					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)                                                                                                                                              // POST /api/v1/encryption/key-share/session/:sessionId
+					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen)                                                                                                                                  // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
 				}
 			}
 		}

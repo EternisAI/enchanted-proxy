@@ -42,6 +42,9 @@ type Config struct {
 	RateLimitEnabled bool
 	RateLimitLogOnly bool // If true, only log violations, don't block.
 
+	// Deep Research Rate Limiting
+	DeepResearchRateLimitEnabled bool // If false, skip freemium quota checks
+
 	// Usage Tiers
 	FreeLifetimeTokens int64
 	DripDailyMessages  int64
@@ -164,6 +167,9 @@ func LoadConfig() {
 		// Rate Limiting
 		RateLimitEnabled: getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
 		RateLimitLogOnly: getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
+
+		// Deep Research Rate Limiting
+		DeepResearchRateLimitEnabled: getEnvOrDefault("DEEP_RESEARCH_RATE_LIMIT_ENABLED", "true") == "true",
 
 		// Usage Tiers
 		FreeLifetimeTokens: getEnvAsInt64("FREE_LIFETIME_TOKENS", 20000),
