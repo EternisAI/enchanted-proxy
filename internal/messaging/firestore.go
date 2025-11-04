@@ -183,7 +183,6 @@ func (f *FirestoreClient) SaveChatTitle(ctx context.Context, userID, chatID stri
 		"titlePublicEncryptionKey": title.TitlePublicEncryptionKey,
 		"updatedAt":                title.UpdatedAt,
 	}, firestore.MergeAll) // Merge to preserve existing fields
-
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to save title user=%s chat=%s: %v", userID, chatID, err)
 	}

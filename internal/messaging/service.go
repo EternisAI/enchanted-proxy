@@ -126,7 +126,7 @@ func (s *Service) handleMessage(msg MessageToStore) {
 			passkeyID = "" // No passkey when encryption fails
 		} else {
 			encryptedContent = encrypted
-			publicKeyUsed = publicKey.Public // Store the full JWK
+			publicKeyUsed = publicKey.Public   // Store the full JWK
 			passkeyID = publicKey.CredentialID // Store credential ID for tracking
 		}
 	}

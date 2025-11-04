@@ -481,8 +481,8 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 			{
 				keyShare := encryption.Group("/key-share")
 				{
-					keyShare.POST("/session", input.keyshareHandler.CreateSession)                   // POST /api/v1/encryption/key-share/session
-					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)            // POST /api/v1/encryption/key-share/session/:sessionId
+					keyShare.POST("/session", input.keyshareHandler.CreateSession)                    // POST /api/v1/encryption/key-share/session
+					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)             // POST /api/v1/encryption/key-share/session/:sessionId
 					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen) // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
 				}
 			}
