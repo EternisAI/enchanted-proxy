@@ -191,9 +191,10 @@ type DeepResearchSessionState struct {
 
 // DeepResearchState represents the state of a deep research session on a chat document.
 type DeepResearchState struct {
-	StartedAt time.Time          `firestore:"startedAt" json:"startedAt"`
-	Status    string             `firestore:"status" json:"status"` // "in_progress", "clarify", "error", "complete"
-	Error     *DeepResearchError `firestore:"error,omitempty" json:"error,omitempty"`
+	StartedAt     time.Time          `firestore:"startedAt" json:"startedAt"`
+	Status        string             `firestore:"status" json:"status"` // "in_progress", "clarify", "error", "complete"
+	ThinkingState string             `firestore:"thinkingState,omitempty" json:"thinkingState,omitempty"` // Latest progress message
+	Error         *DeepResearchError `firestore:"error,omitempty" json:"error,omitempty"`
 }
 
 // DeepResearchError contains error information for a failed deep research session.
@@ -367,6 +368,9 @@ func (f *FirebaseClient) GetChatDeepResearchState(ctx context.Context, userID, c
 	}
 	if status, ok := stateMap["status"].(string); ok {
 		state.Status = status
+	}
+	if thinkingState, ok := stateMap["thinkingState"].(string); ok {
+		state.ThinkingState = thinkingState
 	}
 	if errorData, ok := stateMap["error"].(map[string]interface{}); ok {
 		state.Error = &DeepResearchError{

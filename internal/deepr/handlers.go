@@ -35,6 +35,19 @@ type StartDeepResearchResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// ClarifyDeepResearchRequest represents the request body for submitting a clarification response.
+type ClarifyDeepResearchRequest struct {
+	ChatID   string `json:"chat_id" binding:"required"`
+	Response string `json:"response" binding:"required"`
+}
+
+// ClarifyDeepResearchResponse represents the response for clarification submission.
+type ClarifyDeepResearchResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
 // StartDeepResearchHandler handles POST requests to start deep research.
 func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -46,7 +59,7 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			slog.String("method", c.Request.Method))
 
 		// Get user ID from auth context
-		userID, exists := auth.GetUserUUID(c)
+		userID, exists := auth.GetUserID(c)
 		if !exists {
 			log.Error("authentication failed - user not found in context",
 				slog.String("path", c.Request.URL.Path),
@@ -218,6 +231,102 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 	}
 }
 
+// ClarifyDeepResearchHandler handles POST requests to submit clarification responses.
+func ClarifyDeepResearchHandler(logger *logger.Logger, sessionManager *SessionManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		log := logger.WithContext(c.Request.Context()).WithComponent("deepr")
+
+		log.Info("clarification response received",
+			slog.String("path", c.Request.URL.Path),
+			slog.String("remote_addr", c.Request.RemoteAddr),
+			slog.String("method", c.Request.Method))
+
+		// Get user ID from auth context (Firebase UID)
+		userID, exists := auth.GetUserID(c)
+		if !exists {
+			log.Error("authentication failed - user not found in context",
+				slog.String("path", c.Request.URL.Path),
+				slog.String("remote_addr", c.Request.RemoteAddr))
+			c.JSON(http.StatusUnauthorized, ClarifyDeepResearchResponse{
+				Success: false,
+				Error:   "User not authenticated",
+			})
+			return
+		}
+
+		// Parse request body
+		var req ClarifyDeepResearchRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			log.Error("invalid request body",
+				slog.String("user_id", userID),
+				slog.String("error", err.Error()))
+			c.JSON(http.StatusBadRequest, ClarifyDeepResearchResponse{
+				Success: false,
+				Error:   "Invalid request body: " + err.Error(),
+			})
+			return
+		}
+
+		log.Info("submitting clarification response",
+			slog.String("user_id", userID),
+			slog.String("chat_id", req.ChatID),
+			slog.String("response", req.Response))
+
+		// Check if there's an active backend session
+		if !sessionManager.HasActiveBackend(userID, req.ChatID) {
+			log.Error("no active session found",
+				slog.String("user_id", userID),
+				slog.String("chat_id", req.ChatID))
+			c.JSON(http.StatusNotFound, ClarifyDeepResearchResponse{
+				Success: false,
+				Error:   "No active deep research session found",
+			})
+			return
+		}
+
+		// Get the backend connection
+		session, exists := sessionManager.GetSession(userID, req.ChatID)
+		if !exists || session == nil || session.BackendConn == nil {
+			log.Error("backend connection not found",
+				slog.String("user_id", userID),
+				slog.String("chat_id", req.ChatID))
+			c.JSON(http.StatusInternalServerError, ClarifyDeepResearchResponse{
+				Success: false,
+				Error:   "Backend connection not available",
+			})
+			return
+		}
+
+		// Create message to send to backend
+		clarificationMsg := map[string]string{
+			"type":    "message",
+			"content": req.Response,
+		}
+
+		// Send clarification response to Python backend
+		if err := session.BackendConn.WriteJSON(clarificationMsg); err != nil {
+			log.Error("failed to send clarification to backend",
+				slog.String("user_id", userID),
+				slog.String("chat_id", req.ChatID),
+				slog.String("error", err.Error()))
+			c.JSON(http.StatusInternalServerError, ClarifyDeepResearchResponse{
+				Success: false,
+				Error:   "Failed to send clarification response",
+			})
+			return
+		}
+
+		log.Info("clarification response sent successfully",
+			slog.String("user_id", userID),
+			slog.String("chat_id", req.ChatID))
+
+		c.JSON(http.StatusOK, ClarifyDeepResearchResponse{
+			Success: true,
+			Message: "Clarification response submitted successfully",
+		})
+	}
+}
+
 // DeepResearchHandler handles WebSocket connections for deep research streaming.
 func DeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -230,7 +339,7 @@ func DeepResearchHandler(logger *logger.Logger, trackingService *request_trackin
 			slog.String("method", c.Request.Method))
 
 		// Get user ID from auth context
-		userID, exists := auth.GetUserUUID(c)
+		userID, exists := auth.GetUserID(c)
 		if !exists {
 			log.Error("authentication failed - user not found in context",
 				slog.String("path", c.Request.URL.Path),

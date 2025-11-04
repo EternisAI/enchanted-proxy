@@ -315,16 +315,26 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 					Status:    sessionState,
 				}
 
+
+				// Update thinkingState based on message type
+				// For progress messages, store the message text as thinking state
+				if messageType == "research_progress" && msg.Content != "" {
+					chatState.ThinkingState = msg.Content
+				} else if messageType == "clarification_needed" || messageType == "research_complete" || messageType == "error" {
+					// Clear thinking state for terminal states and clarifications
+					chatState.ThinkingState = ""
+				}
+
 				// Parse error message if this is an error event
 				if messageType == "error" {
-					var errMsg Message
-					if err := json.Unmarshal(message, &errMsg); err == nil && errMsg.Error != "" {
+					if msg.Error != "" {
 						chatState.Error = &auth.DeepResearchError{
-							UnderlyingError: errMsg.Error,
+							UnderlyingError: msg.Error,
 							UserMessage:     "An error occurred during deep research. Please try again.",
 						}
 					}
 				}
+
 
 				if err := s.firebaseClient.UpdateChatDeepResearchState(ctx, userID, chatID, chatState); err != nil {
 					log.Error("failed to update chat deep research state",
@@ -353,7 +363,9 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 			}
 
 			// Encrypt and store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
-			if s.encryptionService != nil && s.firestoreClient != nil {
+		// Only store clarifications and final reports as messages (not progress updates)
+			if s.encryptionService != nil && s.firestoreClient != nil &&
+			(messageType == "clarification_needed" || messageType == "research_complete") {
 				// Generate message UUID
 				messageID := uuid.New().String()
 
@@ -975,12 +987,20 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 				Status:    sessionState,
 			}
 
+			// Update thinkingState based on message type
+			// For progress messages, store the message text as thinking state
+			if messageType == "research_progress" && msg.Content != "" {
+				chatState.ThinkingState = msg.Content
+			} else if messageType == "clarification_needed" || messageType == "research_complete" || messageType == "error" {
+				// Clear thinking state for terminal states and clarifications
+				chatState.ThinkingState = ""
+			}
+
 			// Parse error message if this is an error event
 			if messageType == "error" {
-				var errMsg Message
-				if err := json.Unmarshal(message, &errMsg); err == nil && errMsg.Error != "" {
+				if msg.Error != "" {
 					chatState.Error = &auth.DeepResearchError{
-						UnderlyingError: errMsg.Error,
+						UnderlyingError: msg.Error,
 						UserMessage:     "An error occurred during deep research. Please try again.",
 					}
 				}
@@ -1028,7 +1048,9 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 				}
 
 				// Encrypt and store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
-				if s.encryptionService != nil && s.firestoreClient != nil {
+		// Only store clarifications and final reports as messages (not progress updates)
+				if s.encryptionService != nil && s.firestoreClient != nil &&
+			(messageType == "clarification_needed" || messageType == "research_complete") {
 					// Generate message UUID
 					messageID := uuid.New().String()
 
@@ -1188,7 +1210,8 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 				}
 
 				// Encrypt and store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID} (even without storage)
-				if s.encryptionService != nil && s.firestoreClient != nil {
+				if s.encryptionService != nil && s.firestoreClient != nil &&
+			(messageType == "clarification_needed" || messageType == "research_complete") {
 					// Generate message UUID
 					messageID := uuid.New().String()
 
