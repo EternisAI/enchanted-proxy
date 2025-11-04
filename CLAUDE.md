@@ -75,3 +75,111 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `internal/oauth/service.go:ExchangeToken()` - OAuth token exchange logic
 - `internal/composio/service.go` - Composio API integration
 - `internal/invitecode/service.go` - Invite code management
+
+## End-to-End Encryption Support
+
+### Overview
+
+The proxy server includes encryption utilities in `internal/messaging/encryption.go` to support future server-side encryption features and validation. The proxy **never has access to user private keys** - it only provides optional encryption utilities.
+
+### Implementation
+
+**File:** `internal/messaging/encryption.go` (141 lines)
+
+**Key Functions:**
+
+- `EncryptMessage(content string, publicKeyJWK string) (string, error)` - ECIES encryption matching iOS/Web
+- `parseJWKPublicKey(jwkJSON string) (*ecdh.PublicKey, error)` - JWK parsing with P-256 validation
+- `ValidatePublicKey(publicKeyJWK string) error` - Public key validation
+
+**Algorithm Details:**
+
+```go
+// ECIES encryption flow (matching iOS/Web):
+// 1. Parse recipient's P-256 public key from JWK
+// 2. Generate ephemeral P-256 keypair
+// 3. ECDH: sharedSecret = ephemeralPrivate × recipientPublic
+// 4. HKDF-SHA256: messageKey = HKDF(sharedSecret, "", "message-encryption")
+// 5. AES-256-GCM with random 12-byte nonce
+// 6. Output: base64(ephemeralPublicKey[65] || nonce[12] || ciphertext || tag[16])
+```
+
+**Dependencies:**
+
+- `crypto/ecdh` - ECDH key agreement (P-256 curve)
+- `crypto/aes` - AES-256-GCM encryption
+- `golang.org/x/crypto/hkdf` - HKDF key derivation
+- `crypto/sha256` - SHA-256 hashing
+
+### JWK Format Support
+
+**Supported JWK Structure:**
+
+```json
+{
+  "kty": "EC",
+  "crv": "P-256",
+  "x": "base64url(X coordinate, 32 bytes)",
+  "y": "base64url(Y coordinate, 32 bytes)"
+}
+```
+
+**Validation:**
+
+- Verifies `kty == "EC"` and `crv == "P-256"`
+- Decodes base64url coordinates
+- Validates point is on P-256 curve
+- Returns `*ecdh.PublicKey` for encryption operations
+
+### Cross-Platform Compatibility
+
+**Critical Constants (must match iOS/Web):**
+
+```go
+const (
+    messageEncryptionInfo = "message-encryption"
+    ephemeralPublicKeySize = 65  // Uncompressed P-256 point
+    nonceSize = 12               // AES-GCM nonce
+    tagSize = 16                 // AES-GCM authentication tag
+)
+```
+
+**Binary Format:**
+
+```
+base64(ephemeralPublicKey[65] || nonce[12] || ciphertext || tag[16])
+```
+
+This format is **identical** to iOS and Web implementations, ensuring messages encrypted by the proxy can be decrypted by clients and vice versa.
+
+### Security Properties
+
+- **Forward Secrecy:** Ephemeral keys generated per message
+- **Authentication:** AES-GCM provides built-in authentication (tag)
+- **Key Agreement:** ECDH with P-256 (256-bit security level)
+- **Key Derivation:** HKDF-SHA256 for message key derivation
+- **Zero Knowledge:** Proxy never stores or has access to user private keys
+
+### Use Cases
+
+1. **Public Key Validation:** Verify user-provided public keys are well-formed
+2. **Server-Side Encryption:** Encrypt messages on behalf of authenticated users (future feature)
+3. **Testing & Verification:** Validate cross-platform encryption compatibility
+4. **Key Exchange Support:** Facilitate secure key exchange flows
+
+### Testing
+
+```bash
+# Run encryption tests
+go test ./internal/messaging/... -v
+
+# Run all tests with race detection
+make test
+```
+
+### Future Enhancements
+
+- Encrypted message routing between users
+- Server-side re-encryption for key rotation
+- Encrypted webhook delivery
+- Secure message queuing

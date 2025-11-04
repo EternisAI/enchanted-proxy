@@ -160,29 +160,53 @@ func (s *Service) handleMessage(msg MessageToStore) {
 
 // getPublicKey retrieves public key with caching
 func (s *Service) getPublicKey(ctx context.Context, userID string) (*UserPublicKey, error) {
+	log := s.logger.WithContext(ctx)
+
 	// Check cache
 	if key := s.publicKeyCache.Get(userID); key != nil {
+		log.Debug("public key retrieved from cache",
+			slog.String("user_id", userID),
+			slog.String("credential_id", key.CredentialID),
+			slog.String("provider", key.Provider),
+		)
 		return key, nil
 	}
 
 	// Fetch from Firestore
 	key, err := s.firestoreClient.GetUserPublicKey(ctx, userID)
 	if err != nil {
+		log.Error("failed to fetch public key from Firestore",
+			slog.String("user_id", userID),
+			slog.String("error", err.Error()),
+		)
 		return nil, err
 	}
 
 	// Check if key is valid
 	if key == nil || key.Public == "" {
+		log.Error("public key is empty",
+			slog.String("user_id", userID),
+		)
 		return nil, fmt.Errorf("no public key found for user %s", userID)
 	}
 
 	// Validate key
 	if err := s.encryptionService.ValidatePublicKey(key.Public); err != nil {
+		log.Error("public key validation failed",
+			slog.String("user_id", userID),
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("invalid public key: %w", err)
 	}
 
 	// Cache it
 	s.publicKeyCache.Set(userID, key)
+
+	log.Info("public key fetched and cached",
+		slog.String("user_id", userID),
+		slog.String("credential_id", key.CredentialID),
+		slog.String("provider", key.Provider),
+	)
 
 	return key, nil
 }

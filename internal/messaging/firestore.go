@@ -68,6 +68,9 @@ func (f *FirestoreClient) GetUserPublicKey(ctx context.Context, userID string) (
 	if prfSalt, ok := accountKeyMap["prfSalt"].(string); ok {
 		key.PrfSalt = prfSalt
 	}
+	if credentialId, ok := accountKeyMap["credentialId"].(string); ok {
+		key.CredentialID = credentialId
+	}
 	if provider, ok := accountKeyMap["provider"].(string); ok {
 		key.Provider = provider
 	}

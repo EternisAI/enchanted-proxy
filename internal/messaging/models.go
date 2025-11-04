@@ -16,11 +16,12 @@ type ChatMessage struct {
 // UserPublicKey represents a user's ECDSA P-256 public key
 type UserPublicKey struct {
 	CreatedAt        time.Time `firestore:"createdAt"`
-	EncryptedPrivate string    `firestore:"encryptedPrivate"` // Encrypted private key (not used by proxy)
-	Nonce            string    `firestore:"nonce"`             // Encryption nonce
-	PrfSalt          string    `firestore:"prfSalt"`           // PRF salt for key derivation
-	Provider         string    `firestore:"provider"`          // "apple", "android", etc.
-	Public           string    `firestore:"public"`            // JWK JSON string (EC P-256)
+	EncryptedPrivate string    `firestore:"encryptedPrivate"`        // Encrypted private key (not used by proxy)
+	Nonce            string    `firestore:"nonce"`                    // Encryption nonce
+	PrfSalt          string    `firestore:"prfSalt"`                  // PRF salt for key derivation
+	CredentialID     string    `firestore:"credentialId,omitempty"`   // Passkey credential ID (base64, optional)
+	Provider         string    `firestore:"provider"`                 // "apple", "android", etc.
+	Public           string    `firestore:"public"`                   // JWK JSON string (EC P-256)
 	UpdatedAt        time.Time `firestore:"updatedAt"`
 	Version          int       `firestore:"version"` // Key version number
 }
