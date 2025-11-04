@@ -85,7 +85,7 @@ The proxy server **actively encrypts AI responses** before storing them in Fires
 **Proxy's Role:**
 - Decrypts user messages to send to OpenAI (necessary for AI processing)
 - Encrypts AI responses with user's public key before Firestore storage
-- Caches user public keys for performance (LRU cache, 15min TTL)
+- Fetches user public keys directly from Firestore (no caching - always uses latest key)
 - Supports graceful degradation (plaintext fallback if encryption fails)
 
 **Security:** Proxy never stores or has access to user private keys (only public keys).
@@ -301,10 +301,6 @@ MESSAGE_STORAGE_REQUIRE_ENCRYPTION=false  # If true, reject plaintext storage
 # Worker pool
 MESSAGE_WORKER_COUNT=10                    # Number of concurrent workers
 MESSAGE_QUEUE_SIZE=10000                   # Message queue buffer size
-
-# Cache settings
-PUBLIC_KEY_CACHE_SIZE=1000                 # Max cached public keys
-PUBLIC_KEY_CACHE_TTL=15m                   # Cache entry lifetime
 ```
 
 ### Graceful Degradation
@@ -356,7 +352,7 @@ logger.Debug("Public key cache hit", "userId", userID, "hitRate", hitRate)
 **Metrics to Monitor:**
 - Message queue depth (alert if > 8000)
 - Encryption success/failure rate
-- Public key cache hit rate (should be > 90%)
+- Firestore read latency for public key fetches
 - Average message processing time (should be < 500ms)
 
 ### Future Enhancements
