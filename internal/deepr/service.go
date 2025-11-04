@@ -388,56 +388,95 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 				}
 			}
 
-			// Encrypt and store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
+			// Store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
 		// Only store clarifications and final reports as messages (not progress updates)
-			if s.encryptionService != nil && s.firestoreClient != nil &&
+			if s.firestoreClient != nil &&
 			(messageType == "clarification_needed" || messageType == "research_complete") {
 				// Generate message UUID
 				messageID := uuid.New().String()
 
-				// Get user's public key
-				publicKey, err := s.firestoreClient.GetUserPublicKey(ctx, userID)
-				if err != nil {
-					log.Warn("failed to get user public key for encryption",
+				// Extract the actual content from the message
+				var contentToStore string
+				if messageType == "clarification_needed" {
+					contentToStore = msg.Content
+				} else if messageType == "research_complete" {
+					contentToStore = msg.FinalReport
+				}
+
+				// Skip if no content to store
+				if contentToStore == "" {
+					log.Warn("no content to store for message",
 						slog.String("user_id", userID),
 						slog.String("chat_id", chatID),
-						slog.String("message_id", messageID),
-						slog.String("error", err.Error()))
+						slog.String("message_type", messageType))
 				} else {
-					// Encrypt the message (JSON string)
-					encryptedContent, err := s.encryptionService.EncryptMessage(string(message), publicKey.Public)
-					if err != nil {
-						log.Error("failed to encrypt message",
-							slog.String("user_id", userID),
-							slog.String("chat_id", chatID),
-							slog.String("message_id", messageID),
-							slog.String("error", err.Error()))
-					} else {
-						// Create ChatMessage for Firestore
-						chatMessage := &messaging.ChatMessage{
-							ID:                  messageID,
-							EncryptedContent:    encryptedContent,
-							IsFromUser:          false, // Deep research messages are from assistant
-							ChatID:              chatID,
-							IsError:             messageType == "error" || msg.Error != "",
-							Timestamp:           time.Now(),
-							PublicEncryptionKey: publicKey.Public,
-						}
+					var encryptedContent string
+					var publicKeyStr string
 
-						// Store encrypted message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
-						if err := s.firestoreClient.SaveMessage(ctx, userID, chatMessage); err != nil {
-							log.Error("failed to save encrypted message to Firestore",
+					// Try to encrypt if encryption service is available
+					if s.encryptionService != nil {
+						// Get user's public key
+						publicKey, err := s.firestoreClient.GetUserPublicKey(ctx, userID)
+						if err != nil {
+							log.Warn("failed to get user public key, saving as plaintext",
 								slog.String("user_id", userID),
 								slog.String("chat_id", chatID),
 								slog.String("message_id", messageID),
 								slog.String("error", err.Error()))
+							encryptedContent = contentToStore
+							publicKeyStr = "none"
 						} else {
-							log.Debug("encrypted message saved to Firestore",
-								slog.String("user_id", userID),
-								slog.String("chat_id", chatID),
-								slog.String("message_id", messageID),
-								slog.String("message_type", messageType))
+							// Encrypt the message content
+							encrypted, err := s.encryptionService.EncryptMessage(contentToStore, publicKey.Public)
+							if err != nil {
+								log.Warn("failed to encrypt message, saving as plaintext",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("message_id", messageID),
+									slog.String("error", err.Error()))
+								encryptedContent = contentToStore
+								publicKeyStr = "none"
+							} else {
+								encryptedContent = encrypted
+								publicKeyStr = publicKey.Public
+							}
 						}
+					} else {
+						// No encryption service available, save as plaintext
+						log.Info("encryption service unavailable, saving message as plaintext",
+							slog.String("user_id", userID),
+							slog.String("chat_id", chatID),
+							slog.String("message_id", messageID))
+						encryptedContent = contentToStore
+						publicKeyStr = "none"
+					}
+
+					// Create ChatMessage for Firestore
+					chatMessage := &messaging.ChatMessage{
+						ID:                  messageID,
+						EncryptedContent:    encryptedContent,
+						IsFromUser:          false, // Deep research messages are from assistant
+						ChatID:              chatID,
+						IsError:             messageType == "error" || msg.Error != "",
+						Timestamp:           time.Now(),
+						PublicEncryptionKey: publicKeyStr,
+					}
+
+					// Store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
+					if err := s.firestoreClient.SaveMessage(ctx, userID, chatMessage); err != nil {
+						log.Error("failed to save message to Firestore",
+							slog.String("user_id", userID),
+							slog.String("chat_id", chatID),
+							slog.String("message_id", messageID),
+							slog.Bool("encrypted", publicKeyStr != "none"),
+							slog.String("error", err.Error()))
+					} else {
+						log.Info("message saved to Firestore",
+							slog.String("user_id", userID),
+							slog.String("chat_id", chatID),
+							slog.String("message_id", messageID),
+							slog.String("message_type", messageType),
+							slog.Bool("encrypted", publicKeyStr != "none"))
 					}
 				}
 			}
@@ -1073,56 +1112,95 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 						slog.Int("client_count", clientCount))
 				}
 
-				// Encrypt and store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
+				// Store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
 		// Only store clarifications and final reports as messages (not progress updates)
-				if s.encryptionService != nil && s.firestoreClient != nil &&
+				if s.firestoreClient != nil &&
 			(messageType == "clarification_needed" || messageType == "research_complete") {
 					// Generate message UUID
 					messageID := uuid.New().String()
 
-					// Get user's public key
-					publicKey, err := s.firestoreClient.GetUserPublicKey(ctx, userID)
-					if err != nil {
-						log.Warn("failed to get user public key for encryption, skipping encrypted storage",
+					// Extract the actual content from the message
+					var contentToStore string
+					if messageType == "clarification_needed" {
+						contentToStore = msg.Content
+					} else if messageType == "research_complete" {
+						contentToStore = msg.FinalReport
+					}
+
+					// Skip if no content to store
+					if contentToStore == "" {
+						log.Warn("no content to store for message",
 							slog.String("user_id", userID),
 							slog.String("chat_id", chatID),
-							slog.String("message_id", messageID),
-							slog.String("error", err.Error()))
+							slog.String("message_type", messageType))
 					} else {
-						// Encrypt the message (JSON string)
-						encryptedContent, err := s.encryptionService.EncryptMessage(string(message), publicKey.Public)
-						if err != nil {
-							log.Error("failed to encrypt message",
-								slog.String("user_id", userID),
-								slog.String("chat_id", chatID),
-								slog.String("message_id", messageID),
-								slog.String("error", err.Error()))
-						} else {
-							// Create ChatMessage for Firestore
-							chatMessage := &messaging.ChatMessage{
-								ID:                  messageID,
-								EncryptedContent:    encryptedContent,
-								IsFromUser:          false, // Deep research messages are from assistant
-								ChatID:              chatID,
-								IsError:             messageType == "error" || msg.Error != "",
-								Timestamp:           time.Now(),
-								PublicEncryptionKey: publicKey.Public,
-							}
+						var encryptedContent string
+						var publicKeyStr string
 
-							// Store encrypted message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
-							if err := s.firestoreClient.SaveMessage(ctx, userID, chatMessage); err != nil {
-								log.Error("failed to save encrypted message to Firestore",
+						// Try to encrypt if encryption service is available
+						if s.encryptionService != nil {
+							// Get user's public key
+							publicKey, err := s.firestoreClient.GetUserPublicKey(ctx, userID)
+							if err != nil {
+								log.Warn("failed to get user public key, saving as plaintext",
 									slog.String("user_id", userID),
 									slog.String("chat_id", chatID),
 									slog.String("message_id", messageID),
 									slog.String("error", err.Error()))
+								encryptedContent = contentToStore
+								publicKeyStr = "none"
 							} else {
-								log.Debug("encrypted message saved to Firestore",
-									slog.String("user_id", userID),
-									slog.String("chat_id", chatID),
-									slog.String("message_id", messageID),
-									slog.String("message_type", messageType))
+								// Encrypt the message content
+								encrypted, err := s.encryptionService.EncryptMessage(contentToStore, publicKey.Public)
+								if err != nil {
+									log.Warn("failed to encrypt message, saving as plaintext",
+										slog.String("user_id", userID),
+										slog.String("chat_id", chatID),
+										slog.String("message_id", messageID),
+										slog.String("error", err.Error()))
+									encryptedContent = contentToStore
+									publicKeyStr = "none"
+								} else {
+									encryptedContent = encrypted
+									publicKeyStr = publicKey.Public
+								}
 							}
+						} else {
+							// No encryption service available, save as plaintext
+							log.Info("encryption service unavailable, saving message as plaintext",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("message_id", messageID))
+							encryptedContent = contentToStore
+							publicKeyStr = "none"
+						}
+
+						// Create ChatMessage for Firestore
+						chatMessage := &messaging.ChatMessage{
+							ID:                  messageID,
+							EncryptedContent:    encryptedContent,
+							IsFromUser:          false, // Deep research messages are from assistant
+							ChatID:              chatID,
+							IsError:             messageType == "error" || msg.Error != "",
+							Timestamp:           time.Now(),
+							PublicEncryptionKey: publicKeyStr,
+						}
+
+						// Store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
+						if err := s.firestoreClient.SaveMessage(ctx, userID, chatMessage); err != nil {
+							log.Error("failed to save message to Firestore",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("message_id", messageID),
+								slog.Bool("encrypted", publicKeyStr != "none"),
+								slog.String("error", err.Error()))
+						} else {
+							log.Info("message saved to Firestore",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("message_id", messageID),
+								slog.String("message_type", messageType),
+								slog.Bool("encrypted", publicKeyStr != "none"))
 						}
 					}
 				}
@@ -1235,56 +1313,79 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 						slog.String("error", broadcastErr.Error()))
 				}
 
-				// Encrypt and store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID} (even without storage)
-				if s.encryptionService != nil && s.firestoreClient != nil &&
+				// Store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID} (even without storage)
+				if s.firestoreClient != nil &&
 			(messageType == "clarification_needed" || messageType == "research_complete") {
 					// Generate message UUID
 					messageID := uuid.New().String()
 
-					// Get user's public key
-					publicKey, err := s.firestoreClient.GetUserPublicKey(ctx, userID)
-					if err != nil {
-						log.Warn("failed to get user public key for encryption, skipping encrypted storage (no storage)",
-							slog.String("user_id", userID),
-							slog.String("chat_id", chatID),
-							slog.String("message_id", messageID),
-							slog.String("error", err.Error()))
-					} else {
-						// Encrypt the message (JSON string)
-						encryptedContent, err := s.encryptionService.EncryptMessage(string(message), publicKey.Public)
+					var encryptedContent string
+					var publicKeyStr string
+
+					// Try to encrypt if encryption service is available
+					if s.encryptionService != nil {
+						// Get user's public key
+						publicKey, err := s.firestoreClient.GetUserPublicKey(ctx, userID)
 						if err != nil {
-							log.Error("failed to encrypt message (no storage)",
+							log.Warn("failed to get user public key, saving as plaintext (no storage)",
 								slog.String("user_id", userID),
 								slog.String("chat_id", chatID),
 								slog.String("message_id", messageID),
 								slog.String("error", err.Error()))
+							encryptedContent = string(message)
+							publicKeyStr = "none"
 						} else {
-							// Create ChatMessage for Firestore
-							chatMessage := &messaging.ChatMessage{
-								ID:                  messageID,
-								EncryptedContent:    encryptedContent,
-								IsFromUser:          false, // Deep research messages are from assistant
-								ChatID:              chatID,
-								IsError:             messageType == "error" || msg.Error != "",
-								Timestamp:           time.Now(),
-								PublicEncryptionKey: publicKey.Public,
-							}
-
-							// Store encrypted message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
-							if err := s.firestoreClient.SaveMessage(ctx, userID, chatMessage); err != nil {
-								log.Error("failed to save encrypted message to Firestore (no storage)",
+							// Encrypt the message (JSON string)
+							encrypted, err := s.encryptionService.EncryptMessage(string(message), publicKey.Public)
+							if err != nil {
+								log.Warn("failed to encrypt message, saving as plaintext (no storage)",
 									slog.String("user_id", userID),
 									slog.String("chat_id", chatID),
 									slog.String("message_id", messageID),
 									slog.String("error", err.Error()))
+								encryptedContent = string(message)
+								publicKeyStr = "none"
 							} else {
-								log.Debug("encrypted message saved to Firestore (no storage)",
-									slog.String("user_id", userID),
-									slog.String("chat_id", chatID),
-									slog.String("message_id", messageID),
-									slog.String("message_type", messageType))
+								encryptedContent = encrypted
+								publicKeyStr = publicKey.Public
 							}
 						}
+					} else {
+						// No encryption service available, save as plaintext
+						log.Info("encryption service unavailable, saving message as plaintext (no storage)",
+							slog.String("user_id", userID),
+							slog.String("chat_id", chatID),
+							slog.String("message_id", messageID))
+						encryptedContent = string(message)
+						publicKeyStr = "none"
+					}
+
+					// Create ChatMessage for Firestore
+					chatMessage := &messaging.ChatMessage{
+						ID:                  messageID,
+						EncryptedContent:    encryptedContent,
+						IsFromUser:          false, // Deep research messages are from assistant
+						ChatID:              chatID,
+						IsError:             messageType == "error" || msg.Error != "",
+						Timestamp:           time.Now(),
+						PublicEncryptionKey: publicKeyStr,
+					}
+
+					// Store message to Firestore at /users/{userID}/chats/{chatID}/messages/{messageID}
+					if err := s.firestoreClient.SaveMessage(ctx, userID, chatMessage); err != nil {
+						log.Error("failed to save message to Firestore (no storage)",
+							slog.String("user_id", userID),
+							slog.String("chat_id", chatID),
+							slog.String("message_id", messageID),
+							slog.Bool("encrypted", publicKeyStr != "none"),
+							slog.String("error", err.Error()))
+					} else {
+						log.Info("message saved to Firestore (no storage)",
+							slog.String("user_id", userID),
+							slog.String("chat_id", chatID),
+							slog.String("message_id", messageID),
+							slog.String("message_type", messageType),
+							slog.Bool("encrypted", publicKeyStr != "none"))
 					}
 				}
 
