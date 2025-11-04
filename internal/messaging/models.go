@@ -11,6 +11,7 @@ type ChatMessage struct {
 	IsError             bool      `firestore:"isError"`              // true if error occurred
 	Timestamp           time.Time `firestore:"timestamp"`            // Message timestamp
 	PublicEncryptionKey string    `firestore:"publicEncryptionKey"` // Public key used (JSON string or "none")
+	PasskeyID           string    `firestore:"passkeyId,omitempty"`  // Passkey credential ID used for encryption (optional for backwards compatibility)
 }
 
 // UserPublicKey represents a user's ECDSA P-256 public key
