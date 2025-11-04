@@ -86,7 +86,7 @@ func (s *Service) canForwardMessage(ctx context.Context, userID, chatID string) 
 // Premium users (HasActivePro = true): Can have UNLIMITED parallel deep research sessions with no restrictions
 // Freemium users: Limited to 1 active session at a time and 1 total completed session lifetime
 // Returns nil if user is allowed to proceed, error otherwise.
-func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websocket.Conn, userID, chatID string, isReconnection bool) error {
+func (s *Service) validateFreemiumAccess(ctx context.Context, userID, chatID string, isReconnection bool) error {
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 
 	// Skip validation if deep research rate limiting is disabled
@@ -104,10 +104,7 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 			slog.String("user_id", userID),
 			slog.String("chat_id", chatID),
 			slog.String("error", err.Error()))
-		if clientConn != nil {
-			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify subscription status"}`))
-		}
-		return fmt.Errorf("failed to check subscription status: %w", err)
+		return fmt.Errorf("failed to verify subscription status")
 	}
 
 	// Premium users can have UNLIMITED parallel sessions - bypass all restrictions
@@ -138,10 +135,7 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 			slog.String("user_id", userID),
 			slog.String("chat_id", chatID),
 			slog.String("error", err.Error()))
-		if clientConn != nil {
-			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify session state"}`))
-			}
-		return fmt.Errorf("failed to get session state: %w", err)
+		return fmt.Errorf("failed to verify session state")
 	}
 
 	// If this is a reconnection or existing session
@@ -167,10 +161,7 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 				log.Error("failed to get completed session count",
 					slog.String("user_id", userID),
 					slog.String("error", err.Error()))
-				if clientConn != nil {
-					clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify usage status"}`))
-					}
-				return fmt.Errorf("failed to get completed session count: %w", err)
+				return fmt.Errorf("failed to verify usage status")
 			}
 
 			if completedCount >= 1 {
@@ -178,10 +169,7 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 					slog.String("user_id", userID),
 					slog.String("chat_id", chatID),
 					slog.Int("completed_count", completedCount))
-				if clientConn != nil {
-					clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You have already used your free deep research. Please upgrade to Pro for unlimited access.", "error_code": "FREE_LIMIT_REACHED"}`))
-					}
-				return fmt.Errorf("freemium quota exhausted for user %s", userID)
+				return fmt.Errorf("you have already used your free deep research. Please upgrade to Pro for unlimited access")
 			}
 		}
 
@@ -194,10 +182,7 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 		log.Error("failed to get completed session count",
 			slog.String("user_id", userID),
 			slog.String("error", err.Error()))
-		if clientConn != nil {
-			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify usage status"}`))
-			}
-		return fmt.Errorf("failed to get completed session count: %w", err)
+		return fmt.Errorf("failed to verify usage status")
 	}
 
 	if completedCount >= 1 {
@@ -205,10 +190,7 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 			slog.String("user_id", userID),
 			slog.String("chat_id", chatID),
 			slog.Int("completed_count", completedCount))
-		if clientConn != nil {
-			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You have already used your free deep research. Please upgrade to Pro for unlimited access.", "error_code": "FREE_LIMIT_REACHED"}`))
-			}
-		return fmt.Errorf("freemium quota exhausted for user %s", userID)
+		return fmt.Errorf("you have already used your free deep research. Please upgrade to Pro for unlimited access")
 	}
 
 	// Check if user has any active (in_progress or clarify) sessions
@@ -217,10 +199,7 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 		log.Error("failed to get active sessions",
 			slog.String("user_id", userID),
 			slog.String("error", err.Error()))
-		if clientConn != nil {
-			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify active sessions"}`))
-			}
-		return fmt.Errorf("failed to get active sessions: %w", err)
+		return fmt.Errorf("failed to verify active sessions")
 	}
 
 	if len(activeSessions) > 0 {
@@ -229,10 +208,7 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 			slog.String("chat_id", chatID),
 			slog.Int("active_sessions_count", len(activeSessions)),
 			slog.Bool("has_active_pro", false)) // This should always be false here
-		if clientConn != nil {
-			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You already have an active deep research session. Please complete or cancel it before starting a new one. Upgrade to Pro for unlimited parallel sessions.", "error_code": "ACTIVE_SESSION_EXISTS"}`))
-		}
-		return fmt.Errorf("freemium user %s already has active session", userID)
+		return fmt.Errorf("you already have an active deep research session. Please complete or cancel it before starting a new one. Upgrade to Pro for unlimited parallel sessions")
 	}
 
 	log.Info("freemium user allowed to start new session",
@@ -547,11 +523,18 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 		slog.Bool("is_reconnection", false))
 
 	// Validate freemium access for new connections
-	if err := s.validateFreemiumAccess(ctx, clientConn, userID, chatID, false); err != nil {
+	if err := s.validateFreemiumAccess(ctx, userID, chatID, false); err != nil {
 		log.Error("freemium validation failed",
 			slog.String("user_id", userID),
 			slog.String("chat_id", chatID),
 			slog.String("error", err.Error()))
+		// Send error message to client
+		errorMsg := map[string]string{
+			"error": err.Error(),
+		}
+		if errJSON, marshalErr := json.Marshal(errorMsg); marshalErr == nil {
+			clientConn.WriteMessage(websocket.TextMessage, errJSON)
+		}
 		clientConn.Close()
 		return
 	}
@@ -656,11 +639,18 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 		slog.String("client_id", clientID))
 
 	// Validate freemium access for reconnections
-	if err := s.validateFreemiumAccess(ctx, clientConn, userID, chatID, true); err != nil {
+	if err := s.validateFreemiumAccess(ctx, userID, chatID, true); err != nil {
 		log.Error("freemium validation failed for reconnection",
 			slog.String("user_id", userID),
 			slog.String("chat_id", chatID),
 			slog.String("error", err.Error()))
+		// Send error message to client
+		errorMsg := map[string]string{
+			"error": err.Error(),
+		}
+		if errJSON, marshalErr := json.Marshal(errorMsg); marshalErr == nil {
+			clientConn.WriteMessage(websocket.TextMessage, errJSON)
+		}
 		clientConn.Close()
 		return
 	}

@@ -373,7 +373,6 @@ func (f *FirebaseClient) GetChatDeepResearchState(ctx context.Context, userID, c
 		state.ThinkingState = thinkingState
 	}
 	if errorData, ok := stateMap["error"].(map[string]interface{}); ok {
-	if errorData, ok := stateMap["error"].(map[string]interface{}); ok {
 		drErr := &DeepResearchError{}
 		if underlying, ok := errorData["underlyingError"].(string); ok {
 			drErr.UnderlyingError = underlying

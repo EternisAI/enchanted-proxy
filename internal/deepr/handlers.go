@@ -104,8 +104,8 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			return
 		}
 
-		// Validate freemium access (pass nil since this is REST endpoint, not websocket)
-		if err := service.validateFreemiumAccess(c.Request.Context(), nil, userID, req.ChatID, false); err != nil {
+		// Validate freemium access
+		if err := service.validateFreemiumAccess(c.Request.Context(), userID, req.ChatID, false); err != nil {
 			log.Error("freemium validation failed",
 				slog.String("user_id", userID),
 				slog.String("chat_id", req.ChatID),
