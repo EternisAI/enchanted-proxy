@@ -344,8 +344,8 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 
 				// Update thinkingState based on message type
 				// For progress messages, store the message text as thinking state
-				if messageType == "research_progress" && msg.Content != "" {
-					chatState.ThinkingState = msg.Content
+				if messageType == "research_progress" && msg.Message != "" {
+					chatState.ThinkingState = msg.Message
 				} else if messageType == "clarification_needed" || messageType == "research_complete" || messageType == "error" {
 					// Clear thinking state for terminal states and clarifications
 					chatState.ThinkingState = ""
@@ -396,12 +396,8 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 				messageID := uuid.New().String()
 
 				// Extract the actual content from the message
-				var contentToStore string
-				if messageType == "clarification_needed" {
-					contentToStore = msg.Content
-				} else if messageType == "research_complete" {
-					contentToStore = msg.FinalReport
-				}
+				// Python backend sends content in the "message" field
+				contentToStore := msg.Message
 
 				// Skip if no content to store
 				if contentToStore == "" {
@@ -482,7 +478,7 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 			}
 
 			// Check if session is complete
-			if msg.Type == "research_complete" || msg.Type == "error" || msg.FinalReport != "" || msg.Error != "" {
+			if msg.Type == "research_complete" || msg.Type == "error" || msg.Error != "" {
 				log.Info("research session complete",
 					slog.String("user_id", userID),
 					slog.String("chat_id", chatID),
@@ -1092,7 +1088,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 					slog.String("user_id", userID),
 					slog.String("chat_id", chatID),
 					slog.String("message_type", messageType),
-					slog.Bool("has_final_report", msg.FinalReport != ""),
+					slog.Bool("is_complete", msg.Type == "research_complete"),
 					slog.Int("client_count", clientCount),
 					slog.Bool("broadcast_success", broadcastErr == nil))
 
@@ -1120,12 +1116,8 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 					messageID := uuid.New().String()
 
 					// Extract the actual content from the message
-					var contentToStore string
-					if messageType == "clarification_needed" {
-						contentToStore = msg.Content
-					} else if messageType == "research_complete" {
-						contentToStore = msg.FinalReport
-					}
+					// Python backend sends content in the "message" field
+					contentToStore := msg.Message
 
 					// Skip if no content to store
 					if contentToStore == "" {
@@ -1279,12 +1271,12 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 				}
 
 				// Check if session is complete
-				if msg.FinalReport != "" || msg.Type == "error" || msg.Error != "" || msg.Type == "research_complete" {
+				if msg.Type == "research_complete" || msg.Type == "error" || msg.Error != "" {
 					log.Info("session complete - final message received",
 						slog.String("user_id", userID),
 						slog.String("chat_id", chatID),
 						slog.String("message_type", messageType),
-						slog.Bool("has_final_report", msg.FinalReport != ""),
+						slog.Bool("is_complete", msg.Type == "research_complete"),
 						slog.Bool("has_error", msg.Error != ""),
 						slog.Bool("is_research_complete", msg.Type == "research_complete"),
 						slog.Int("total_messages", messageCount),
@@ -1304,7 +1296,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 					slog.String("user_id", userID),
 					slog.String("chat_id", chatID),
 					slog.String("message_type", messageType),
-					slog.Bool("has_final_report", msg.FinalReport != ""),
+					slog.Bool("is_complete", msg.Type == "research_complete"),
 					slog.Bool("broadcast_success", broadcastErr == nil))
 				if broadcastErr != nil {
 					log.Warn("failed to broadcast message without storage",
@@ -1463,7 +1455,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 				}
 
 				// Check if session is complete even without storage
-				if msg.FinalReport != "" || msg.Type == "error" || msg.Error != "" || msg.Type == "research_complete" {
+				if msg.Type == "research_complete" || msg.Type == "error" || msg.Error != "" {
 					log.Info("session complete - final message received (no storage)",
 						slog.String("user_id", userID),
 						slog.String("chat_id", chatID),
