@@ -19,13 +19,14 @@ import (
 
 // Service handles WebSocket connections for deep research.
 type Service struct {
-	logger            *logger.Logger
-	trackingService   *request_tracking.Service
-	firebaseClient    *auth.FirebaseClient
-	storage           MessageStorage
-	sessionManager    *SessionManager
-	encryptionService *messaging.EncryptionService
-	firestoreClient   *messaging.FirestoreClient
+	logger                       *logger.Logger
+	trackingService              *request_tracking.Service
+	firebaseClient               *auth.FirebaseClient
+	storage                      MessageStorage
+	sessionManager               *SessionManager
+	encryptionService            *messaging.EncryptionService
+	firestoreClient              *messaging.FirestoreClient
+	deepResearchRateLimitEnabled bool
 }
 
 // mapEventTypeToState maps event types from deep research server to session states.
@@ -88,6 +89,14 @@ func (s *Service) canForwardMessage(ctx context.Context, userID, chatID string) 
 func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websocket.Conn, userID, chatID string, isReconnection bool) error {
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 
+	// Skip validation if deep research rate limiting is disabled
+	if !s.deepResearchRateLimitEnabled {
+		log.Info("deep research rate limiting disabled, skipping freemium validation",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID))
+		return nil
+	}
+
 	// Check if user has active pro subscription
 	hasActivePro, proExpiresAt, err := s.trackingService.HasActivePro(ctx, userID)
 	if err != nil {
@@ -95,7 +104,9 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 			slog.String("user_id", userID),
 			slog.String("chat_id", chatID),
 			slog.String("error", err.Error()))
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify subscription status"}`))
+		if clientConn != nil {
+			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify subscription status"}`))
+		}
 		return fmt.Errorf("failed to check subscription status: %w", err)
 	}
 
@@ -127,7 +138,9 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 			slog.String("user_id", userID),
 			slog.String("chat_id", chatID),
 			slog.String("error", err.Error()))
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify session state"}`))
+		if clientConn != nil {
+			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify session state"}`))
+			}
 		return fmt.Errorf("failed to get session state: %w", err)
 	}
 
@@ -154,7 +167,9 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 				log.Error("failed to get completed session count",
 					slog.String("user_id", userID),
 					slog.String("error", err.Error()))
-				clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify usage status"}`))
+				if clientConn != nil {
+					clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify usage status"}`))
+					}
 				return fmt.Errorf("failed to get completed session count: %w", err)
 			}
 
@@ -163,7 +178,9 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 					slog.String("user_id", userID),
 					slog.String("chat_id", chatID),
 					slog.Int("completed_count", completedCount))
-				clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You have already used your free deep research. Please upgrade to Pro for unlimited access.", "error_code": "FREE_LIMIT_REACHED"}`))
+				if clientConn != nil {
+					clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You have already used your free deep research. Please upgrade to Pro for unlimited access.", "error_code": "FREE_LIMIT_REACHED"}`))
+					}
 				return fmt.Errorf("freemium quota exhausted for user %s", userID)
 			}
 		}
@@ -177,7 +194,9 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 		log.Error("failed to get completed session count",
 			slog.String("user_id", userID),
 			slog.String("error", err.Error()))
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify usage status"}`))
+		if clientConn != nil {
+			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify usage status"}`))
+			}
 		return fmt.Errorf("failed to get completed session count: %w", err)
 	}
 
@@ -186,7 +205,9 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 			slog.String("user_id", userID),
 			slog.String("chat_id", chatID),
 			slog.Int("completed_count", completedCount))
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You have already used your free deep research. Please upgrade to Pro for unlimited access.", "error_code": "FREE_LIMIT_REACHED"}`))
+		if clientConn != nil {
+			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You have already used your free deep research. Please upgrade to Pro for unlimited access.", "error_code": "FREE_LIMIT_REACHED"}`))
+			}
 		return fmt.Errorf("freemium quota exhausted for user %s", userID)
 	}
 
@@ -196,7 +217,9 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 		log.Error("failed to get active sessions",
 			slog.String("user_id", userID),
 			slog.String("error", err.Error()))
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify active sessions"}`))
+		if clientConn != nil {
+			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify active sessions"}`))
+			}
 		return fmt.Errorf("failed to get active sessions: %w", err)
 	}
 
@@ -206,7 +229,9 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 			slog.String("chat_id", chatID),
 			slog.Int("active_sessions_count", len(activeSessions)),
 			slog.Bool("has_active_pro", false)) // This should always be false here
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You already have an active deep research session. Please complete or cancel it before starting a new one. Upgrade to Pro for unlimited parallel sessions.", "error_code": "ACTIVE_SESSION_EXISTS"}`))
+		if clientConn != nil {
+			clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "You already have an active deep research session. Please complete or cancel it before starting a new one. Upgrade to Pro for unlimited parallel sessions.", "error_code": "ACTIVE_SESSION_EXISTS"}`))
+		}
 		return fmt.Errorf("freemium user %s already has active session", userID)
 	}
 
@@ -217,7 +242,7 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, clientConn *websoc
 }
 
 // NewService creates a new deep research service with database storage.
-func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager) *Service {
+func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, deepResearchRateLimitEnabled bool) *Service {
 	var encryptionService *messaging.EncryptionService
 	var firestoreClient *messaging.FirestoreClient
 
@@ -227,13 +252,14 @@ func NewService(logger *logger.Logger, trackingService *request_tracking.Service
 	}
 
 	return &Service{
-		logger:            logger,
-		trackingService:   trackingService,
-		firebaseClient:    firebaseClient,
-		storage:           storage,
-		sessionManager:    sessionManager,
-		encryptionService: encryptionService,
-		firestoreClient:   firestoreClient,
+		logger:                       logger,
+		trackingService:              trackingService,
+		firebaseClient:               firebaseClient,
+		storage:                      storage,
+		sessionManager:               sessionManager,
+		encryptionService:            encryptionService,
+		firestoreClient:              firestoreClient,
+		deepResearchRateLimitEnabled: deepResearchRateLimitEnabled,
 	}
 }
 

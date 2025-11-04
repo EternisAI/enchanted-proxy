@@ -249,6 +249,7 @@ func main() {
 		taskHandler:            taskHandler,
 		deeprStorage:           deeprStorage,
 		deeprSessionManager:    deeprSessionManager,
+		config:                 config.AppConfig,
 	})
 
 	// Initialize GraphQL server for Telegram
@@ -360,6 +361,7 @@ type restServerInput struct {
 	taskHandler            *task.Handler
 	deeprStorage           deepr.MessageStorage
 	deeprSessionManager    *deepr.SessionManager
+	config                 *config.Config
 }
 
 func setupRESTServer(input restServerInput) *gin.Engine {
@@ -442,9 +444,9 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		}
 
 		// Deep Research endpoints (protected)
-		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager)) // POST API to start deep research
+		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled)) // POST API to start deep research
 		api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.deeprSessionManager))                                                                          // POST API to submit clarification response
-		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager))           // WebSocket proxy for deep research
+		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled))           // WebSocket proxy for deep research
 	}
 
 	// Protected proxy routes

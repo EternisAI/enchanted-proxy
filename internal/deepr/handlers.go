@@ -49,7 +49,7 @@ type ClarifyDeepResearchResponse struct {
 }
 
 // StartDeepResearchHandler handles POST requests to start deep research.
-func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager) gin.HandlerFunc {
+func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, deepResearchRateLimitEnabled bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := logger.WithContext(c.Request.Context()).WithComponent("deepr")
 
@@ -90,7 +90,7 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			slog.String("query", req.Query))
 
 		// Create service instance
-		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager)
+		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, deepResearchRateLimitEnabled)
 
 		// Check if there's already an active session
 		if sessionManager.HasActiveBackend(userID, req.ChatID) {
@@ -104,9 +104,8 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			return
 		}
 
-		// Validate freemium access
-		dummyConn := &websocket.Conn{} // Dummy connection for validation
-		if err := service.validateFreemiumAccess(c.Request.Context(), dummyConn, userID, req.ChatID, false); err != nil {
+		// Validate freemium access (pass nil since this is REST endpoint, not websocket)
+		if err := service.validateFreemiumAccess(c.Request.Context(), nil, userID, req.ChatID, false); err != nil {
 			log.Error("freemium validation failed",
 				slog.String("user_id", userID),
 				slog.String("chat_id", req.ChatID),
@@ -328,7 +327,7 @@ func ClarifyDeepResearchHandler(logger *logger.Logger, sessionManager *SessionMa
 }
 
 // DeepResearchHandler handles WebSocket connections for deep research streaming.
-func DeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager) gin.HandlerFunc {
+func DeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, deepResearchRateLimitEnabled bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := logger.WithContext(c.Request.Context()).WithComponent("deepr")
 
@@ -385,7 +384,7 @@ func DeepResearchHandler(logger *logger.Logger, trackingService *request_trackin
 			slog.String("remote_addr", c.Request.RemoteAddr))
 
 		// Create service instance with shared session manager
-		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager)
+		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, deepResearchRateLimitEnabled)
 
 		// Handle the WebSocket connection
 		service.HandleConnection(c.Request.Context(), conn, userID, chatID)
