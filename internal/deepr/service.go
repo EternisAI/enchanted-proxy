@@ -629,8 +629,13 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 			slog.String("reason", "DEEP_RESEARCH_WS not set"))
 	}
 
+	deepResearchScheme := os.Getenv("DEEP_RESEARCH_WS_SCHEME")
+	if deepResearchScheme == "" {
+		deepResearchScheme = "ws"
+	}
+
 	wsURL := url.URL{
-		Scheme: "ws",
+		Scheme: deepResearchScheme,
 		Host:   deepResearchHost,
 		Path:   "/deep_research/" + userID + "/" + chatID + "/",
 	}

@@ -45,6 +45,8 @@ egress:
   - us-east-1.aws.api.temporal.io
   # Internal inference API endpoints
   - glm-46.llm.eternisai.net
+  # Internal deepresearch API endpoint
+  - flow-dev.dr-use1.ghostagent.org
   # aws-0-us-east-2.pooler.supabase.com
   - 3.13.175.194
   - 3.139.14.59
@@ -67,6 +69,7 @@ env:
 - DB_MAX_OPEN_CONNS
 - DEEPR_STORAGE_PATH
 - DEEP_RESEARCH_WS
+- DEEP_RESEARCH_WS_SCHEME
 - DRIP_DAILY_MESSAGES
 - ENABLE_TELEGRAM_SERVER
 - ETERNIS_INFERENCE_API_KEY
