@@ -92,6 +92,24 @@ func (f *FirestoreClient) SaveMessage(ctx context.Context, userID string, msg *C
 		return status.Error(codes.InvalidArgument, "encrypted content must be non-empty")
 	}
 
+	// Ensure parent chat document exists before saving message
+	// This prevents "phantom" chats with messages but no chat document
+	chatDocRef := f.client.
+		Collection("users").
+		Doc(userID).
+		Collection("chats").
+		Doc(msg.ChatID)
+
+	// Create/update chat document with lastMessageAt timestamp
+	// Use MergeAll to preserve existing fields (like title if already set)
+	_, err := chatDocRef.Set(ctx, map[string]interface{}{
+		"lastMessageAt": msg.Timestamp,
+		"updatedAt":     msg.Timestamp,
+	}, firestore.MergeAll)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to ensure chat document exists user=%s chat=%s: %v", userID, msg.ChatID, err)
+	}
+
 	// Path: /users/{userId}/chats/{chatId}/messages/{messageId}
 	docRef := f.client.
 		Collection("users").
@@ -102,7 +120,7 @@ func (f *FirestoreClient) SaveMessage(ctx context.Context, userID string, msg *C
 		Doc(msg.ID)
 
 	// Use Create for idempotency - treat AlreadyExists as success
-	_, err := docRef.Create(ctx, msg)
+	_, err = docRef.Create(ctx, msg)
 	if err != nil {
 		if status.Code(err) == codes.AlreadyExists {
 			return nil // Idempotent - already saved
