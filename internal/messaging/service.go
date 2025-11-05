@@ -84,50 +84,92 @@ func (s *Service) handleMessage(msg MessageToStore) {
 		msg.MessageID = uuid.New().String()
 	}
 
-	// Encrypt message content
+	// Handle encryption based on client's explicit X-Encryption-Enabled header
 	var encryptedContent string
 	var publicKeyUsed string
-	var passkeyID string
 
-	publicKey, err := s.getPublicKey(ctx, msg.UserID)
-	if err != nil {
-		// GRACEFUL DEGRADATION: Store as plaintext if no public key available
-		// This allows gradual rollout - users without encryption setup still get message storage
-		// Set MESSAGE_STORAGE_REQUIRE_ENCRYPTION=true for strict E2EE mode (rejects storage on encryption failure)
-		if config.AppConfig.MessageStorageRequireEncryption {
-			log.Error("cannot store message without encryption (strict mode enabled)",
+	// Case 1: Client explicitly requests encryption (encryptionEnabled = true)
+	if msg.EncryptionEnabled != nil && *msg.EncryptionEnabled {
+		log.Debug("encryption explicitly enabled by client",
+			slog.String("user_id", msg.UserID))
+
+		publicKey, err := s.getPublicKey(ctx, msg.UserID)
+		if err != nil {
+			// STRICT MODE: If client expects encryption, we MUST encrypt
+			log.Error("encryption enabled but no public key found",
 				slog.String("user_id", msg.UserID),
+				slog.String("chat_id", msg.ChatID),
+				slog.String("message_id", msg.MessageID),
 				slog.String("error", err.Error()))
-			return // Fail-safe: refuse to store
+			return // Fail: don't store if client expects encryption
 		}
 
-		log.Warn("failed to get public key, storing unencrypted",
-			slog.String("user_id", msg.UserID),
-			slog.String("error", err.Error()))
-		encryptedContent = msg.Content
-		publicKeyUsed = "none"
-		passkeyID = "" // No passkey when no encryption
-	} else {
 		encrypted, err := s.encryptionService.EncryptMessage(msg.Content, publicKey.Public)
 		if err != nil {
-			// GRACEFUL DEGRADATION: Store as plaintext if encryption fails
+			log.Error("encryption failed (client expects encryption)",
+				slog.String("user_id", msg.UserID),
+				slog.String("chat_id", msg.ChatID),
+				slog.String("message_id", msg.MessageID),
+				slog.String("error", err.Error()))
+			return // Fail: don't store if encryption fails
+		}
+
+		encryptedContent = encrypted
+		publicKeyUsed = publicKey.Public
+		log.Info("message encrypted per client request",
+			slog.String("user_id", msg.UserID),
+			slog.String("message_id", msg.MessageID))
+	} else if msg.EncryptionEnabled != nil && !*msg.EncryptionEnabled {
+		// Case 2: Client explicitly disables encryption (encryptionEnabled = false)
+		log.Info("encryption explicitly disabled by client, storing plaintext",
+			slog.String("user_id", msg.UserID),
+			slog.String("message_id", msg.MessageID))
+
+		encryptedContent = msg.Content
+		publicKeyUsed = "none"
+	} else {
+		// Case 3: Backward compatibility - header not provided (encryptionEnabled = nil)
+		// Use existing graceful degradation logic
+		log.Debug("encryption header not provided, using backward compatible logic",
+			slog.String("user_id", msg.UserID))
+
+		publicKey, err := s.getPublicKey(ctx, msg.UserID)
+		if err != nil {
+			// GRACEFUL DEGRADATION: Store as plaintext if no public key available
+			// This allows gradual rollout - users without encryption setup still get message storage
+			// Set MESSAGE_STORAGE_REQUIRE_ENCRYPTION=true for strict E2EE mode (rejects storage on encryption failure)
 			if config.AppConfig.MessageStorageRequireEncryption {
-				log.Error("encryption failed, refusing to store (strict mode enabled)",
+				log.Error("cannot store message without encryption (strict mode enabled)",
 					slog.String("user_id", msg.UserID),
 					slog.String("error", err.Error()))
 				return // Fail-safe: refuse to store
 			}
 
-			log.Error("encryption failed, storing unencrypted",
+			log.Warn("failed to get public key, storing unencrypted",
 				slog.String("user_id", msg.UserID),
 				slog.String("error", err.Error()))
 			encryptedContent = msg.Content
 			publicKeyUsed = "none"
-			passkeyID = "" // No passkey when encryption fails
 		} else {
-			encryptedContent = encrypted
-			publicKeyUsed = publicKey.Public // Store the full JWK
-			passkeyID = publicKey.CredentialID // Store credential ID for tracking
+			encrypted, err := s.encryptionService.EncryptMessage(msg.Content, publicKey.Public)
+			if err != nil {
+				// GRACEFUL DEGRADATION: Store as plaintext if encryption fails
+				if config.AppConfig.MessageStorageRequireEncryption {
+					log.Error("encryption failed, refusing to store (strict mode enabled)",
+						slog.String("user_id", msg.UserID),
+						slog.String("error", err.Error()))
+					return // Fail-safe: refuse to store
+				}
+
+				log.Error("encryption failed, storing unencrypted",
+					slog.String("user_id", msg.UserID),
+					slog.String("error", err.Error()))
+				encryptedContent = msg.Content
+				publicKeyUsed = "none"
+			} else {
+				encryptedContent = encrypted
+				publicKeyUsed = publicKey.Public // Store the full JWK
+			}
 		}
 	}
 
@@ -140,7 +182,6 @@ func (s *Service) handleMessage(msg MessageToStore) {
 		IsError:             msg.IsError,
 		Timestamp:           time.Now(),
 		PublicEncryptionKey: publicKeyUsed,
-		PasskeyID:           passkeyID, // Include passkey credential ID for tracking
 	}
 
 	// Save to Firestore
@@ -193,8 +234,6 @@ func (s *Service) getPublicKey(ctx context.Context, userID string) (*UserPublicK
 
 	log.Debug("public key fetched successfully",
 		slog.String("user_id", userID),
-		slog.String("credential_id", key.CredentialID),
-		slog.String("provider", key.Provider),
 	)
 
 	return key, nil

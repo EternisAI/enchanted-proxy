@@ -102,14 +102,23 @@ func saveMessageAsync(c *gin.Context, messageService *messaging.Service, content
 		messageID = uuid.New().String()
 	}
 
+	// Extract encryption enabled flag from context (set by ProxyHandler)
+	var encryptionEnabled *bool
+	if val, exists := c.Get("encryptionEnabled"); exists {
+		if boolPtr, ok := val.(*bool); ok {
+			encryptionEnabled = boolPtr
+		}
+	}
+
 	// Build message (assistant response)
 	msg := messaging.MessageToStore{
-		UserID:     userID,
-		ChatID:     chatID,
-		MessageID:  messageID,
-		IsFromUser: false, // This is an assistant response
-		Content:    content,
-		IsError:    isError,
+		UserID:            userID,
+		ChatID:            chatID,
+		MessageID:         messageID,
+		IsFromUser:        false, // This is an assistant response
+		Content:           content,
+		IsError:           isError,
+		EncryptionEnabled: encryptionEnabled,
 	}
 
 	// Store asynchronously using background context

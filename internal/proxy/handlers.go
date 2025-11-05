@@ -95,6 +95,14 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			platform = "mobile"
 		}
 
+		// Extract encryption enabled header
+		encryptionEnabledStr := c.GetHeader("X-Encryption-Enabled")
+		if encryptionEnabledStr != "" {
+			encryptionEnabled := encryptionEnabledStr == "true"
+			c.Set("encryptionEnabled", &encryptionEnabled)
+		}
+		// If header not provided, leave as nil for backward compatibility
+
 		// Check if base URL is in our allowed dictionary
 		apiKey := GetAPIKey(baseURL, platform, config.AppConfig)
 		if apiKey == "" {
@@ -110,15 +118,24 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 				userID, exists := auth.GetUserID(c)
 
 				if exists && chatID != "" {
+					// Get encryption flag from context
+					var encryptionEnabled *bool
+					if val, exists := c.Get("encryptionEnabled"); exists {
+						if boolPtr, ok := val.(*bool); ok {
+							encryptionEnabled = boolPtr
+						}
+					}
+
 					// Queue async title generation (non-blocking)
 					// Use background context since this runs async and shouldn't be tied to request lifecycle
 					go titleService.QueueTitleGeneration(context.Background(), title_generation.TitleGenerationRequest{
-						UserID:       userID,
-						ChatID:       chatID,
-						FirstMessage: firstMessage,
-						Model:        model,
-						BaseURL:      baseURL,
-						Platform:     platform,
+						UserID:            userID,
+						ChatID:            chatID,
+						FirstMessage:      firstMessage,
+						Model:             model,
+						BaseURL:           baseURL,
+						Platform:          platform,
+						EncryptionEnabled: encryptionEnabled,
 					}, apiKey)
 
 					log.Debug("queued title generation",
@@ -195,6 +212,9 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			r.Header.Del("X-Real-Ip")
 			r.Header.Del("X-BASE-URL") // Remove our custom header before forwarding
 			r.Header.Del("X-Client-Platform")
+			r.Header.Del("X-Encryption-Enabled") // Remove encryption flag before forwarding
+			r.Header.Del("X-Chat-ID")            // Remove chat metadata before forwarding
+			r.Header.Del("X-Message-ID")         // Remove message metadata before forwarding
 		}
 
 		// Some canceled requests by clients could cause panic.

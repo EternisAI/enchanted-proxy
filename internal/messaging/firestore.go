@@ -55,24 +55,9 @@ func (f *FirestoreClient) GetUserPublicKey(ctx context.Context, userID string) (
 	}
 
 	var key UserPublicKey
-	// Manually map fields from the accountKey map
+	// Map fields from the accountKey map
 	if createdAt, ok := accountKeyMap["createdAt"].(time.Time); ok {
 		key.CreatedAt = createdAt
-	}
-	if encryptedPrivate, ok := accountKeyMap["encryptedPrivate"].(string); ok {
-		key.EncryptedPrivate = encryptedPrivate
-	}
-	if nonce, ok := accountKeyMap["nonce"].(string); ok {
-		key.Nonce = nonce
-	}
-	if prfSalt, ok := accountKeyMap["prfSalt"].(string); ok {
-		key.PrfSalt = prfSalt
-	}
-	if credentialId, ok := accountKeyMap["credentialId"].(string); ok {
-		key.CredentialID = credentialId
-	}
-	if provider, ok := accountKeyMap["provider"].(string); ok {
-		key.Provider = provider
 	}
 	if public, ok := accountKeyMap["public"].(string); ok {
 		key.Public = public

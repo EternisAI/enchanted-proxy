@@ -79,16 +79,72 @@ func (s *Service) handleTitleGeneration(req TitleGenerationRequest) {
 		slog.String("chat_id", req.ChatID),
 		slog.String("model", req.Model))
 
-	// Get API key for this base URL - will be provided by caller
-	// The GetAPIKey function will be exposed from proxy package
+	// Handle encryption based on client's explicit signal (same logic as message storage)
+	var encryptedTitle string
+	var publicKeyUsed string
 
-	// Encrypt title (same as messages)
-	encryptedTitle, publicKeyUsed, err := s.encryptTitle(ctx, req.UserID, req.FirstMessage)
-	if err != nil {
-		log.Error("failed to encrypt title", slog.String("error", err.Error()))
-		// Continue with plaintext if encryption fails (graceful degradation)
+	// Case 1: Client explicitly requests encryption (encryptionEnabled = true)
+	if req.EncryptionEnabled != nil && *req.EncryptionEnabled {
+		log.Debug("encryption explicitly enabled by client for title",
+			slog.String("user_id", req.UserID))
+
+		publicKey, err := s.messageService.GetPublicKey(ctx, req.UserID)
+		if err != nil {
+			// STRICT MODE: If client expects encryption, we MUST encrypt
+			log.Error("encryption enabled but failed to get public key for title",
+				slog.String("user_id", req.UserID),
+				slog.String("chat_id", req.ChatID),
+				slog.String("error", err.Error()))
+			return // Fail: don't store if client expects encryption
+		}
+		if publicKey == nil || publicKey.Public == "" {
+			log.Error("encryption enabled but public key is empty for title",
+				slog.String("user_id", req.UserID),
+				slog.String("chat_id", req.ChatID))
+			return // Fail: don't store if client expects encryption
+		}
+
+		encrypted, err := s.messageService.EncryptContent(req.FirstMessage, publicKey.Public)
+		if err != nil {
+			log.Error("title encryption failed (client expects encryption)",
+				slog.String("user_id", req.UserID),
+				slog.String("chat_id", req.ChatID),
+				slog.String("error", err.Error()))
+			return // Fail: don't store if encryption fails
+		}
+
+		encryptedTitle = encrypted
+		publicKeyUsed = publicKey.Public
+		log.Info("title encrypted per client request",
+			slog.String("user_id", req.UserID),
+			slog.String("chat_id", req.ChatID))
+	} else if req.EncryptionEnabled != nil && !*req.EncryptionEnabled {
+		// Case 2: Client explicitly disables encryption (encryptionEnabled = false)
+		log.Info("encryption explicitly disabled by client for title, storing plaintext",
+			slog.String("user_id", req.UserID),
+			slog.String("chat_id", req.ChatID))
+
 		encryptedTitle = req.FirstMessage
 		publicKeyUsed = "none"
+	} else {
+		// Case 3: Backward compatibility - header not provided (encryptionEnabled = nil)
+		// Use existing graceful degradation logic
+		log.Debug("encryption header not provided for title, using backward compatible logic",
+			slog.String("user_id", req.UserID))
+
+		encTitle, pubKeyUsed, err := s.encryptTitle(ctx, req.UserID, req.FirstMessage)
+		if err != nil {
+			log.Error("failed to encrypt title (graceful degradation)",
+				slog.String("user_id", req.UserID),
+				slog.String("chat_id", req.ChatID),
+				slog.String("error", err.Error()))
+			// Continue with plaintext if encryption fails (graceful degradation)
+			encryptedTitle = req.FirstMessage
+			publicKeyUsed = "none"
+		} else {
+			encryptedTitle = encTitle
+			publicKeyUsed = pubKeyUsed
+		}
 	}
 
 	// Save to Firestore
