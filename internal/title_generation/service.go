@@ -80,8 +80,7 @@ func (s *Service) handleTitleGeneration(req TitleGenerationRequest) {
 		slog.String("model", req.Model))
 
 	// Handle encryption based on client's explicit signal (same logic as message storage)
-	var encryptedTitle string
-	var publicKeyUsed string
+	var chatTitle *messaging.ChatTitle
 
 	// Case 1: Client explicitly requests encryption (encryptionEnabled = true)
 	if req.EncryptionEnabled != nil && *req.EncryptionEnabled {
@@ -113,8 +112,12 @@ func (s *Service) handleTitleGeneration(req TitleGenerationRequest) {
 			return // Fail: don't store if encryption fails
 		}
 
-		encryptedTitle = encrypted
-		publicKeyUsed = publicKey.Public
+		// ENCRYPTED: Use encryptedTitle field only
+		chatTitle = &messaging.ChatTitle{
+			EncryptedTitle:           encrypted,
+			TitlePublicEncryptionKey: publicKey.Public,
+			UpdatedAt:                time.Now(),
+		}
 		log.Info("title encrypted per client request",
 			slog.String("user_id", req.UserID),
 			slog.String("chat_id", req.ChatID))
@@ -124,8 +127,11 @@ func (s *Service) handleTitleGeneration(req TitleGenerationRequest) {
 			slog.String("user_id", req.UserID),
 			slog.String("chat_id", req.ChatID))
 
-		encryptedTitle = req.FirstMessage
-		publicKeyUsed = "none"
+		// PLAINTEXT: Use title field only
+		chatTitle = &messaging.ChatTitle{
+			Title:     req.FirstMessage,
+			UpdatedAt: time.Now(),
+		}
 	} else {
 		// Case 3: Backward compatibility - header not provided (encryptionEnabled = nil)
 		// IMPORTANT: If user has public key, we MUST encrypt (no fallback to plaintext)
@@ -141,15 +147,19 @@ func (s *Service) handleTitleGeneration(req TitleGenerationRequest) {
 				slog.String("chat_id", req.ChatID),
 				slog.String("error", err.Error()))
 			// Assume no public key set up - save plaintext
-			encryptedTitle = req.FirstMessage
-			publicKeyUsed = "none"
+			chatTitle = &messaging.ChatTitle{
+				Title:     req.FirstMessage,
+				UpdatedAt: time.Now(),
+			}
 		} else if publicKey == nil || publicKey.Public == "" {
 			// User has NOT set up encryption - save plaintext
 			log.Info("no public key found for user, saving title as plaintext",
 				slog.String("user_id", req.UserID),
 				slog.String("chat_id", req.ChatID))
-			encryptedTitle = req.FirstMessage
-			publicKeyUsed = "none"
+			chatTitle = &messaging.ChatTitle{
+				Title:     req.FirstMessage,
+				UpdatedAt: time.Now(),
+			}
 		} else {
 			// User HAS public key - MUST encrypt (no fallback)
 			log.Info("public key found for user, encrypting title (backward compat mode)",
@@ -165,19 +175,16 @@ func (s *Service) handleTitleGeneration(req TitleGenerationRequest) {
 				return // FAIL: Don't save plaintext when encryption is expected
 			}
 
-			encryptedTitle = encrypted
-			publicKeyUsed = publicKey.Public
+			// ENCRYPTED: Use encryptedTitle field only
+			chatTitle = &messaging.ChatTitle{
+				EncryptedTitle:           encrypted,
+				TitlePublicEncryptionKey: publicKey.Public,
+				UpdatedAt:                time.Now(),
+			}
 			log.Info("title encrypted successfully (backward compat mode)",
 				slog.String("user_id", req.UserID),
 				slog.String("chat_id", req.ChatID))
 		}
-	}
-
-	// Save to Firestore
-	chatTitle := &messaging.ChatTitle{
-		EncryptedTitle:           encryptedTitle,
-		TitlePublicEncryptionKey: publicKeyUsed,
-		UpdatedAt:                time.Now(),
 	}
 
 	if err := s.firestoreClient.SaveChatTitle(ctx, req.UserID, req.ChatID, chatTitle); err != nil {
@@ -202,7 +209,7 @@ func (s *Service) handleTitleGeneration(req TitleGenerationRequest) {
 	log.Info("title saved successfully",
 		slog.String("user_id", req.UserID),
 		slog.String("chat_id", req.ChatID),
-		slog.Bool("encrypted", publicKeyUsed != "none"))
+		slog.Bool("encrypted", chatTitle.EncryptedTitle != ""))
 }
 
 // QueueTitleGeneration queues a title generation request

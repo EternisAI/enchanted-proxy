@@ -175,9 +175,10 @@ func (f *FirestoreClient) GetMessage(ctx context.Context, userID, chatID, messag
 	return &msg, nil
 }
 
-// SaveChatTitle saves/updates encrypted chat title
+// SaveChatTitle saves/updates chat title (plaintext or encrypted)
 // Path: /users/{userId}/chats/{chatId}
 // IMPORTANT: This only UPDATES existing chat documents, does not create new ones
+// IMPORTANT: Only ONE of Title or EncryptedTitle should be set, never both
 func (f *FirestoreClient) SaveChatTitle(ctx context.Context, userID, chatID string, title *ChatTitle) error {
 	if f == nil || f.client == nil {
 		return status.Error(codes.Internal, "firestore client is nil")
@@ -185,8 +186,16 @@ func (f *FirestoreClient) SaveChatTitle(ctx context.Context, userID, chatID stri
 	if userID == "" || chatID == "" || title == nil {
 		return status.Error(codes.InvalidArgument, "userID, chatID, and title must be non-empty")
 	}
-	if len(title.EncryptedTitle) == 0 {
-		return status.Error(codes.InvalidArgument, "encrypted title must be non-empty")
+
+	// Validate: exactly one of Title or EncryptedTitle must be set
+	hasPlaintext := len(title.Title) > 0
+	hasEncrypted := len(title.EncryptedTitle) > 0
+
+	if !hasPlaintext && !hasEncrypted {
+		return status.Error(codes.InvalidArgument, "either title or encryptedTitle must be set")
+	}
+	if hasPlaintext && hasEncrypted {
+		return status.Error(codes.InvalidArgument, "cannot set both title and encryptedTitle")
 	}
 
 	// Update chat document with title fields
@@ -194,11 +203,32 @@ func (f *FirestoreClient) SaveChatTitle(ctx context.Context, userID, chatID stri
 	// Chat document must already exist (created by client)
 	docRef := f.client.Collection("users").Doc(userID).Collection("chats").Doc(chatID)
 
-	_, err := docRef.Update(ctx, []firestore.Update{
-		{Path: "encryptedTitle", Value: title.EncryptedTitle},
-		{Path: "titlePublicEncryptionKey", Value: title.TitlePublicEncryptionKey},
+	// Build update list based on whether title is encrypted or plaintext
+	updates := []firestore.Update{
 		{Path: "updatedAt", Value: title.UpdatedAt},
-	})
+	}
+
+	if hasEncrypted {
+		// Encrypted title: set encryptedTitle and titlePublicEncryptionKey
+		updates = append(updates,
+			firestore.Update{Path: "encryptedTitle", Value: title.EncryptedTitle},
+			firestore.Update{Path: "titlePublicEncryptionKey", Value: title.TitlePublicEncryptionKey},
+		)
+		// Clear plaintext title if it exists (migration case)
+		updates = append(updates, firestore.Update{Path: "title", Value: firestore.Delete})
+	} else {
+		// Plaintext title: set title only
+		updates = append(updates,
+			firestore.Update{Path: "title", Value: title.Title},
+		)
+		// Clear encrypted fields if they exist (migration case)
+		updates = append(updates,
+			firestore.Update{Path: "encryptedTitle", Value: firestore.Delete},
+			firestore.Update{Path: "titlePublicEncryptionKey", Value: firestore.Delete},
+		)
+	}
+
+	_, err := docRef.Update(ctx, updates)
 
 	if err != nil {
 		// If chat document doesn't exist, this is expected - client hasn't created it yet

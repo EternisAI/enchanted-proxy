@@ -43,8 +43,10 @@ type MessageToStore struct {
 }
 
 // ChatTitle represents a stored chat title in Firestore
+// IMPORTANT: Only ONE of Title or EncryptedTitle should be set, never both
 type ChatTitle struct {
-	EncryptedTitle           string    `firestore:"encryptedTitle"`           // Encrypted title content or plaintext
-	TitlePublicEncryptionKey string    `firestore:"titlePublicEncryptionKey"` // Public key used (JSON string or "none")
-	UpdatedAt                time.Time `firestore:"updatedAt"`                // Last update timestamp
+	Title                    string    `firestore:"title,omitempty"`                    // Plaintext title (only when encryption disabled)
+	EncryptedTitle           string    `firestore:"encryptedTitle,omitempty"`           // Encrypted title (only when encryption enabled)
+	TitlePublicEncryptionKey string    `firestore:"titlePublicEncryptionKey,omitempty"` // Public key used (only when encrypted)
+	UpdatedAt                time.Time `firestore:"updatedAt"`                          // Last update timestamp
 }
