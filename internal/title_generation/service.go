@@ -3,6 +3,7 @@ package title_generation
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -180,6 +181,17 @@ func (s *Service) handleTitleGeneration(req TitleGenerationRequest) {
 	}
 
 	if err := s.firestoreClient.SaveChatTitle(ctx, req.UserID, req.ChatID, chatTitle); err != nil {
+		// Check if error is due to chat document not existing yet
+		// This is expected if title generation completes before client creates the chat doc
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "FailedPrecondition") {
+			log.Warn("chat document not found - client hasn't created it yet, title will be set by client",
+				slog.String("user_id", req.UserID),
+				slog.String("chat_id", req.ChatID))
+			return
+		}
+
+		// Unexpected error
 		log.Error("failed to save title to firestore",
 			slog.String("user_id", req.UserID),
 			slog.String("chat_id", req.ChatID),

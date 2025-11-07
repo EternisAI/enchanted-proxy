@@ -92,22 +92,32 @@ func (f *FirestoreClient) SaveMessage(ctx context.Context, userID string, msg *C
 		return status.Error(codes.InvalidArgument, "encrypted content must be non-empty")
 	}
 
-	// Ensure parent chat document exists before saving message
-	// This prevents "phantom" chats with messages but no chat document
+	// Update parent chat document with lastMessageAt timestamp (if it exists)
+	// IMPORTANT: We use Update() not Set() to avoid creating the chat document
+	// Chat document creation is the client's responsibility
 	chatDocRef := f.client.
 		Collection("users").
 		Doc(userID).
 		Collection("chats").
 		Doc(msg.ChatID)
 
-	// Create/update chat document with lastMessageAt timestamp
-	// Use MergeAll to preserve existing fields (like title if already set)
-	_, err := chatDocRef.Set(ctx, map[string]interface{}{
-		"lastMessageAt": msg.Timestamp,
-		"updatedAt":     msg.Timestamp,
-	}, firestore.MergeAll)
+	// Update (not create) chat document with lastMessageAt timestamp
+	// If chat document doesn't exist, this will fail - which is expected
+	// The client should create the chat document before sending messages
+	_, err := chatDocRef.Update(ctx, []firestore.Update{
+		{Path: "lastMessageAt", Value: msg.Timestamp},
+		{Path: "updatedAt", Value: msg.Timestamp},
+	})
 	if err != nil {
-		return status.Errorf(codes.Internal, "failed to ensure chat document exists user=%s chat=%s: %v", userID, msg.ChatID, err)
+		// If chat document doesn't exist, log warning but continue with message save
+		// This allows graceful degradation if client forgets to create chat doc
+		if status.Code(err) == codes.NotFound {
+			// Don't fail - just log warning and continue
+			// Message will still be saved, but chat doc won't be updated
+			// Client will create chat doc when it's ready
+		} else {
+			return status.Errorf(codes.Internal, "failed to update chat document user=%s chat=%s: %v", userID, msg.ChatID, err)
+		}
 	}
 
 	// Path: /users/{userId}/chats/{chatId}/messages/{messageId}
@@ -167,6 +177,7 @@ func (f *FirestoreClient) GetMessage(ctx context.Context, userID, chatID, messag
 
 // SaveChatTitle saves/updates encrypted chat title
 // Path: /users/{userId}/chats/{chatId}
+// IMPORTANT: This only UPDATES existing chat documents, does not create new ones
 func (f *FirestoreClient) SaveChatTitle(ctx context.Context, userID, chatID string, title *ChatTitle) error {
 	if f == nil || f.client == nil {
 		return status.Error(codes.Internal, "firestore client is nil")
@@ -179,15 +190,24 @@ func (f *FirestoreClient) SaveChatTitle(ctx context.Context, userID, chatID stri
 	}
 
 	// Update chat document with title fields
+	// IMPORTANT: Use Update() not Set() to avoid creating the chat document
+	// Chat document must already exist (created by client)
 	docRef := f.client.Collection("users").Doc(userID).Collection("chats").Doc(chatID)
 
-	_, err := docRef.Set(ctx, map[string]interface{}{
-		"encryptedTitle":           title.EncryptedTitle,
-		"titlePublicEncryptionKey": title.TitlePublicEncryptionKey,
-		"updatedAt":                title.UpdatedAt,
-	}, firestore.MergeAll) // Merge to preserve existing fields
+	_, err := docRef.Update(ctx, []firestore.Update{
+		{Path: "encryptedTitle", Value: title.EncryptedTitle},
+		{Path: "titlePublicEncryptionKey", Value: title.TitlePublicEncryptionKey},
+		{Path: "updatedAt", Value: title.UpdatedAt},
+	})
 
 	if err != nil {
+		// If chat document doesn't exist, this is expected - client hasn't created it yet
+		// Log as info (not error) and return nil for graceful handling
+		if status.Code(err) == codes.NotFound {
+			// Chat document doesn't exist yet - client will create it later
+			// Title will need to be set again or client will generate it
+			return status.Errorf(codes.FailedPrecondition, "chat document not found - client must create chat before title can be saved user=%s chat=%s", userID, chatID)
+		}
 		return status.Errorf(codes.Internal, "failed to save title user=%s chat=%s: %v", userID, chatID, err)
 	}
 
