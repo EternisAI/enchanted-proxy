@@ -2,7 +2,6 @@ package title_generation
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -128,22 +127,48 @@ func (s *Service) handleTitleGeneration(req TitleGenerationRequest) {
 		publicKeyUsed = "none"
 	} else {
 		// Case 3: Backward compatibility - header not provided (encryptionEnabled = nil)
-		// Use existing graceful degradation logic
+		// IMPORTANT: If user has public key, we MUST encrypt (no fallback to plaintext)
+		// Only save plaintext if user has NOT set up encryption
 		log.Debug("encryption header not provided for title, using backward compatible logic",
 			slog.String("user_id", req.UserID))
 
-		encTitle, pubKeyUsed, err := s.encryptTitle(ctx, req.UserID, req.FirstMessage)
+		publicKey, err := s.messageService.GetPublicKey(ctx, req.UserID)
 		if err != nil {
-			log.Error("failed to encrypt title (graceful degradation)",
+			// Failed to fetch public key - check if it's "not found" vs other error
+			log.Warn("failed to fetch public key for title (backward compat mode)",
 				slog.String("user_id", req.UserID),
 				slog.String("chat_id", req.ChatID),
 				slog.String("error", err.Error()))
-			// Continue with plaintext if encryption fails (graceful degradation)
+			// Assume no public key set up - save plaintext
+			encryptedTitle = req.FirstMessage
+			publicKeyUsed = "none"
+		} else if publicKey == nil || publicKey.Public == "" {
+			// User has NOT set up encryption - save plaintext
+			log.Info("no public key found for user, saving title as plaintext",
+				slog.String("user_id", req.UserID),
+				slog.String("chat_id", req.ChatID))
 			encryptedTitle = req.FirstMessage
 			publicKeyUsed = "none"
 		} else {
-			encryptedTitle = encTitle
-			publicKeyUsed = pubKeyUsed
+			// User HAS public key - MUST encrypt (no fallback)
+			log.Info("public key found for user, encrypting title (backward compat mode)",
+				slog.String("user_id", req.UserID),
+				slog.String("chat_id", req.ChatID))
+
+			encrypted, err := s.messageService.EncryptContent(req.FirstMessage, publicKey.Public)
+			if err != nil {
+				log.Error("title encryption failed and user HAS public key - refusing to save plaintext",
+					slog.String("user_id", req.UserID),
+					slog.String("chat_id", req.ChatID),
+					slog.String("error", err.Error()))
+				return // FAIL: Don't save plaintext when encryption is expected
+			}
+
+			encryptedTitle = encrypted
+			publicKeyUsed = publicKey.Public
+			log.Info("title encrypted successfully (backward compat mode)",
+				slog.String("user_id", req.UserID),
+				slog.String("chat_id", req.ChatID))
 		}
 	}
 
@@ -166,27 +191,6 @@ func (s *Service) handleTitleGeneration(req TitleGenerationRequest) {
 		slog.String("user_id", req.UserID),
 		slog.String("chat_id", req.ChatID),
 		slog.Bool("encrypted", publicKeyUsed != "none"))
-}
-
-// encryptTitle encrypts a title using user's public key
-func (s *Service) encryptTitle(ctx context.Context, userID, title string) (string, string, error) {
-	// Reuse message encryption infrastructure
-	publicKey, err := s.messageService.GetPublicKey(ctx, userID)
-	if err != nil {
-		return "", "", err
-	}
-
-	if publicKey == nil || publicKey.Public == "" {
-		return "", "", fmt.Errorf("no public key available")
-	}
-
-	// Use message encryption service
-	encrypted, err := s.messageService.EncryptContent(title, publicKey.Public)
-	if err != nil {
-		return "", "", err
-	}
-
-	return encrypted, publicKey.Public, nil
 }
 
 // QueueTitleGeneration queues a title generation request
