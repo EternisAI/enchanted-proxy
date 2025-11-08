@@ -121,10 +121,18 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 		deepResearchHost := os.Getenv("DEEP_RESEARCH_WS")
 		if deepResearchHost == "" {
 			deepResearchHost = "localhost:3031"
+			log.Info("using default deep research backend host",
+				slog.String("host", deepResearchHost),
+				slog.String("reason", "DEEP_RESEARCH_WS not set"))
+		}
+
+		deepResearchScheme := os.Getenv("DEEP_RESEARCH_WS_SCHEME")
+		if deepResearchScheme == "" {
+			deepResearchScheme = "ws"
 		}
 
 		wsURL := url.URL{
-			Scheme: "ws",
+			Scheme: deepResearchScheme,
 			Host:   deepResearchHost,
 			Path:   "/deep_research/" + userID + "/" + req.ChatID + "/",
 		}
@@ -134,15 +142,19 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			slog.String("chat_id", req.ChatID),
 			slog.String("url", wsURL.String()))
 
+		// Create dialer with timeout to prevent indefinite hangs
 		dialer := *websocket.DefaultDialer
 		dialer.HandshakeTimeout = 30 * time.Second
 
+		connectStart := time.Now()
 		backendConn, _, err := dialer.Dial(wsURL.String(), nil)
 		if err != nil {
 			log.Error("failed to connect to deep research backend",
 				slog.String("user_id", userID),
 				slog.String("chat_id", req.ChatID),
-				slog.String("error", err.Error()))
+				slog.String("url", wsURL.String()),
+				slog.String("error", err.Error()),
+				slog.Duration("connection_attempt_duration", time.Since(connectStart)))
 			c.JSON(http.StatusServiceUnavailable, StartDeepResearchResponse{
 				Success: false,
 				Error:   "Failed to connect to deep research service",
@@ -202,7 +214,8 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 
 		log.Info("deep research started successfully",
 			slog.String("user_id", userID),
-			slog.String("chat_id", req.ChatID))
+			slog.String("chat_id", req.ChatID),
+			slog.Duration("connection_time", time.Since(connectStart)))
 
 		// Initialize deep research state on chat document for UI access
 		if firebaseClient != nil {
