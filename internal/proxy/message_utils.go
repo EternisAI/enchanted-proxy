@@ -82,17 +82,17 @@ func saveMessageAsync(c *gin.Context, messageService *messaging.Service, content
 		return
 	}
 
+	// Skip if X-Chat-ID header not provided
+	// This prevents creating orphan chats for non-chat requests (e.g., title generation)
+	chatID := c.GetHeader("X-Chat-ID")
+	if chatID == "" {
+		return
+	}
+
 	// Extract user ID (Firebase UID for Firestore paths)
 	userID, exists := auth.GetUserID(c)
 	if !exists {
 		return
-	}
-
-	// Extract or generate chat ID
-	chatID := c.GetHeader("X-Chat-ID")
-	if chatID == "" {
-		// Fallback: generate a new chat ID (though ideally client should provide)
-		chatID = uuid.New().String()
 	}
 
 	// Extract or generate message ID
