@@ -111,6 +111,12 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			return
 		}
 
+		// Save user message to Firestore before forwarding request
+		// This ensures consistent server-side timestamps and eliminates client-side storage complexity
+		if len(requestBody) > 0 {
+			saveUserMessageAsync(c, messageService, requestBody)
+		}
+
 		// Check if this is the first user message and trigger title generation
 		if titleService != nil && len(requestBody) > 0 {
 			if isFirst, firstMessage := isFirstUserMessage(requestBody); isFirst {

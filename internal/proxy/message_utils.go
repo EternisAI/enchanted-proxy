@@ -71,6 +71,110 @@ func extractContentFromResponse(responseBody []byte) string {
 	return parsed.Choices[0].Message.Content
 }
 
+// extractLastUserMessage extracts the last user message from the request body
+func extractLastUserMessage(requestBody []byte) string {
+	var parsed struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+
+	if err := json.Unmarshal(requestBody, &parsed); err != nil {
+		return ""
+	}
+
+	// Find last user message
+	for i := len(parsed.Messages) - 1; i >= 0; i-- {
+		if parsed.Messages[i].Role == "user" {
+			return parsed.Messages[i].Content
+		}
+	}
+
+	return ""
+}
+
+// saveUserMessageAsync saves a user message to Firestore asynchronously
+// Follows STREAMING_BROADCAST_PLAN.md Section 3 (Server-Side User Message Storage)
+//
+// Required headers for proxy-side storage:
+//   - X-Chat-ID: Chat session ID
+//   - X-User-Message-ID: User message ID (unique identifier)
+//
+// Optional headers:
+//   - X-Encryption-Enabled: "true" to encrypt message with user's public key
+//
+// Backward Compatibility:
+//   - If X-User-Message-ID is MISSING: proxy does NOT save user message
+//     → Old clients continue saving to Firestore themselves (no duplicate)
+//   - If X-User-Message-ID is PRESENT: proxy saves user message
+//     → New clients can remove their own Firestore writes
+//
+// Behavior:
+//   - Extracts last user message from request body
+//   - Stores to Firestore: users/{userId}/chats/{chatId}/messages/{messageId}
+//   - Uses async worker pool (non-blocking)
+//   - Encryption: fetches public key from Firestore if enabled
+func saveUserMessageAsync(c *gin.Context, messageService *messaging.Service, requestBody []byte) {
+	if messageService == nil {
+		return
+	}
+
+	// BACKWARD COMPATIBILITY: Only save if X-User-Message-ID is provided
+	// This prevents double-saving when old clients already write to Firestore themselves
+	messageID := c.GetHeader("X-User-Message-ID")
+	if messageID == "" {
+		// Old client behavior: they save user message themselves
+		// Skip proxy-side storage to avoid duplicates
+		return
+	}
+
+	// Skip if X-Chat-ID header not provided
+	// This prevents creating orphan chats for non-chat requests
+	chatID := c.GetHeader("X-Chat-ID")
+	if chatID == "" {
+		return
+	}
+
+	// Extract user message content
+	content := extractLastUserMessage(requestBody)
+	if strings.TrimSpace(content) == "" {
+		return
+	}
+
+	// Extract user ID (Firebase UID for Firestore paths)
+	userID, exists := auth.GetUserID(c)
+	if !exists {
+		return
+	}
+
+	// Extract encryption enabled flag from context (set by ProxyHandler)
+	var encryptionEnabled *bool
+	if val, exists := c.Get("encryptionEnabled"); exists {
+		if boolPtr, ok := val.(*bool); ok {
+			encryptionEnabled = boolPtr
+		}
+	}
+
+	// Build message (user message)
+	msg := messaging.MessageToStore{
+		UserID:            userID,
+		ChatID:            chatID,
+		MessageID:         messageID,
+		IsFromUser:        true, // This is a user message
+		Content:           content,
+		IsError:           false,
+		EncryptionEnabled: encryptionEnabled,
+	}
+
+	// Store asynchronously using background context
+	// Service applies its own timeout, don't use request context which gets cancelled when handler returns
+	if err := messageService.StoreMessageAsync(context.Background(), msg); err != nil {
+		// Log error but don't fail the request
+		// The error is already logged within the service
+	}
+}
+
 // saveMessageAsync saves a message to Firestore asynchronously
 func saveMessageAsync(c *gin.Context, messageService *messaging.Service, content string, isError bool) {
 	if messageService == nil {
