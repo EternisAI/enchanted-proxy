@@ -243,3 +243,32 @@ func (f *FirestoreClient) SaveChatTitle(ctx context.Context, userID, chatID stri
 
 	return nil
 }
+
+// VerifyChatOwnership checks if a user owns a specific chat
+// Returns nil if user owns the chat, error otherwise
+func (f *FirestoreClient) VerifyChatOwnership(ctx context.Context, userID, chatID string) error {
+	if f == nil || f.client == nil {
+		return status.Error(codes.Internal, "firestore client is nil")
+	}
+	if userID == "" || chatID == "" {
+		return status.Error(codes.InvalidArgument, "userID and chatID must be non-empty")
+	}
+
+	// Path: /users/{userId}/chats/{chatId}
+	docRef := f.client.
+		Collection("users").
+		Doc(userID).
+		Collection("chats").
+		Doc(chatID)
+
+	// Check if chat document exists
+	_, err := docRef.Get(ctx)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return status.Errorf(codes.PermissionDenied, "chat not found or access denied")
+		}
+		return status.Errorf(codes.Internal, "failed to verify chat ownership: %v", err)
+	}
+
+	return nil
+}

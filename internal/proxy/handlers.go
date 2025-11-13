@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -19,6 +20,8 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
+	"github.com/eternisai/enchanted-proxy/internal/routing"
+	"github.com/eternisai/enchanted-proxy/internal/streaming"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
 	"github.com/gin-gonic/gin"
 )
@@ -58,7 +61,15 @@ func createReverseProxyWithPooling(target *url.URL) *httputil.ReverseProxy {
 	return proxy
 }
 
-func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Service, messageService *messaging.Service, titleService *title_generation.Service) gin.HandlerFunc {
+func ProxyHandler(
+	logger *logger.Logger,
+	trackingService *request_tracking.Service,
+	messageService *messaging.Service,
+	titleService *title_generation.Service,
+	streamManager *streaming.StreamManager,
+	modelRouter *routing.ModelRouter,
+	cfg *config.Config,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		log := logger.WithContext(c.Request.Context()).WithComponent("proxy")
@@ -81,18 +92,48 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			model = extractModelFromRequestBody(c.Request.URL.Path, requestBody)
 		}
 
-		// Extract X-BASE-URL from header
-		baseURL := c.GetHeader("X-BASE-URL")
-		if baseURL == "" {
-			log.Warn("missing base url header")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "X-BASE-URL header is required"})
-			return
-		}
-
+		// Get client platform for routing
 		platform := c.GetHeader("X-Client-Platform")
 		if platform == "" {
-			log.Warn("missing client platform header, defaulting to mobile")
-			platform = "mobile"
+			platform = "mobile" // Default to mobile
+		}
+
+		// Determine provider: X-BASE-URL (legacy) or model-based routing (new)
+		var baseURL string
+		var apiKey string
+
+		legacyBaseURL := c.GetHeader("X-BASE-URL")
+		if legacyBaseURL != "" {
+			// BACKWARD COMPATIBILITY: Use X-BASE-URL if provided
+			baseURL = legacyBaseURL
+			apiKey = GetAPIKey(baseURL, platform, cfg)
+			if apiKey == "" {
+				log.Warn("unauthorized base url", slog.String("base_url", baseURL))
+				c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized base URL"})
+				return
+			}
+			log.Debug("using legacy X-BASE-URL routing", slog.String("base_url", baseURL))
+		} else if model != "" && modelRouter != nil {
+			// NEW: Auto-route based on model ID
+			provider, err := modelRouter.RouteModel(model, platform)
+			if err != nil {
+				log.Error("failed to route model",
+					slog.String("error", err.Error()),
+					slog.String("model", model))
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("No provider configured for model: %s", model)})
+				return
+			}
+			baseURL = provider.BaseURL
+			apiKey = provider.APIKey
+			log.Info("auto-routed model to provider",
+				slog.String("model", model),
+				slog.String("provider", provider.Name),
+				slog.String("base_url", baseURL))
+		} else {
+			// Neither X-BASE-URL nor model provided
+			log.Warn("missing routing information: need X-BASE-URL or model ID")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "X-BASE-URL header or model field is required"})
+			return
 		}
 
 		// Extract encryption enabled header
@@ -102,14 +143,6 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			c.Set("encryptionEnabled", &encryptionEnabled)
 		}
 		// If header not provided, leave as nil for backward compatibility
-
-		// Check if base URL is in our allowed dictionary
-		apiKey := GetAPIKey(baseURL, platform, config.AppConfig)
-		if apiKey == "" {
-			log.Warn("unauthorized base url", slog.String("base_url", baseURL))
-			c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized base URL"})
-			return
-		}
 
 		// Save user message to Firestore before forwarding request
 		// This ensures consistent server-side timestamps and eliminates client-side storage complexity
@@ -165,9 +198,9 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			slog.Int64("request_size", max(0, c.Request.ContentLength)),
 		}
 
-		if log.Enabled(c.Request.Context(), slog.LevelDebug) {
-			logArgs = append(logArgs, slog.String("request_body", logRequestBody(requestBody, 300)))
-		}
+		// NOTE: Request body logging removed for security/privacy reasons
+		// User messages and AI responses contain sensitive data (PII, PHI, etc.)
+		// Only metadata (size, model, target) is logged for debugging
 
 		log.Info("proxy request started", logArgs...)
 
@@ -190,7 +223,12 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
 			if isStreaming {
-				return handleStreamingResponse(resp, log, model, upstreamLatency, c, trackingService, messageService)
+				// Use broadcast streaming if StreamManager available, otherwise legacy
+				if streamManager != nil {
+					return handleStreamingWithBroadcast(c, resp, log, model, upstreamLatency, trackingService, messageService, streamManager, cfg)
+				} else {
+					return handleStreamingLegacy(resp, log, model, upstreamLatency, c, trackingService, messageService)
+				}
 			} else {
 				return handleNonStreamingResponse(resp, log, model, upstreamLatency, c, trackingService, messageService)
 			}
@@ -261,7 +299,6 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 		scanner := bufio.NewScanner(reader)
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 64KB initial, 1MB max.
 		var tokenUsage *Usage
-		var firstChunk string
 		var fullContent strings.Builder // Accumulate full response content
 
 		ctx := c.Request.Context()
@@ -281,10 +318,6 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 				return
 			}
 
-			if firstChunk == "" && log.Enabled(ctx, slog.LevelDebug) && strings.HasPrefix(line, "data: ") && !strings.Contains(line, "[DONE]") {
-				firstChunk = line
-			}
-
 			// Extract and accumulate content for message storage
 			if content := extractContentFromSSELine(line); content != "" {
 				fullContent.WriteString(content)
@@ -301,7 +334,7 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 			log.Error("scanner error while processing SSE stream", slog.String("error", err.Error()))
 		}
 
-		logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, []byte(firstChunk), c.Request.Context())
+		logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, nil, c.Request.Context())
 
 		logRequestToDatabase(c, trackingService, model, tokenUsage)
 
@@ -368,10 +401,9 @@ func logProxyResponse(log *logger.Logger, resp *http.Response, isStreaming bool,
 		)
 	}
 
-	// Add response body to debug logs.
-	if log.Enabled(ctx, slog.LevelDebug) && len(responseBody) > 0 {
-		responseLogArgs = append(responseLogArgs, slog.String("response_body", logRequestBody(responseBody, 500)))
-	}
+	// NOTE: Response body logging removed for security/privacy reasons
+	// AI responses contain sensitive user data (PII, PHI, financial data, etc.)
+	// Only metadata (status, size, duration, model) is logged for debugging
 
 	log.Info("proxy response received", responseLogArgs...)
 }

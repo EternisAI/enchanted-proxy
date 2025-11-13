@@ -182,6 +182,9 @@ func (s *Service) handleMessage(msg MessageToStore) {
 		IsError:             msg.IsError,
 		Timestamp:           time.Now(),
 		PublicEncryptionKey: publicKeyUsed,
+		Stopped:             msg.Stopped,
+		StoppedBy:           msg.StoppedBy,
+		StopReason:          msg.StopReason,
 	}
 
 	// Save to Firestore

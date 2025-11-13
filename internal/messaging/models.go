@@ -11,6 +11,11 @@ type ChatMessage struct {
 	IsError             bool      `firestore:"isError"`              // true if error occurred
 	Timestamp           time.Time `firestore:"timestamp"`            // Message timestamp
 	PublicEncryptionKey string    `firestore:"publicEncryptionKey"` // Public key used (JSON string or "none")
+
+	// Stop control fields (for AI responses that were stopped mid-generation)
+	Stopped    bool   `firestore:"stopped,omitempty"`    // true if generation was stopped by user/system
+	StoppedBy  string `firestore:"stoppedBy,omitempty"`  // User ID who stopped, or "system_timeout"/"system_shutdown"
+	StopReason string `firestore:"stopReason,omitempty"` // Why stopped: "user_cancelled", "timeout", "error", "system_shutdown"
 }
 
 // UserPublicKey represents a user's ECDSA P-256 public key
@@ -40,6 +45,11 @@ type MessageToStore struct {
 	Content           string // Plaintext content to be encrypted
 	IsError           bool
 	EncryptionEnabled *bool // nil = not specified (backward compat), true = enforce encryption, false = store plaintext
+
+	// Stop control (for streaming broadcast feature)
+	Stopped    bool   // true if generation was stopped mid-stream
+	StoppedBy  string // User ID who stopped, or "system_timeout"/"system_shutdown"
+	StopReason string // Why stopped: "user_cancelled", "timeout", "error", "system_shutdown"
 }
 
 // ChatTitle represents a stored chat title in Firestore
