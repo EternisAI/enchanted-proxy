@@ -20,16 +20,21 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/composio"
 	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/deepr"
 	"github.com/eternisai/enchanted-proxy/internal/iap"
 	"github.com/eternisai/enchanted-proxy/internal/invitecode"
+	"github.com/eternisai/enchanted-proxy/internal/keyshare"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/mcp"
+	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/oauth"
 	"github.com/eternisai/enchanted-proxy/internal/proxy"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"github.com/eternisai/enchanted-proxy/internal/search"
 	"github.com/eternisai/enchanted-proxy/internal/storage/pg"
+	"github.com/eternisai/enchanted-proxy/internal/task"
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
+	"github.com/eternisai/enchanted-proxy/internal/title_generation"
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -42,6 +47,7 @@ var allowedBaseURLs = map[string]string{
 	"https://api.openai.com/v1":        os.Getenv("OPENAI_API_KEY"),
 	"https://inference.tinfoil.sh/v1/": os.Getenv("TINFOIL_API_KEY"),
 	"https://cloud-api.near.ai/v1":     os.Getenv("NEAR_API_KEY"),
+	"http://127.0.0.1:20001/v1":        os.Getenv("ETERNIS_INFERENCE_API_KEY"),
 }
 
 func waHandler(logger *logger.Logger) gin.HandlerFunc {
@@ -98,6 +104,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize Firebase client for Firestore (used for deep research tracking)
+	var firebaseClient *auth.FirebaseClient
+
+	if config.AppConfig.FirebaseCredJSON != "" {
+		firebaseClient, err = auth.NewFirebaseClient(context.Background(), config.AppConfig.FirebaseProjectID, config.AppConfig.FirebaseCredJSON)
+		if err != nil {
+			log.Error("failed to initialize firebase client", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
+		log.Info("firebase client initialized")
+
+		// Ensure cleanup on shutdown
+		defer func() {
+			if err := firebaseClient.Close(); err != nil {
+				log.Error("failed to close firebase client", slog.String("error", err.Error()))
+			}
+		}()
+	} else {
+		log.Warn("firebase credentials not provided - deep research tracking will not work properly")
+	}
+
 	// Initialize services
 	oauthService := oauth.NewService(logger.WithComponent("oauth"))
 	composioService := composio.NewService(logger.WithComponent("composio"))
@@ -107,6 +134,83 @@ func main() {
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
 
+	taskService, err := task.NewService(
+		config.AppConfig.TemporalEndpoint,
+		config.AppConfig.TemporalNamespace,
+		config.AppConfig.TemporalAPIKey,
+		db.Queries,
+		logger.WithComponent("task"),
+	)
+	if err != nil {
+		log.Error("failed to initialize task service", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+
+	// Initialize deep research storage
+	deeprStorage := deepr.NewDBStorage(logger.WithComponent("deepr-storage"), db.DB)
+	deeprSessionManager := deepr.NewSessionManager(logger.WithComponent("deepr-session"))
+
+	// Initialize message storage service
+	var messageService *messaging.Service
+	if config.AppConfig.MessageStorageEnabled && firebaseClient != nil {
+		// Access Firestore client from FirebaseClient
+		messageService = messaging.NewService(firebaseClient.GetFirestoreClient(), logger.WithComponent("messaging"))
+		log.Info("message storage service initialized")
+
+		// Ensure cleanup on shutdown
+		defer messageService.Shutdown()
+	} else {
+		if !config.AppConfig.MessageStorageEnabled {
+			log.Info("message storage disabled by configuration")
+		} else {
+			log.Warn("firebase client not available - message storage will not work")
+		}
+	}
+
+	// Initialize title generation service
+	var titleService *title_generation.Service
+	if config.AppConfig.MessageStorageEnabled && messageService != nil && firebaseClient != nil {
+		titleService = title_generation.NewService(
+			logger.WithComponent("title_generation"),
+			messageService,
+			messaging.NewFirestoreClient(firebaseClient.GetFirestoreClient()),
+		)
+		log.Info("title generation service initialized")
+
+		// Ensure cleanup on shutdown
+		defer titleService.Shutdown()
+	} else {
+		log.Info("title generation service disabled (requires message storage)")
+	}
+
+	// Initialize key sharing service
+	var keyshareHandler *keyshare.Handler
+	if firebaseClient != nil {
+		keyshareWSManager := keyshare.NewWebSocketManager(logger.WithComponent("keyshare-ws"))
+		keyshareFirestore := keyshare.NewFirestoreClient(firebaseClient.GetFirestoreClient())
+		keyshareService := keyshare.NewService(keyshareFirestore, keyshareWSManager, logger.WithComponent("keyshare"))
+		keyshareHandler = keyshare.NewHandler(keyshareService, keyshareWSManager, logger.WithComponent("keyshare"))
+		log.Info("key sharing service initialized")
+
+		// Start cleanup job for expired sessions
+		go func() {
+			cleanupTicker := time.NewTicker(5 * time.Minute)
+			defer cleanupTicker.Stop()
+
+			for range cleanupTicker.C {
+				ctx := context.Background()
+				deleted, err := keyshareService.CleanupExpiredSessions(ctx)
+				if err != nil {
+					log.Error("key share cleanup job failed", slog.String("error", err.Error()))
+				} else if deleted > 0 {
+					log.Info("key share cleanup job completed", slog.Int("deleted", deleted))
+				}
+			}
+		}()
+	} else {
+		log.Info("key sharing service disabled (requires firebase client)")
+	}
+
 	// Initialize handlers
 	oauthHandler := oauth.NewHandler(oauthService, logger.WithComponent("oauth"))
 	composioHandler := composio.NewHandler(composioService, logger.WithComponent("composio"))
@@ -114,6 +218,7 @@ func main() {
 	iapHandler := iap.NewHandler(iapService, logger.WithComponent("iap"))
 	mcpHandler := mcp.NewHandler(mcpService)
 	searchHandler := search.NewHandler(searchService, logger.WithComponent("search"))
+	taskHandler := task.NewHandler(taskService, logger.WithComponent("task"))
 
 	// Initialize NATS for Telegram
 	var natsClient *nats.Conn
@@ -160,13 +265,21 @@ func main() {
 	router := setupRESTServer(restServerInput{
 		logger:                 logger,
 		firebaseAuth:           firebaseAuth,
+		firebaseClient:         firebaseClient,
 		requestTrackingService: requestTrackingService,
+		messageService:         messageService,
+		titleService:           titleService,
 		oauthHandler:           oauthHandler,
 		composioHandler:        composioHandler,
 		inviteCodeHandler:      inviteCodeHandler,
 		iapHandler:             iapHandler,
 		mcpHandler:             mcpHandler,
 		searchHandler:          searchHandler,
+		taskHandler:            taskHandler,
+		keyshareHandler:        keyshareHandler,
+		deeprStorage:           deeprStorage,
+		deeprSessionManager:    deeprSessionManager,
+		config:                 config.AppConfig,
 	})
 
 	// Initialize GraphQL server for Telegram
@@ -231,6 +344,12 @@ func main() {
 	requestTrackingService.Shutdown()
 	log.Info("request tracking service shutdown complete")
 
+	// Shutdown the task service (close Temporal client)
+	if taskService != nil {
+		taskService.Close()
+		log.Info("task service shutdown complete")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.AppConfig.ServerShutdownTimeoutSeconds)*time.Second)
 	defer cancel()
 
@@ -259,13 +378,21 @@ func getKeys(m map[string]string) []string {
 type restServerInput struct {
 	logger                 *logger.Logger
 	firebaseAuth           *auth.FirebaseAuthMiddleware
+	firebaseClient         *auth.FirebaseClient
 	requestTrackingService *request_tracking.Service
+	messageService         *messaging.Service
+	titleService           *title_generation.Service
 	oauthHandler           *oauth.Handler
 	composioHandler        *composio.Handler
 	inviteCodeHandler      *invitecode.Handler
 	iapHandler             *iap.Handler
 	mcpHandler             *mcp.Handler
 	searchHandler          *search.Handler
+	taskHandler            *task.Handler
+	keyshareHandler        *keyshare.Handler
+	deeprStorage           deepr.MessageStorage
+	deeprSessionManager    *deepr.SessionManager
+	config                 *config.Config
 }
 
 func setupRESTServer(input restServerInput) *gin.Engine {
@@ -279,7 +406,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	router.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-BASE-URL, X-Client-Platform")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-BASE-URL, X-Client-Platform, X-Chat-ID, X-Message-ID, X-User-Message-ID, X-Encryption-Enabled")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -326,7 +453,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		// Rate limiting routes (protected)
 		rateLimit := api.Group("/rate-limit")
 		{
-			rateLimit.GET("/status", request_tracking.RateLimitStatusHandler(input.requestTrackingService))
+			rateLimit.GET("/status", request_tracking.RateLimitStatusHandler(input.requestTrackingService, input.logger))
 		}
 
 		// IAP (protected)
@@ -338,6 +465,32 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		// Search API routes (protected)
 		api.POST("/search", input.searchHandler.PostSearchHandler)        // POST /api/v1/search (SerpAPI)
 		api.POST("/exa/search", input.searchHandler.PostExaSearchHandler) // POST /api/v1/exa/search (Exa AI)
+
+		// Task API routes (protected)
+		tasks := api.Group("/tasks")
+		{
+			tasks.POST("", input.taskHandler.CreateTask)           // POST /api/v1/tasks - Create a new task
+			tasks.GET("", input.taskHandler.GetTasks)              // GET /api/v1/tasks - Get all tasks for user
+			tasks.DELETE("/:taskId", input.taskHandler.DeleteTask) // DELETE /api/v1/tasks/:taskId - Delete a task
+		}
+
+		// Deep Research endpoints (protected)
+		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled)) // POST API to start deep research
+
+		// Key Sharing API routes (protected)
+		if input.keyshareHandler != nil {
+			encryption := api.Group("/encryption")
+			{
+				keyShare := encryption.Group("/key-share")
+				{
+					api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.deeprSessionManager))                                                                                                       // POST API to submit clarification response
+					api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled)) // WebSocket proxy for deep research
+					keyShare.POST("/session", input.keyshareHandler.CreateSession)                                                                                                                                                     // POST /api/v1/encryption/key-share/session
+					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)                                                                                                                                              // POST /api/v1/encryption/key-share/session/:sessionId
+					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen)                                                                                                                                  // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
+				}
+			}
+		}
 	}
 
 	// Protected proxy routes
@@ -345,11 +498,13 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger))
 	{
 		// AI service endpoints
-		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService))
-		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService))
-		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService))
-		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService))
-		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService))
+		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
+		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
+		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
+		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
+		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
+		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
+		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
 	}
 
 	return router

@@ -7,5 +7,3 @@ CREATE TABLE IF NOT EXISTS entitlements (
 
 -- +goose Down
 DROP TABLE IF EXISTS entitlements;
-
-

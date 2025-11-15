@@ -30,6 +30,9 @@ go.work
 *.swo
 *~
 
+# Claude Code local settings
+.claude/settings.local.json
+
 # OS generated files
 .DS_Store
 .DS_Store?
@@ -58,3 +61,6 @@ tests/
 
 # Scripts
 __pycache__/
+
+# Deep research session files (deprecated, now using database)
+deepr_sessions/

@@ -42,7 +42,8 @@ func logRequestBody(body []byte, maxSize int) string {
 	return bodyStr[:maxSize] + "..."
 }
 
-func getAPIKey(baseURL string, platform string, config *config.Config) string {
+// GetAPIKey returns the appropriate API key for a base URL and platform
+func GetAPIKey(baseURL string, platform string, config *config.Config) string {
 	switch baseURL {
 	case "https://openrouter.ai/api/v1":
 		return getOpenRouterAPIKey(platform, config)
@@ -52,6 +53,8 @@ func getAPIKey(baseURL string, platform string, config *config.Config) string {
 		return config.TinfoilAPIKey
 	case "https://cloud-api.near.ai/v1":
 		return config.NearAPIKey
+	case "http://127.0.0.1:20001/v1":
+		return config.EternisInferenceAPIKey
 	default:
 		return ""
 	}

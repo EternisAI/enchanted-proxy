@@ -3,8 +3,10 @@ name: '[CI] Server'
 on:
   push:
     branches:
+    - ananta-staging
     - main
     - production
+    - staging
     tags:
     - v*.*.*
     paths:

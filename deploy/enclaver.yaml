@@ -42,9 +42,18 @@ egress:
   - serpapi.com
   - api.exa.ai
   - cloud-api.near.ai
+  - us-east-1.aws.api.temporal.io
+  # Internal inference API endpoints
+  - glm-46.llm.eternisai.net
+  # Internal deepresearch API endpoint
+  - flow-dev.dr-use1.ghostagent.org
   # aws-0-us-east-2.pooler.supabase.com
   - 3.13.175.194
   - 3.139.14.59
+  # Firestore (used by deepresearch user tracking)
+  - firestore.googleapis.com
+  # demo deepresearch endpoint (temporary)
+  - 165.232.133.47
 env:
 - APPSTORE_API_KEY_ID
 - APPSTORE_API_KEY_P8
@@ -58,16 +67,28 @@ env:
 - DB_CONN_MAX_LIFETIME_MINUTES
 - DB_MAX_IDLE_CONNS
 - DB_MAX_OPEN_CONNS
+- DEEPR_STORAGE_PATH
+- DEEP_RESEARCH_WS
+- DEEP_RESEARCH_WS_SCHEME
+- DRIP_DAILY_MESSAGES
 - ENABLE_TELEGRAM_SERVER
+- ETERNIS_INFERENCE_API_KEY
 - EXA_API_KEY
 - FIREBASE_CRED_JSON
 - FIREBASE_PROJECT_ID
+- FREE_LIFETIME_TOKENS
 - GIN_MODE
 - GOOGLE_CLIENT_ID
 - GOOGLE_CLIENT_SECRET
 - JWT_JWKS_URL
 - LOG_FORMAT
 - LOG_LEVEL
+- MESSAGE_STORAGE_BUFFER_SIZE
+- MESSAGE_STORAGE_CACHE_SIZE
+- MESSAGE_STORAGE_CACHE_TTL_MINUTES
+- MESSAGE_STORAGE_ENABLED
+- MESSAGE_STORAGE_TIMEOUT_SECONDS
+- MESSAGE_STORAGE_WORKER_POOL_SIZE
 - NATS_URL
 - NEAR_API_KEY
 - OPENAI_API_KEY
@@ -76,6 +97,7 @@ env:
 - OPENROUTER_MOBILE_API_KEY
 - PERPLEXITY_API_KEY
 - PORT
+- PRO_DAILY_TOKENS
 - RATE_LIMIT_ENABLED
 - RATE_LIMIT_LOG_ONLY
 - REPLICATE_API_TOKEN
@@ -87,9 +109,13 @@ env:
 - SLACK_CLIENT_ID
 - SLACK_CLIENT_SECRET
 - TELEGRAM_TOKEN
+- TEMPORAL_API_KEY
+- TEMPORAL_ENDPOINT
+- TEMPORAL_NAMESPACE
 - TINFOIL_API_KEY
 - TWITTER_CLIENT_ID
 - VALIDATOR_TYPE
 files:
+- /etc/ssl/certs/eternis/llm-ca.pem
 - /var/run/secrets/tls/tls.crt
 - /var/run/secrets/tls/tls.key

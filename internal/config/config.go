@@ -27,6 +27,7 @@ type Config struct {
 	OpenRouterDesktopAPIKey string
 	TinfoilAPIKey           string
 	NearAPIKey              string
+	EternisInferenceAPIKey  string
 	SerpAPIKey              string
 	ExaAPIKey               string
 	ValidatorType           string // "jwk" or "firebase"
@@ -40,6 +41,9 @@ type Config struct {
 	// Rate Limiting
 	RateLimitEnabled bool
 	RateLimitLogOnly bool // If true, only log violations, don't block.
+
+	// Deep Research Rate Limiting
+	DeepResearchRateLimitEnabled bool // If false, skip freemium quota checks
 
 	// Usage Tiers
 	FreeLifetimeTokens int64
@@ -83,13 +87,24 @@ type Config struct {
 	// Logging
 	LogLevel  string
 	LogFormat string
+
+	// Temporal
+	TemporalAPIKey    string
+  TemporalEndpoint  string
+	TemporalNamespace string
+	// Message Storage
+	MessageStorageEnabled         bool // Enable/disable encrypted message storage to Firestore
+	MessageStorageRequireEncryption bool // If true, refuse to store messages when encryption fails (strict E2EE mode). If false, fallback to plaintext storage (default: graceful degradation)  
+	MessageStorageWorkerPoolSize  int  // Number of worker goroutines processing message queue (higher = more concurrent Firestore writes)
+	MessageStorageBufferSize      int  // Size of message queue channel (higher = handles bigger traffic spikes without dropping messages)
+	MessageStorageTimeoutSeconds  int  // Firestore operation timeout in seconds (prevents workers from hanging on slow/failed operations)
 }
 
 var AppConfig *Config
 
 func LoadConfig() {
 	// Load .env file if it exists
-	if err := godotenv.Load(); err != nil {
+	if err := godotenv.Load(".env"); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
 
@@ -98,7 +113,7 @@ func LoadConfig() {
 		GinMode: getEnvOrDefault("GIN_MODE", "release"),
 
 		// Firebase
-		FirebaseProjectID: getEnvOrDefault("FIREBASE_PROJECT_ID", "enchanted-login-8fdb9"),
+		FirebaseProjectID: getEnvOrDefault("FIREBASE_PROJECT_ID", "silo-dev-95230"),
 
 		// Database
 		DatabaseURL: getEnvOrDefault("DATABASE_URL", "postgres://localhost/tee_api?sslmode=disable"),
@@ -128,6 +143,9 @@ func LoadConfig() {
 		// Tinfoil
 		TinfoilAPIKey: getEnvOrDefault("TINFOIL_API_KEY", ""),
 
+		// Self-hosted inference APIs
+		EternisInferenceAPIKey: getEnvOrDefault("ETERNIS_INFERENCE_API_KEY", ""),
+
 		// Near
 		NearAPIKey: getEnvOrDefault("NEAR_API_KEY", ""),
 
@@ -149,6 +167,9 @@ func LoadConfig() {
 		// Rate Limiting
 		RateLimitEnabled: getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
 		RateLimitLogOnly: getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
+
+		// Deep Research Rate Limiting
+		DeepResearchRateLimitEnabled: getEnvOrDefault("DEEP_RESEARCH_RATE_LIMIT_ENABLED", "true") == "true",
 
 		// Usage Tiers
 		FreeLifetimeTokens: getEnvAsInt64("FREE_LIFETIME_TOKENS", 20000),
@@ -192,6 +213,17 @@ func LoadConfig() {
 		// Logging
 		LogLevel:  getEnvOrDefault("LOG_LEVEL", "debug"),
 		LogFormat: getEnvOrDefault("LOG_FORMAT", "text"),
+
+		// Temporal
+		TemporalAPIKey:    getEnvOrDefault("TEMPORAL_API_KEY", ""),
+		TemporalEndpoint:  getEnvOrDefault("TEMPORAL_ENDPOINT", ""),
+    TemporalNamespace: getEnvOrDefault("TEMPORAL_NAMESPACE", ""),
+		// Message Storage
+		MessageStorageEnabled:           getEnvOrDefault("MESSAGE_STORAGE_ENABLED", "true") == "true",
+		MessageStorageRequireEncryption: getEnvOrDefault("MESSAGE_STORAGE_REQUIRE_ENCRYPTION", "false") == "true",
+		MessageStorageWorkerPoolSize:    getEnvAsInt("MESSAGE_STORAGE_WORKER_POOL_SIZE", 5),
+		MessageStorageBufferSize:        getEnvAsInt("MESSAGE_STORAGE_BUFFER_SIZE", 500),
+		MessageStorageTimeoutSeconds:    getEnvAsInt("MESSAGE_STORAGE_TIMEOUT_SECONDS", 30),
 	}
 
 	// Validate required configs

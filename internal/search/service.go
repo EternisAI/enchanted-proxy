@@ -194,7 +194,7 @@ func (s *Service) SearchDuckDuckGo(ctx context.Context, req SearchRequest) (*Sea
 	return searchResp, nil
 }
 
-// SearchExa performs parallel searches using Exa AI API
+// SearchExa performs parallel searches using Exa AI API.
 func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSearchResponse, error) {
 	start := time.Now()
 
