@@ -460,3 +460,96 @@ func StreamStatusHandler(
 		c.JSON(http.StatusOK, response)
 	}
 }
+
+// ActiveStreamHandler handles GET /api/v1/chats/:chatId/active-stream
+// Returns information about the active stream for a chat, if one exists
+func ActiveStreamHandler(
+	logger *logger.Logger,
+	streamManager *streaming.StreamManager,
+	firestoreClient *messaging.FirestoreClient,
+) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		log := logger.WithContext(c.Request.Context()).WithComponent("active-stream")
+
+		// Extract user ID from auth
+		userID, exists := auth.GetUserID(c)
+		if !exists {
+			log.Error("user ID not found in context")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+			return
+		}
+
+		// Extract path parameter
+		chatID := c.Param("chatId")
+
+		// Validate parameter
+		if chatID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "chatId is required"})
+			return
+		}
+
+		// Input validation: Check length limits
+		if len(chatID) > maxChatIDLength {
+			log.Warn("chat ID too long",
+				slog.String("chat_id_len", fmt.Sprintf("%d", len(chatID))))
+			c.JSON(http.StatusBadRequest, gin.H{"error": "chatId exceeds maximum length"})
+			return
+		}
+
+		// Authorization: Verify user owns this chat
+		if firestoreClient != nil {
+			err := firestoreClient.VerifyChatOwnership(c.Request.Context(), userID, chatID)
+			if err != nil {
+				if status.Code(err) == codes.PermissionDenied {
+					log.Warn("chat ownership verification failed",
+						slog.String("user_id", userID),
+						slog.String("chat_id", chatID))
+					c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: You don't own this chat"})
+					return
+				}
+				log.Error("failed to verify chat ownership",
+					slog.String("error", err.Error()),
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify permissions"})
+				return
+			}
+		}
+
+		log.Debug("active stream request",
+			slog.String("chat_id", chatID),
+			slog.String("user_id", userID))
+
+		// Get active stream for this chat
+		streamInfo := streamManager.GetActiveStreamForChat(chatID)
+		if streamInfo == nil {
+			c.JSON(http.StatusOK, gin.H{
+				"exists": false,
+			})
+			return
+		}
+
+		// Get stored chunks count for the session
+		session := streamManager.GetSession(streamInfo.ChatID, streamInfo.MessageID)
+		var chunksCount int
+		if session != nil {
+			chunks := session.GetStoredChunks()
+			chunksCount = len(chunks)
+		}
+
+		log.Info("active stream found",
+			slog.String("chat_id", chatID),
+			slog.String("message_id", streamInfo.MessageID),
+			slog.Int("subscriber_count", streamInfo.SubscriberCount),
+			slog.Int("chunks_count", chunksCount))
+
+		// Return stream information
+		c.JSON(http.StatusOK, gin.H{
+			"exists":           true,
+			"message_id":       streamInfo.MessageID,
+			"started_at":       streamInfo.StartTime.Format(time.RFC3339),
+			"chunks_count":     chunksCount,
+			"subscriber_count": streamInfo.SubscriberCount,
+		})
+	}
+}

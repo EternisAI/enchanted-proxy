@@ -510,6 +510,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		// Stream Control API routes (protected)
 		chats := api.Group("/chats")
 		{
+			chats.GET("/:chatId/active-stream", proxy.ActiveStreamHandler(input.logger, input.streamManager, input.firestoreClient)) // GET /api/v1/chats/:chatId/active-stream
 			messages := chats.Group("/:chatId/messages")
 			{
 				messages.GET("/:messageId/stream", proxy.GetStreamHandler(input.logger, input.streamManager, input.firestoreClient))   // GET /api/v1/chats/:chatId/messages/:messageId/stream

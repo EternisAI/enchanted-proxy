@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -290,6 +291,39 @@ func (sm *StreamManager) GetActiveStreams() []StreamInfo {
 	}
 
 	return infos
+}
+
+// GetActiveStreamForChat returns information about an active (not completed) stream for the given chat.
+//
+// Parameters:
+//   - chatID: Chat session identifier
+//
+// Returns:
+//   - *StreamInfo: Stream metadata, or nil if no active stream found
+//
+// Thread-safe: Uses read lock.
+//
+// Note: Only returns streams that are NOT completed. Completed streams are excluded
+// because clients should not attempt to join them via the replay endpoint.
+func (sm *StreamManager) GetActiveStreamForChat(chatID string) *StreamInfo {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	// Search for an active (not completed) session for this chat
+	for key, session := range sm.sessions {
+		// Check if session belongs to this chat
+		if !strings.HasPrefix(key, chatID+":") {
+			continue
+		}
+
+		// Only return if stream is NOT completed (active generation in progress)
+		if !session.IsCompleted() {
+			info := session.GetInfo()
+			return &info
+		}
+	}
+
+	return nil
 }
 
 // GetMetrics returns current streaming metrics.
