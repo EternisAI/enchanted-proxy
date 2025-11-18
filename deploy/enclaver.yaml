@@ -47,13 +47,17 @@ egress:
   - glm-46.llm.eternisai.net
   # Internal deepresearch API endpoint
   - flow-dev.dr-use1.ghostagent.org
+  - flow.deepr.freysa.ai
   # aws-0-us-east-2.pooler.supabase.com
   - 3.13.175.194
   - 3.139.14.59
+  - 13.59.95.192
+  # aws-1-us-east-1.pooler.supabase.com
+  - 3.227.209.82
+  - 18.213.155.45
+  - 18.214.78.123
   # Firestore (used by deepresearch user tracking)
   - firestore.googleapis.com
-  # demo deepresearch endpoint (temporary)
-  - 165.232.133.47
 env:
 - APPSTORE_API_KEY_ID
 - APPSTORE_API_KEY_P8

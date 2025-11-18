@@ -129,12 +129,13 @@ func (f *FirestoreClient) SaveMessage(ctx context.Context, userID string, msg *C
 		Collection("messages").
 		Doc(msg.ID)
 
-	// Use Create for idempotency - treat AlreadyExists as success
-	_, err = docRef.Create(ctx, msg)
+	// Use Set to allow overwrites - needed for multi-iteration streaming (tool calls)
+	// When tool calls are used, the same message ID gets multiple saves:
+	// - Iteration 1: Partial content (e.g., <think> tags)
+	// - Iteration 2+: Complete content (think + actual response)
+	// Set() ensures the final iteration's content overwrites previous partial saves
+	_, err = docRef.Set(ctx, msg)
 	if err != nil {
-		if status.Code(err) == codes.AlreadyExists {
-			return nil // Idempotent - already saved
-		}
 		return status.Errorf(codes.Internal, "failed to save message user=%s chat=%s id=%s: %v", userID, msg.ChatID, msg.ID, err)
 	}
 
