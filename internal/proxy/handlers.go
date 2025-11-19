@@ -410,7 +410,7 @@ func logProxyResponse(log *logger.Logger, resp *http.Response, isStreaming bool,
 
 // logRequestToDatabase logs a request to the database with token usage data.
 func logRequestToDatabase(c *gin.Context, trackingService *request_tracking.Service, model string, tokenUsage *Usage) {
-	userID, exists := auth.GetUserUUID(c)
+	userID, exists := auth.GetUserID(c)
 	if !exists {
 		return
 	}

@@ -28,7 +28,7 @@ func (h *Handler) AttachAppStoreSubscription(c *gin.Context) {
 		return
 	}
 
-	userID, ok := auth.GetUserUUID(c)
+	userID, ok := auth.GetUserID(c)
 	if !ok || userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return

@@ -30,19 +30,10 @@ func (h *Handler) CreateTask(c *gin.Context) {
 
 	log.Info("CreateTask handler called")
 
-	// Check if user is authenticated (using GetUserUUID for auth check)
-	_, ok := auth.GetUserUUID(c)
+	userID, ok := auth.GetUserID(c)
 	if !ok {
 		log.Error("user not authenticated")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-
-	// Get Firebase UID from context - this will be used as the user_id
-	userID, ok := auth.GetUserID(c)
-	if !ok {
-		log.Error("firebase_uid not found in context")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "firebase uid not found"})
 		return
 	}
 
@@ -87,19 +78,10 @@ func (h *Handler) CreateTask(c *gin.Context) {
 func (h *Handler) GetTasks(c *gin.Context) {
 	log := h.logger.WithContext(c.Request.Context()).WithComponent("task-handler")
 
-	// Check if user is authenticated
-	_, ok := auth.GetUserUUID(c)
+	userID, ok := auth.GetUserID(c)
 	if !ok {
 		log.Error("user not authenticated")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-
-	// Get Firebase UID from context - this will be used as the user_id
-	userID, ok := auth.GetUserID(c)
-	if !ok {
-		log.Error("firebase_uid not found in context")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "firebase uid not found"})
 		return
 	}
 
@@ -125,19 +107,10 @@ func (h *Handler) GetTasks(c *gin.Context) {
 func (h *Handler) DeleteTask(c *gin.Context) {
 	log := h.logger.WithContext(c.Request.Context()).WithComponent("task-handler")
 
-	// Check if user is authenticated
-	_, ok := auth.GetUserUUID(c)
+	userID, ok := auth.GetUserID(c)
 	if !ok {
 		log.Error("user not authenticated")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-
-	// Get Firebase UID from context - this will be used as the user_id
-	userID, ok := auth.GetUserID(c)
-	if !ok {
-		log.Error("firebase_uid not found in context")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "firebase uid not found"})
 		return
 	}
 
