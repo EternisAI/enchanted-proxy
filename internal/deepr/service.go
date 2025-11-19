@@ -242,7 +242,7 @@ func NewService(logger *logger.Logger, trackingService *request_tracking.Service
 // encryptAndStoreMessage handles encryption and Firestore storage for deep research messages.
 // It attempts to encrypt the message content with the user's public key, falling back to plaintext if encryption fails.
 // Returns the generated message ID and any error encountered.
-func (s *Service) encryptAndStoreMessage(ctx context.Context, userID, chatID, content, messageType string) (string, error) {
+func (s *Service) encryptAndStoreMessage(ctx context.Context, userID, chatID, content, messageType string, isFromUser bool) (string, error) {
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 
 	// Check if Firestore client is available
@@ -307,7 +307,7 @@ func (s *Service) encryptAndStoreMessage(ctx context.Context, userID, chatID, co
 	chatMessage := &messaging.ChatMessage{
 		ID:                  messageID,
 		EncryptedContent:    encryptedContent,
-		IsFromUser:          false, // Deep research messages are from assistant
+		IsFromUser:          isFromUser,
 		ChatID:              chatID,
 		IsError:             messageType == "error",
 		Timestamp:           time.Now(),
@@ -469,7 +469,7 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 				contentToStore := msg.Message
 
 				// Use helper method to encrypt and store message
-				_, _ = s.encryptAndStoreMessage(ctx, userID, chatID, contentToStore, messageType)
+				_, _ = s.encryptAndStoreMessage(ctx, userID, chatID, contentToStore, messageType, false)
 			}
 
 			// Check if session is complete
@@ -1131,7 +1131,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 					contentToStore := msg.Message
 
 					// Use helper method to encrypt and store message
-					_, _ = s.encryptAndStoreMessage(ctx, userID, chatID, contentToStore, messageType)
+					_, _ = s.encryptAndStoreMessage(ctx, userID, chatID, contentToStore, messageType, false)
 				}
 
 				// Track usage only when research_complete event is sent
@@ -1250,7 +1250,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 					contentToStore := msg.Message
 
 					// Use helper method to encrypt and store message
-					_, _ = s.encryptAndStoreMessage(ctx, userID, chatID, contentToStore, messageType)
+					_, _ = s.encryptAndStoreMessage(ctx, userID, chatID, contentToStore, messageType, false)
 				}
 
 				// Track usage only when research_complete event is sent (even without storage)
