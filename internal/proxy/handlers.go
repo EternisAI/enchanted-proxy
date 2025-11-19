@@ -166,7 +166,7 @@ func ProxyHandler(
 			}
 
 			// Handle Responses API request (includes streaming, response_id management)
-			if err := handleResponsesAPI(c, requestBody, provider, model, log, trackingService, messageService, streamManager, cfg); err != nil {
+			if err := handleResponsesAPI(c, requestBody, provider, model, log, trackingService, messageService, titleService, streamManager, cfg); err != nil {
 				log.Error("Responses API handler failed",
 					slog.String("error", err.Error()),
 					slog.String("model", model))
@@ -451,13 +451,22 @@ func logProxyResponse(log *logger.Logger, resp *http.Response, isStreaming bool,
 
 // logRequestToDatabase logs a request to the database with token usage data.
 func logRequestToDatabase(c *gin.Context, trackingService *request_tracking.Service, model string, tokenUsage *Usage) {
+	logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, "")
+}
+
+func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_tracking.Service, model string, tokenUsage *Usage, providerName string) {
 	userID, exists := auth.GetUserID(c)
 	if !exists {
 		return
 	}
 
-	baseURL := c.GetHeader("X-BASE-URL")
-	provider := request_tracking.GetProviderFromBaseURL(baseURL)
+	var provider string
+	if providerName != "" {
+		provider = providerName
+	} else {
+		baseURL := c.GetHeader("X-BASE-URL")
+		provider = request_tracking.GetProviderFromBaseURL(baseURL)
+	}
 	endpoint := c.Request.URL.Path
 
 	info := request_tracking.RequestInfo{
