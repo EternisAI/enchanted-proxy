@@ -40,10 +40,9 @@ func (f *FirebaseTokenValidator) ExtractUserID(tokenString string) (string, erro
 		return "", err
 	}
 
-	if token.Claims["sub"] != nil {
-		if sub, ok := token.Claims["sub"].(string); ok && sub != "" {
-			return sub, nil
-		}
+	sub := token.Subject
+	if sub != "" {
+		return sub, nil
 	}
 
 	return "", fmt.Errorf("no Firebase UID (sub claim) found in token")
