@@ -13,7 +13,7 @@ import (
 // RequestTrackingMiddleware logs requests for authenticated users and checks rate limits.
 func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID, exists := auth.GetUserUUID(c)
+		userID, exists := auth.GetUserID(c)
 		if !exists {
 			c.Next()
 			return
