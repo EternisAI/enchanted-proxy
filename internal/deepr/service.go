@@ -242,7 +242,7 @@ func NewService(logger *logger.Logger, trackingService *request_tracking.Service
 // encryptAndStoreMessage handles encryption and Firestore storage for deep research messages.
 // It attempts to encrypt the message content with the user's public key, falling back to plaintext if encryption fails.
 // Returns the generated message ID and any error encountered.
-func (s *Service) encryptAndStoreMessage(ctx context.Context, userID, chatID, content, messageType string, isFromUser bool) (string, error) {
+func (s *Service) encryptAndStoreMessage(ctx context.Context, userID, chatID, content, messageType string, isFromUser bool, customMessageID string) (string, error) {
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 
 	// Check if Firestore client is available
@@ -259,8 +259,13 @@ func (s *Service) encryptAndStoreMessage(ctx context.Context, userID, chatID, co
 		return "", fmt.Errorf("no content to store")
 	}
 
-	// Generate message UUID
-	messageID := uuid.New().String()
+	// Use custom message ID if provided, otherwise generate a new UUID
+	var messageID string
+	if customMessageID != "" {
+		messageID = customMessageID
+	} else {
+		messageID = uuid.New().String()
+	}
 
 	var encryptedContent string
 	var publicKeyStr string
@@ -468,8 +473,8 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 				// Python backend sends content in the "message" field
 				contentToStore := msg.Message
 
-				// Use helper method to encrypt and store message
-				_, _ = s.encryptAndStoreMessage(ctx, userID, chatID, contentToStore, messageType, false)
+				// Use helper method to encrypt and store message (no custom ID for assistant messages)
+				_, _ = s.encryptAndStoreMessage(ctx, userID, chatID, contentToStore, messageType, false, "")
 			}
 
 			// Check if session is complete
@@ -1130,8 +1135,8 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 					// Python backend sends content in the "message" field
 					contentToStore := msg.Message
 
-					// Use helper method to encrypt and store message
-					_, _ = s.encryptAndStoreMessage(ctx, userID, chatID, contentToStore, messageType, false)
+					// Use helper method to encrypt and store message (no custom ID for assistant messages)
+					_, _ = s.encryptAndStoreMessage(ctx, userID, chatID, contentToStore, messageType, false, "")
 				}
 
 				// Track usage only when research_complete event is sent
@@ -1249,8 +1254,8 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 					// Python backend sends content in the "message" field
 					contentToStore := msg.Message
 
-					// Use helper method to encrypt and store message
-					_, _ = s.encryptAndStoreMessage(ctx, userID, chatID, contentToStore, messageType, false)
+					// Use helper method to encrypt and store message (no custom ID for assistant messages)
+					_, _ = s.encryptAndStoreMessage(ctx, userID, chatID, contentToStore, messageType, false, "")
 				}
 
 				// Track usage only when research_complete event is sent (even without storage)
