@@ -280,3 +280,39 @@ func (s *Service) GetPublicKey(ctx context.Context, userID string) (*UserPublicK
 func (s *Service) EncryptContent(content string, publicKeyJWK string) (string, error) {
 	return s.encryptionService.EncryptMessage(content, publicKeyJWK)
 }
+
+// SaveResponseID stores the latest OpenAI Responses API response_id for a chat.
+// This is used for continuing conversations with GPT-5 Pro and other stateful models.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - userID: User ID who owns the chat
+//   - chatID: Chat ID
+//   - responseID: The response_id from OpenAI (e.g., "resp_abc123")
+//
+// Returns:
+//   - error: If save failed
+func (s *Service) SaveResponseID(ctx context.Context, userID, chatID, responseID string) error {
+	if s.firestoreClient == nil {
+		return fmt.Errorf("firestore client is nil")
+	}
+	return s.firestoreClient.SaveResponseID(ctx, userID, chatID, responseID)
+}
+
+// GetResponseID retrieves the latest OpenAI Responses API response_id for a chat.
+// This is used for continuing conversations with GPT-5 Pro and other stateful models.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - userID: User ID who owns the chat
+//   - chatID: Chat ID
+//
+// Returns:
+//   - string: The response_id (e.g., "resp_abc123"), or empty string if not found
+//   - error: If retrieval failed
+func (s *Service) GetResponseID(ctx context.Context, userID, chatID string) (string, error) {
+	if s.firestoreClient == nil {
+		return "", fmt.Errorf("firestore client is nil")
+	}
+	return s.firestoreClient.GetResponseID(ctx, userID, chatID)
+}

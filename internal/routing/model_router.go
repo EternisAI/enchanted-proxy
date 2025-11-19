@@ -38,6 +38,17 @@ type ModelRouter struct {
 	logger *logger.Logger
 }
 
+// APIType identifies which API format to use for a provider.
+type APIType string
+
+const (
+	// APITypeChatCompletions uses the standard /chat/completions endpoint (OpenAI, Anthropic via OpenRouter, etc.)
+	APITypeChatCompletions APIType = "chat_completions"
+
+	// APITypeResponses uses OpenAI's stateful /responses endpoint (GPT-5 Pro, GPT-4.5+)
+	APITypeResponses APIType = "responses"
+)
+
 // ProviderConfig contains routing information for an AI provider.
 type ProviderConfig struct {
 	// BaseURL is the base URL for the provider's API (e.g., "https://api.openai.com/v1")
@@ -48,6 +59,9 @@ type ProviderConfig struct {
 
 	// Name is a human-readable provider name (e.g., "OpenAI", "Anthropic")
 	Name string
+
+	// APIType determines which API format to use (chat_completions or responses)
+	APIType APIType
 }
 
 // NewModelRouter creates a new model router from configuration.
@@ -64,37 +78,51 @@ type ProviderConfig struct {
 func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 	routes := make(map[string]ProviderConfig)
 
-	// OpenAI models
+	// OpenAI models - Chat Completions API
 	if cfg.OpenAIAPIKey != "" {
 		routes["gpt-4"] = ProviderConfig{
 			BaseURL: "https://api.openai.com/v1",
 			APIKey:  cfg.OpenAIAPIKey,
 			Name:    "OpenAI",
+			APIType: APITypeChatCompletions,
 		}
 		routes["gpt-4-turbo"] = ProviderConfig{
 			BaseURL: "https://api.openai.com/v1",
 			APIKey:  cfg.OpenAIAPIKey,
 			Name:    "OpenAI",
+			APIType: APITypeChatCompletions,
 		}
 		routes["gpt-3.5-turbo"] = ProviderConfig{
 			BaseURL: "https://api.openai.com/v1",
 			APIKey:  cfg.OpenAIAPIKey,
 			Name:    "OpenAI",
+			APIType: APITypeChatCompletions,
 		}
 		routes["o1-preview"] = ProviderConfig{
 			BaseURL: "https://api.openai.com/v1",
 			APIKey:  cfg.OpenAIAPIKey,
 			Name:    "OpenAI",
+			APIType: APITypeChatCompletions,
 		}
 		routes["o1-mini"] = ProviderConfig{
 			BaseURL: "https://api.openai.com/v1",
 			APIKey:  cfg.OpenAIAPIKey,
 			Name:    "OpenAI",
+			APIType: APITypeChatCompletions,
 		}
 		routes["o3-mini"] = ProviderConfig{
 			BaseURL: "https://api.openai.com/v1",
 			APIKey:  cfg.OpenAIAPIKey,
 			Name:    "OpenAI",
+			APIType: APITypeChatCompletions,
+		}
+
+		// OpenAI models - Responses API (stateful)
+		routes["gpt-5-pro"] = ProviderConfig{
+			BaseURL: "https://api.openai.com/v1",
+			APIKey:  cfg.OpenAIAPIKey,
+			Name:    "OpenAI",
+			APIType: APITypeResponses,
 		}
 	}
 
@@ -105,6 +133,7 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 			BaseURL: "https://openrouter.ai/api/v1",
 			APIKey:  "", // Resolved at route time based on platform
 			Name:    "OpenRouter",
+			APIType: APITypeChatCompletions, // OpenRouter uses Chat Completions format
 		}
 	}
 

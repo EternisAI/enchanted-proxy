@@ -40,13 +40,15 @@ func TestRouteModelExactMatch(t *testing.T) {
 		model           string
 		expectedBaseURL string
 		expectedKey     string
+		expectedAPIType APIType
 	}{
-		{"gpt-4", "https://api.openai.com/v1", "test-openai-key"},
-		{"gpt-4-turbo", "https://api.openai.com/v1", "test-openai-key"},
-		{"gpt-3.5-turbo", "https://api.openai.com/v1", "test-openai-key"},
-		{"o1-preview", "https://api.openai.com/v1", "test-openai-key"},
-		{"o1-mini", "https://api.openai.com/v1", "test-openai-key"},
-		{"o3-mini", "https://api.openai.com/v1", "test-openai-key"},
+		{"gpt-4", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions},
+		{"gpt-4-turbo", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions},
+		{"gpt-3.5-turbo", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions},
+		{"o1-preview", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions},
+		{"o1-mini", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions},
+		{"o3-mini", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions},
+		{"gpt-5-pro", "https://api.openai.com/v1", "test-openai-key", APITypeResponses},
 	}
 
 	for _, tt := range tests {
@@ -63,6 +65,9 @@ func TestRouteModelExactMatch(t *testing.T) {
 			}
 			if provider.Name != "OpenAI" {
 				t.Errorf("expected provider name 'OpenAI', got %s", provider.Name)
+			}
+			if provider.APIType != tt.expectedAPIType {
+				t.Errorf("expected APIType %s, got %s", tt.expectedAPIType, provider.APIType)
 			}
 		})
 	}

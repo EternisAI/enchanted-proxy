@@ -42,6 +42,7 @@ const (
 //   - Broadcast chunks to all subscribed clients (non-blocking)
 //   - Extract and store complete message when done
 //   - Handle user-initiated stop requests
+//   - Track response_id for Responses API (GPT-5 Pro)
 //
 // Lifecycle:
 //  1. Created by StreamManager when first client requests
@@ -79,6 +80,10 @@ type StreamSession struct {
 	stoppedBy  string             // User ID who stopped, or reason (e.g., "system_timeout")
 	stopReason StopReason         // Why the stream was stopped
 	stopMu     sync.RWMutex       // Protects stopped, stoppedBy, stopReason
+
+	// Responses API support (for GPT-5 Pro and stateful models)
+	responseID string        // OpenAI Responses API response_id (e.g., "resp_abc123")
+	responseIDMu sync.RWMutex // Protects responseID
 
 	// Chunk storage (buffered for late-join replay)
 	chunks   []StreamChunk
@@ -659,4 +664,29 @@ func (s *StreamSession) GetError() error {
 	s.completedMu.RLock()
 	defer s.completedMu.RUnlock()
 	return s.err
+}
+
+// SetResponseID stores the OpenAI Responses API response_id for this session.
+// This is called when we extract the response_id from the first chunk.
+//
+// Parameters:
+//   - responseID: The response_id from OpenAI (e.g., "resp_abc123")
+//
+// Thread-safe: Can be called concurrently.
+func (s *StreamSession) SetResponseID(responseID string) {
+	s.responseIDMu.Lock()
+	defer s.responseIDMu.Unlock()
+	s.responseID = responseID
+}
+
+// GetResponseID returns the OpenAI Responses API response_id for this session.
+//
+// Returns:
+//   - string: The response_id (e.g., "resp_abc123"), or empty string if not set
+//
+// Thread-safe: Can be called concurrently.
+func (s *StreamSession) GetResponseID() string {
+	s.responseIDMu.RLock()
+	defer s.responseIDMu.RUnlock()
+	return s.responseID
 }

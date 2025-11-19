@@ -1,0 +1,292 @@
+package proxy
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/logger"
+	"github.com/eternisai/enchanted-proxy/internal/messaging"
+	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
+	"github.com/eternisai/enchanted-proxy/internal/responses"
+	"github.com/eternisai/enchanted-proxy/internal/routing"
+	"github.com/eternisai/enchanted-proxy/internal/streaming"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
+// handleResponsesAPI handles requests to OpenAI's Responses API (GPT-5 Pro, GPT-4.5+).
+//
+// This handler provides:
+//   - Transparent client interface (clients still use /chat/completions format)
+//   - Request transformation (Chat Completions → Responses API)
+//   - Conversation continuation (previous_response_id management)
+//   - Multi-client broadcast (via StreamManager)
+//   - Response ID tracking (stored in Firestore)
+//
+// Flow:
+//  1. Fetch previous response_id from Firestore (for continuation)
+//  2. Transform request: add store=true, previous_response_id if exists
+//  3. Make HTTP request to OpenAI /responses endpoint
+//  4. Use StreamManager for multi-client broadcast
+//  5. Extract response_id from first chunk
+//  6. Save response_id to Firestore when complete
+//
+// Parameters:
+//   - c: Gin context
+//   - requestBody: Original request body from client
+//   - provider: Provider config (contains BaseURL, APIKey)
+//   - model: Model ID (e.g., "gpt-5-pro")
+//   - log: Logger
+//   - trackingService: Request tracking service
+//   - messageService: Message storage service (includes response_id storage)
+//   - streamManager: Stream manager for broadcast
+//   - cfg: Application configuration
+//
+// Returns:
+//   - error: If handling failed
+func handleResponsesAPI(
+	c *gin.Context,
+	requestBody []byte,
+	provider *routing.ProviderConfig,
+	model string,
+	log *logger.Logger,
+	trackingService *request_tracking.Service,
+	messageService *messaging.Service,
+	streamManager *streaming.StreamManager,
+	cfg *config.Config,
+) error {
+	// Validate required parameters
+	if provider == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Provider configuration is nil"})
+		return fmt.Errorf("provider is nil")
+	}
+	if streamManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Stream manager not initialized"})
+		return fmt.Errorf("streamManager is nil")
+	}
+	if log == nil {
+		// Can't log error if logger is nil, just return
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Logger not initialized"})
+		return fmt.Errorf("logger is nil")
+	}
+
+	// Extract chat ID and message ID from headers
+	chatID := c.GetHeader("X-Chat-ID")
+	messageID := c.GetHeader("X-Message-ID")
+
+	// If either is missing, generate fallback values
+	if chatID == "" {
+		chatID = uuid.New().String()
+	}
+	if messageID == "" {
+		messageID = uuid.New().String()
+	}
+
+	// Get user ID for response_id retrieval
+	userID, exists := auth.GetUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID not found in context"})
+		return fmt.Errorf("user ID not found in context")
+	}
+
+	// Step 1: Fetch previous response_id from Firestore (for conversation continuation)
+	var previousResponseID string
+	if messageService != nil {
+		prevID, err := messageService.GetResponseID(c.Request.Context(), userID, chatID)
+		if err != nil {
+			// Log error but continue (conversation will start fresh)
+			log.Error("failed to fetch previous response_id", slog.String("error", err.Error()))
+		} else if prevID != "" {
+			previousResponseID = prevID
+		}
+	}
+
+	// Step 2: Transform request for Responses API
+	adapter := responses.NewAdapter()
+	transformedBody, err := adapter.TransformRequest(requestBody, previousResponseID)
+	if err != nil {
+		log.Error("failed to transform request",
+			slog.String("error", err.Error()))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to transform request for Responses API"})
+		return fmt.Errorf("failed to transform request: %w", err)
+	}
+
+	// Step 3: Make HTTP request to OpenAI /responses endpoint
+	targetURL := provider.BaseURL + "/responses"
+	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(transformedBody))
+	if err != nil {
+		log.Error("failed to create request",
+			slog.String("error", err.Error()),
+			slog.String("target_url", targetURL))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upstream request"})
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	// Make request
+	client := &http.Client{
+		Transport: proxyTransport,
+		Timeout:   10 * time.Minute,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Error("failed to make request to Responses API",
+			slog.String("error", err.Error()),
+			slog.String("target_url", targetURL))
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to connect to Responses API"})
+		return fmt.Errorf("failed to make request: %w", err)
+	}
+
+	// Check for errors
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		log.Error("Responses API returned error", slog.Int("status_code", resp.StatusCode))
+		c.Data(resp.StatusCode, "application/json", body)
+		return fmt.Errorf("Responses API error: %d", resp.StatusCode)
+	}
+
+	// Step 4: Use StreamManager for multi-client broadcast
+	// Get or create stream session
+	session, isNew := streamManager.GetOrCreateSession(chatID, messageID, resp.Body)
+
+	// Subscribe to the session
+	subscriberID := uuid.New().String()
+	subscriber, err := session.Subscribe(c.Request.Context(), subscriberID, streaming.SubscriberOptions{
+		ReplayFromStart: !isNew, // Replay from start if joining existing stream
+		BufferSize:      100,
+	})
+	if err != nil {
+		log.Error("failed to subscribe to Responses API stream", slog.String("error", err.Error()))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to subscribe to stream"})
+		return fmt.Errorf("failed to subscribe: %w", err)
+	}
+
+	// Record subscription metric
+	streamManager.RecordSubscription()
+
+	// Step 5: Stream to client and extract response_id
+	// This is done in a modified streamToClient that extracts response_id
+	streamToClientWithResponseID(c, subscriber, session, log, adapter)
+
+	// Step 6: After streaming completes, save response_id to Firestore
+	if isNew && session.IsCompleted() {
+		responseID := session.GetResponseID()
+		if responseID != "" && messageService != nil {
+			// Save response_id to Firestore (async, non-blocking)
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				if err := messageService.SaveResponseID(ctx, userID, chatID, responseID); err != nil {
+					log.Error("failed to save response_id to Firestore", slog.String("error", err.Error()))
+				}
+			}()
+		}
+
+		// Extract encryption setting
+		var encryptionEnabled *bool
+		if val, exists := c.Get("encryptionEnabled"); exists {
+			if boolPtr, ok := val.(*bool); ok {
+				encryptionEnabled = boolPtr
+			}
+		}
+
+		// Save completed session to Firestore
+		err := streamManager.SaveCompletedSession(context.Background(), session, userID, encryptionEnabled)
+		if err != nil {
+			log.Error("failed to save completed Responses API session", slog.String("error", err.Error()))
+		}
+	}
+
+	// Log request to database (token usage)
+	logRequestToDatabase(c, trackingService, model, nil) // TODO: Extract token usage from Responses API
+
+	return nil
+}
+
+// streamToClientWithResponseID streams chunks to client and extracts response_id.
+// This is similar to streamToClient but also extracts the response_id from the first chunk.
+func streamToClientWithResponseID(
+	c *gin.Context,
+	subscriber *streaming.StreamSubscriber,
+	session *streaming.StreamSession,
+	log *logger.Logger,
+	adapter *responses.Adapter,
+) {
+	// CRITICAL: Always unsubscribe when done to prevent resource leak
+	defer func() {
+		session.Unsubscribe(subscriber.ID)
+		log.Debug("client stream finished (Responses API)",
+			slog.String("subscriber_id", subscriber.ID))
+	}()
+
+	// Set SSE headers
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	// Flush headers
+	c.Writer.Flush()
+
+	// Stream chunks to client
+	for {
+		select {
+		case chunk, ok := <-subscriber.Ch:
+			if !ok {
+				// Channel closed, streaming complete
+				log.Debug("subscriber channel closed",
+					slog.String("subscriber_id", subscriber.ID))
+				return
+			}
+
+			// Extract response_id from first chunk (if not already extracted)
+			if session.GetResponseID() == "" {
+				responseID := adapter.ExtractResponseID(chunk.Line)
+				if responseID != "" {
+					session.SetResponseID(responseID)
+				}
+			}
+
+			// Write chunk to client
+			_, err := c.Writer.WriteString(chunk.Line + "\n")
+			if err != nil {
+				log.Error("failed to write chunk to client",
+					slog.String("error", err.Error()),
+					slog.String("subscriber_id", subscriber.ID))
+				subscriber.Cancel()
+				return
+			}
+
+			// Flush after each chunk for real-time streaming
+			c.Writer.Flush()
+
+			// If this is the final chunk, we're done
+			if chunk.IsFinal {
+				log.Debug("final chunk sent to client",
+					slog.String("subscriber_id", subscriber.ID))
+				return
+			}
+
+		case <-c.Request.Context().Done():
+			// Client disconnected
+			log.Debug("client disconnected",
+				slog.String("subscriber_id", subscriber.ID))
+			subscriber.Cancel()
+			return
+		}
+	}
+}

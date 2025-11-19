@@ -101,6 +101,7 @@ func ProxyHandler(
 		// Determine provider: X-BASE-URL (legacy) or model-based routing (new)
 		var baseURL string
 		var apiKey string
+		var provider *routing.ProviderConfig
 
 		legacyBaseURL := c.GetHeader("X-BASE-URL")
 		if legacyBaseURL != "" {
@@ -113,9 +114,16 @@ func ProxyHandler(
 				return
 			}
 			log.Debug("using legacy X-BASE-URL routing", slog.String("base_url", baseURL))
+			// Legacy mode: assume Chat Completions API
+			provider = &routing.ProviderConfig{
+				BaseURL: baseURL,
+				APIKey:  apiKey,
+				Name:    "Legacy",
+				APIType: routing.APITypeChatCompletions,
+			}
 		} else if model != "" && modelRouter != nil {
 			// NEW: Auto-route based on model ID
-			provider, err := modelRouter.RouteModel(model, platform)
+			providerCfg, err := modelRouter.RouteModel(model, platform)
 			if err != nil {
 				log.Error("failed to route model",
 					slog.String("error", err.Error()),
@@ -123,18 +131,51 @@ func ProxyHandler(
 				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("No provider configured for model: %s", model)})
 				return
 			}
+			provider = providerCfg
 			baseURL = provider.BaseURL
 			apiKey = provider.APIKey
 			log.Info("auto-routed model to provider",
 				slog.String("model", model),
 				slog.String("provider", provider.Name),
-				slog.String("base_url", baseURL))
+				slog.String("base_url", baseURL),
+				slog.String("api_type", string(provider.APIType)))
 		} else {
 			// Neither X-BASE-URL nor model provided
 			log.Warn("missing routing information: need X-BASE-URL or model ID")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "X-BASE-URL header or model field is required"})
 			return
 		}
+
+		// Route based on API type
+		if provider.APIType == routing.APITypeResponses {
+			// Handle Responses API (GPT-5 Pro, GPT-4.5+)
+			log.Info("routing to Responses API handler",
+				slog.String("model", model),
+				slog.String("provider", provider.Name))
+
+			// Extract encryption enabled header
+			encryptionEnabledStr := c.GetHeader("X-Encryption-Enabled")
+			if encryptionEnabledStr != "" {
+				encryptionEnabled := encryptionEnabledStr == "true"
+				c.Set("encryptionEnabled", &encryptionEnabled)
+			}
+
+			// Save user message to Firestore before forwarding request
+			if len(requestBody) > 0 {
+				saveUserMessageAsync(c, messageService, requestBody)
+			}
+
+			// Handle Responses API request (includes streaming, response_id management)
+			if err := handleResponsesAPI(c, requestBody, provider, model, log, trackingService, messageService, streamManager, cfg); err != nil {
+				log.Error("Responses API handler failed",
+					slog.String("error", err.Error()),
+					slog.String("model", model))
+				// Error already sent to client by handler
+			}
+			return
+		}
+
+		// Continue with Chat Completions API (existing logic below)
 
 		// Extract encryption enabled header
 		encryptionEnabledStr := c.GetHeader("X-Encryption-Enabled")
