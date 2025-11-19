@@ -24,8 +24,9 @@ var upgrader = websocket.Upgrader{
 
 // StartDeepResearchRequest represents the request body for starting deep research.
 type StartDeepResearchRequest struct {
-	Query  string `json:"query" binding:"required"`
-	ChatID string `json:"chat_id" binding:"required"`
+	Query         string `json:"query" binding:"required"`
+	ChatID        string `json:"chat_id" binding:"required"`
+	UserMessageID string `json:"user_message_id"` // Optional: custom message ID for the user's query
 }
 
 // StartDeepResearchResponse represents the response for starting deep research.
@@ -37,8 +38,9 @@ type StartDeepResearchResponse struct {
 
 // ClarifyDeepResearchRequest represents the request body for submitting a clarification response.
 type ClarifyDeepResearchRequest struct {
-	ChatID   string `json:"chat_id" binding:"required"`
-	Response string `json:"response" binding:"required"`
+	ChatID        string `json:"chat_id" binding:"required"`
+	Response      string `json:"response" binding:"required"`
+	UserMessageID string `json:"user_message_id"` // Optional: custom message ID for the user's clarification response
 }
 
 // ClarifyDeepResearchResponse represents the response for clarification submission.
@@ -218,7 +220,7 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			slog.Duration("connection_time", time.Since(connectStart)))
 
 		// Save user's initial query message to Firestore
-		if _, err := service.encryptAndStoreMessage(c.Request.Context(), userID, req.ChatID, req.Query, "query", true); err != nil {
+		if _, err := service.encryptAndStoreMessage(c.Request.Context(), userID, req.ChatID, req.Query, "query", true, req.UserMessageID); err != nil {
 			log.Error("failed to save user query message to Firestore",
 				slog.String("user_id", userID),
 				slog.String("chat_id", req.ChatID),
@@ -345,7 +347,7 @@ func ClarifyDeepResearchHandler(logger *logger.Logger, trackingService *request_
 			slog.String("chat_id", req.ChatID))
 
 		// Save user's clarification response message to Firestore
-		if _, err := service.encryptAndStoreMessage(c.Request.Context(), userID, req.ChatID, req.Response, "clarification_response", true); err != nil {
+		if _, err := service.encryptAndStoreMessage(c.Request.Context(), userID, req.ChatID, req.Response, "clarification_response", true, req.UserMessageID); err != nil {
 			log.Error("failed to save clarification response message to Firestore",
 				slog.String("user_id", userID),
 				slog.String("chat_id", req.ChatID),
