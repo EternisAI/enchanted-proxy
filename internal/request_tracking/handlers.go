@@ -24,8 +24,14 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 
 		if !config.AppConfig.RateLimitEnabled {
 			c.JSON(http.StatusOK, gin.H{
-				"enabled": false,
-				"message": "Rate limiting is disabled",
+				"enabled":       false,
+				"tier":          "unlimited",
+				"limit":         0,
+				"used":          0,
+				"remaining":     0,
+				"resets_at":     nil,
+				"under_limit":   true,
+				"log_only_mode": false,
 			})
 			return
 		}
