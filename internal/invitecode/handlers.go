@@ -34,14 +34,13 @@ func (h *Handler) RedeemInviteCode(c *gin.Context) {
 		return
 	}
 
-	// Get user UUID from Firebase auth context
-	userUUID, ok := auth.GetUserUUID(c)
+	userID, ok := auth.GetUserID(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
 
-	isWhitelisted, err := h.service.IsUserWhitelisted(userUUID)
+	isWhitelisted, err := h.service.IsUserWhitelisted(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -53,7 +52,7 @@ func (h *Handler) RedeemInviteCode(c *gin.Context) {
 	}
 
 	// Use invite code with the verified email
-	if err := h.service.UseInviteCode(code, userUUID); err != nil {
+	if err := h.service.UseInviteCode(code, userID); err != nil {
 		if err.Error() == "invite code not found" {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Invalid code"})
 			return

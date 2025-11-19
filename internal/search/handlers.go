@@ -37,7 +37,7 @@ func (h *Handler) PostSearchHandler(c *gin.Context) {
 	log := h.logger.WithContext(c.Request.Context()).WithComponent("search_handler")
 
 	// Get user ID from auth context for logging
-	userID, _ := auth.GetUserUUID(c)
+	userID, _ := auth.GetUserID(c)
 
 	var searchReq SearchRequest
 	if err := c.ShouldBindJSON(&searchReq); err != nil {
@@ -116,7 +116,7 @@ func (h *Handler) PostExaSearchHandler(c *gin.Context) {
 	log := h.logger.WithContext(c.Request.Context()).WithComponent("exa_search_handler")
 
 	// Get user ID from auth context for logging
-	userID, _ := auth.GetUserUUID(c)
+	userID, _ := auth.GetUserID(c)
 
 	var searchReq ExaSearchRequest
 	if err := c.ShouldBindJSON(&searchReq); err != nil {

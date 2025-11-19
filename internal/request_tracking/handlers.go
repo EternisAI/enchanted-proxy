@@ -14,7 +14,7 @@ import (
 // RateLimitStatusHandler returns the current rate limit status for the authenticated user.
 func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID, exists := auth.GetUserUUID(c)
+		userID, exists := auth.GetUserID(c)
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 			return
