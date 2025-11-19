@@ -94,6 +94,15 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 		// Create service instance
 		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, deepResearchRateLimitEnabled)
 
+		// Save user's initial query message to Firestore immediately before any processing
+		if _, err := service.encryptAndStoreMessage(c.Request.Context(), userID, req.ChatID, req.Query, "query", true, req.UserMessageID); err != nil {
+			log.Error("failed to save user query message to Firestore",
+				slog.String("user_id", userID),
+				slog.String("chat_id", req.ChatID),
+				slog.String("error", err.Error()))
+			// Don't fail the request - message saving is best-effort
+		}
+
 		// Check if there's already an active session
 		if sessionManager.HasActiveBackend(userID, req.ChatID) {
 			log.Info("active session already exists",
@@ -218,15 +227,6 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			slog.String("user_id", userID),
 			slog.String("chat_id", req.ChatID),
 			slog.Duration("connection_time", time.Since(connectStart)))
-
-		// Save user's initial query message to Firestore
-		if _, err := service.encryptAndStoreMessage(c.Request.Context(), userID, req.ChatID, req.Query, "query", true, req.UserMessageID); err != nil {
-			log.Error("failed to save user query message to Firestore",
-				slog.String("user_id", userID),
-				slog.String("chat_id", req.ChatID),
-				slog.String("error", err.Error()))
-			// Don't fail the request - message saving is best-effort
-		}
 
 		// Initialize deep research state on chat document for UI access
 		if firebaseClient != nil {
