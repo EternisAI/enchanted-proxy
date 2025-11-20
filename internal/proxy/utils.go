@@ -55,6 +55,8 @@ func GetAPIKey(baseURL string, platform string, config *config.Config) string {
 		return config.NearAPIKey
 	case "http://127.0.0.1:20001/v1":
 		return config.EternisInferenceAPIKey
+	case "http://34.30.193.13:8000/v1":
+		return "no-auth-required" // Self-hosted Venice (GCP) - no auth required
 	default:
 		return ""
 	}

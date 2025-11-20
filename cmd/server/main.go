@@ -48,6 +48,7 @@ var allowedBaseURLs = map[string]string{
 	"https://inference.tinfoil.sh/v1/": os.Getenv("TINFOIL_API_KEY"),
 	"https://cloud-api.near.ai/v1":     os.Getenv("NEAR_API_KEY"),
 	"http://127.0.0.1:20001/v1":        os.Getenv("ETERNIS_INFERENCE_API_KEY"),
+	"http://34.30.193.13:8000/v1":      "", // Self-hosted Venice (GCP) - no auth required
 }
 
 func waHandler(logger *logger.Logger) gin.HandlerFunc {
