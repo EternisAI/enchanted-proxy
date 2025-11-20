@@ -92,12 +92,12 @@ static_resources:
                   upstream_wire_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
           access_log_options:
             flush_access_log_on_connected: true
-  # demo deepresearch endpoint (temporary)
-  - name: egress_deepresearch
+  # test inference hardware endpoint (temporary)
+  - name: egress_ai_box
     address:
       socket_address:
         address: 0.0.0.0
-        port_value: 3031
+        port_value: 8000
     filter_chains:
     - filters:
       - name: envoy.filters.network.tcp_proxy
@@ -106,7 +106,7 @@ static_resources:
           stat_prefix: tcp_proxy
           cluster: enclaver_odyn_egress
           tunneling_config:
-            hostname: '%DOWNSTREAM_DIRECT_REMOTE_ADDRESS_WITHOUT_PORT%:3031'
+            hostname: '%DOWNSTREAM_DIRECT_REMOTE_ADDRESS_WITHOUT_PORT%:8000'
           access_log: *access_log_tcp
           access_log_options:
             flush_access_log_on_connected: true
