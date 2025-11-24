@@ -470,25 +470,43 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	router.Use(logger.RequestLoggingMiddleware(input.logger))
 
 	// Add CORS middleware
-	// Only set CORS headers if not already set by infrastructure (prevents duplicate headers)
+	// Handles CORS headers for all responses, including proxied responses from upstream services
 	router.Use(func(c *gin.Context) {
-		// Check if CORS headers are already set by ALB/nginx/CloudFront
-		if c.Writer.Header().Get("Access-Control-Allow-Origin") == "" {
-			c.Header("Access-Control-Allow-Origin", "*")
-		}
-		if c.Writer.Header().Get("Access-Control-Allow-Methods") == "" {
-			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		}
-		if c.Writer.Header().Get("Access-Control-Allow-Headers") == "" {
-			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-BASE-URL, X-Client-Platform, X-Chat-ID, X-Message-ID, X-User-Message-ID, X-Encryption-Enabled")
-		}
-
+		// Handle OPTIONS preflight
 		if c.Request.Method == "OPTIONS" {
+			c.Header("Access-Control-Allow-Origin", "*")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-BASE-URL, X-Client-Platform, X-Chat-ID, X-Message-ID, X-User-Message-ID, X-Encryption-Enabled")
 			c.AbortWithStatus(204)
 			return
 		}
 
+		// Continue to next handler
 		c.Next()
+
+		// After handler completes, clean up CORS headers from upstream responses (e.g., OpenRouter)
+		// This prevents duplicate CORS headers when proxying to services that add their own CORS headers
+		writer := c.Writer
+
+		// Get current CORS headers
+		origin := writer.Header().Get("Access-Control-Allow-Origin")
+		methods := writer.Header().Get("Access-Control-Allow-Methods")
+		headers := writer.Header().Get("Access-Control-Allow-Headers")
+
+		// If upstream service set CORS headers, remove them and set our own
+		if origin != "" || methods != "" || headers != "" {
+			// Delete all CORS headers (including duplicates from upstream)
+			writer.Header().Del("Access-Control-Allow-Origin")
+			writer.Header().Del("Access-Control-Allow-Methods")
+			writer.Header().Del("Access-Control-Allow-Headers")
+			writer.Header().Del("Access-Control-Allow-Credentials")
+			writer.Header().Del("Access-Control-Expose-Headers")
+		}
+
+		// Set our CORS headers (single source of truth)
+		writer.Header().Set("Access-Control-Allow-Origin", "*")
+		writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-BASE-URL, X-Client-Platform, X-Chat-ID, X-Message-ID, X-User-Message-ID, X-Encryption-Enabled")
 	})
 
 	// Debug/test endpoint (no auth required)
