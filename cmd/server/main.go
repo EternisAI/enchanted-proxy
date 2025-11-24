@@ -37,6 +37,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/task"
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
+	"github.com/eternisai/enchanted-proxy/internal/tools"
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -136,6 +137,15 @@ func main() {
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
 
+	// Initialize tool system
+	toolRegistry := tools.NewRegistry()
+	exaSearchTool := tools.NewExaSearchTool(searchService, logger.WithComponent("exa-search-tool"))
+	if err := toolRegistry.Register(exaSearchTool); err != nil {
+		log.Error("failed to register exa search tool", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	log.Info("tool system initialized", slog.Int("registered_tools", 1))
+
 	taskService, err := task.NewService(
 		config.AppConfig.TemporalEndpoint,
 		config.AppConfig.TemporalNamespace,
@@ -203,6 +213,18 @@ func main() {
 		chatStreamManager = streaming.NewChatStreamManager(streamManager, logger.WithComponent("chat-streaming"))
 		streamManager.SetChatStreamManager(chatStreamManager)
 		log.Info("chat stream manager initialized")
+
+		// Initialize tool executor for tool call execution
+		// Use OpenAI as default provider for tool calls
+		toolExecutor := streaming.NewToolExecutor(
+			toolRegistry,
+			logger.WithComponent("tool-executor"),
+			"https://api.openai.com/v1",
+			config.AppConfig.OpenAIAPIKey,
+			chatStreamManager,
+		)
+		streamManager.SetToolExecutor(toolExecutor)
+		log.Info("tool executor initialized")
 
 		// Ensure cleanup on shutdown
 		defer func() {
@@ -308,6 +330,7 @@ func main() {
 		streamManager:          streamManager,
 		chatStreamManager:      chatStreamManager,
 		modelRouter:            modelRouter,
+		toolRegistry:           toolRegistry,
 		oauthHandler:           oauthHandler,
 		composioHandler:        composioHandler,
 		inviteCodeHandler:      inviteCodeHandler,
@@ -425,6 +448,7 @@ type restServerInput struct {
 	streamManager          *streaming.StreamManager
 	chatStreamManager      *streaming.ChatStreamManager
 	modelRouter            *routing.ModelRouter
+	toolRegistry           *tools.Registry
 	oauthHandler           *oauth.Handler
 	composioHandler        *composio.Handler
 	inviteCodeHandler      *invitecode.Handler
@@ -556,13 +580,13 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger))
 	{
 		// AI service endpoints
-		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
-		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
-		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
-		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
-		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
-		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
-		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
+		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
 	}
 
 	return router

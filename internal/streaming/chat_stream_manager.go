@@ -107,6 +107,36 @@ func (csm *ChatStreamManager) NotifyStreamStarted(chatID, messageID string, sess
 	hub.OnStreamStarted(messageID, session)
 }
 
+// NotifyToolCallStarted notifies chat hub when a tool call starts.
+func (csm *ChatStreamManager) NotifyToolCallStarted(chatID, messageID, toolName, toolCallID string) {
+	hub := csm.GetHub(chatID)
+	if hub == nil {
+		return
+	}
+
+	hub.OnToolCallStarted(messageID, toolName, toolCallID)
+}
+
+// NotifyToolCallCompleted notifies chat hub when a tool call completes.
+func (csm *ChatStreamManager) NotifyToolCallCompleted(chatID, messageID, toolName, toolCallID, resultSummary string) {
+	hub := csm.GetHub(chatID)
+	if hub == nil {
+		return
+	}
+
+	hub.OnToolCallCompleted(messageID, toolName, toolCallID, resultSummary)
+}
+
+// NotifyToolCallError notifies chat hub when a tool call fails.
+func (csm *ChatStreamManager) NotifyToolCallError(chatID, messageID, toolName, toolCallID, errorMsg string) {
+	hub := csm.GetHub(chatID)
+	if hub == nil {
+		return
+	}
+
+	hub.OnToolCallError(messageID, toolName, toolCallID, errorMsg)
+}
+
 // CleanupIdleHubs removes hubs with no subscribers that have been idle for over 2 minutes.
 func (csm *ChatStreamManager) CleanupIdleHubs() int {
 	now := time.Now()

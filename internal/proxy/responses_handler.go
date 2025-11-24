@@ -195,6 +195,14 @@ func handleResponsesAPI(
 	// Get or create stream session
 	session, isNew := streamManager.GetOrCreateSession(chatID, messageID, resp.Body)
 
+	// Set original request for tool call continuation (only for new sessions)
+	if isNew && len(transformedBody) > 0 {
+		session.SetOriginalRequest(transformedBody)
+		log.Debug("set original request for tool continuation (Responses API)",
+			slog.String("chat_id", chatID),
+			slog.String("message_id", messageID))
+	}
+
 	// Subscribe to the session
 	subscriberID := uuid.New().String()
 	subscriber, err := session.Subscribe(c.Request.Context(), subscriberID, streaming.SubscriberOptions{

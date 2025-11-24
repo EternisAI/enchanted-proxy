@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/tools"
 )
 
 // extractModelFromRequestBody extracts the model field from request body bytes.
@@ -143,4 +144,38 @@ func getOpenRouterAPIKey(platform string, config *config.Config) string {
 	default:
 		return ""
 	}
+}
+
+// injectToolsIntoRequest injects tool definitions into a chat completions request if not already present.
+// Returns the modified request body or the original body if injection is not needed.
+func injectToolsIntoRequest(requestBody []byte, toolRegistry *tools.Registry) ([]byte, error) {
+	if toolRegistry == nil || len(requestBody) == 0 {
+		return requestBody, nil
+	}
+
+	// Parse request body
+	var requestData map[string]interface{}
+	if err := json.Unmarshal(requestBody, &requestData); err != nil {
+		return requestBody, err
+	}
+
+	// Check if tools are already present
+	if _, exists := requestData["tools"]; exists {
+		// Tools already defined by client, don't override
+		return requestBody, nil
+	}
+
+	// Inject tool definitions
+	toolDefs := toolRegistry.GetDefinitions()
+	if len(toolDefs) > 0 {
+		requestData["tools"] = toolDefs
+	}
+
+	// Re-marshal request
+	modifiedBody, err := json.Marshal(requestData)
+	if err != nil {
+		return requestBody, err
+	}
+
+	return modifiedBody, nil
 }

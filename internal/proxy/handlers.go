@@ -23,6 +23,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/routing"
 	"github.com/eternisai/enchanted-proxy/internal/streaming"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
+	"github.com/eternisai/enchanted-proxy/internal/tools"
 	"github.com/gin-gonic/gin"
 )
 
@@ -68,6 +69,7 @@ func ProxyHandler(
 	titleService *title_generation.Service,
 	streamManager *streaming.StreamManager,
 	modelRouter *routing.ModelRouter,
+	toolRegistry *tools.Registry,
 	cfg *config.Config,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -225,6 +227,23 @@ func ProxyHandler(
 			}
 		}
 
+		// Inject tool definitions into request (if not already present)
+		if c.Request.URL.Path == "/chat/completions" && len(requestBody) > 0 {
+			modifiedBody, err := injectToolsIntoRequest(requestBody, toolRegistry)
+			if err != nil {
+				log.Error("failed to inject tools into request",
+					slog.String("error", err.Error()))
+				// Continue with original body on error
+			} else if len(modifiedBody) != len(requestBody) {
+				// Tools were injected, update request body
+				requestBody = modifiedBody
+				c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
+				c.Request.ContentLength = int64(len(requestBody))
+				log.Debug("injected tool definitions into request",
+					slog.Int("tool_count", len(toolRegistry.GetDefinitions())))
+			}
+		}
+
 		// Parse the target URL
 		target, err := url.Parse(baseURL)
 		if err != nil {
@@ -266,7 +285,7 @@ func ProxyHandler(
 			if isStreaming {
 				// Use broadcast streaming if StreamManager available, otherwise legacy
 				if streamManager != nil {
-					return handleStreamingWithBroadcast(c, resp, log, model, upstreamLatency, trackingService, messageService, streamManager, cfg)
+					return handleStreamingWithBroadcast(c, resp, log, model, upstreamLatency, trackingService, messageService, streamManager, requestBody, cfg)
 				} else {
 					return handleStreamingLegacy(resp, log, model, upstreamLatency, c, trackingService, messageService)
 				}

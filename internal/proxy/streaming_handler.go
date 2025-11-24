@@ -37,6 +37,7 @@ import (
 //   - trackingService: Request tracking service
 //   - messageService: Message storage service
 //   - streamManager: Stream manager for broadcast
+//   - requestBody: Original request body for tool call continuation
 //   - cfg: Application configuration
 //
 // Returns:
@@ -50,6 +51,7 @@ func handleStreamingWithBroadcast(
 	trackingService *request_tracking.Service,
 	messageService *messaging.Service,
 	streamManager *streaming.StreamManager,
+	requestBody []byte,
 	cfg *config.Config,
 ) error {
 	// Extract chat ID and message ID from headers
@@ -75,6 +77,14 @@ func handleStreamingWithBroadcast(
 	// If session exists, we'll join it (multi-client broadcast)
 	// If session doesn't exist, we'll create it and start upstream read
 	session, isNew := streamManager.GetOrCreateSession(chatID, messageID, resp.Body)
+
+	// Set original request for tool call continuation (only for new sessions)
+	if isNew && len(requestBody) > 0 {
+		session.SetOriginalRequest(requestBody)
+		log.Debug("set original request for tool continuation",
+			slog.String("chat_id", chatID),
+			slog.String("message_id", messageID))
+	}
 
 	if !isNew {
 		log.Info("joining existing stream session",

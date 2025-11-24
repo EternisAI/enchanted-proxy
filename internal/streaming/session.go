@@ -93,6 +93,13 @@ type StreamSession struct {
 	subscribers   map[string]*StreamSubscriber
 	subscribersMu sync.RWMutex
 
+	// Tool execution
+	toolExecutor *ToolExecutor
+
+	// Request continuation (for tool calls)
+	originalRequest []byte // Original request body for continuation
+	requestMu       sync.RWMutex
+
 	// Logger
 	logger *logger.Logger
 }
@@ -145,6 +152,18 @@ func (s *StreamSession) Start() {
 	go s.readUpstream()
 }
 
+// SetToolExecutor sets the tool executor for this session.
+func (s *StreamSession) SetToolExecutor(executor *ToolExecutor) {
+	s.toolExecutor = executor
+}
+
+// SetOriginalRequest stores the original request body for tool call continuation.
+func (s *StreamSession) SetOriginalRequest(requestBody []byte) {
+	s.requestMu.Lock()
+	defer s.requestMu.Unlock()
+	s.originalRequest = requestBody
+}
+
 // readUpstream reads from the upstream AI provider and broadcasts to subscribers.
 // This runs in a background goroutine and handles all upstream reading logic.
 //
@@ -184,6 +203,12 @@ func (s *StreamSession) readUpstream() {
 
 	chunkIndex := 0
 
+	// Tool call detection (if tool executor is set)
+	var toolDetector *ToolCallDetector
+	if s.toolExecutor != nil {
+		toolDetector = NewToolCallDetector()
+	}
+
 	for scanner.Scan() {
 		// Check if stop was requested
 		select {
@@ -215,6 +240,11 @@ func (s *StreamSession) readUpstream() {
 			continue
 		}
 
+		// Detect tool calls if executor is available
+		if toolDetector != nil {
+			toolDetector.ProcessChunk(line)
+		}
+
 		// Check if this is the final chunk
 		isFinal := strings.Contains(line, "[DONE]")
 		isError := strings.Contains(line, `"error"`)
@@ -235,6 +265,111 @@ func (s *StreamSession) readUpstream() {
 		s.broadcast(chunk)
 
 		chunkIndex++
+
+		// Check if tool calls are complete
+		if toolDetector != nil && toolDetector.IsComplete() {
+			s.logger.Info("tool calls detected, executing tools",
+				slog.String("chat_id", s.chatID),
+				slog.String("message_id", s.messageID))
+
+			// Get tool calls
+			toolCalls := toolDetector.GetToolCalls()
+
+			// Execute tools (this sends WebSocket notifications)
+			toolResults, err := s.toolExecutor.ExecuteToolCalls(s.stopCtx, s.chatID, s.messageID, toolCalls)
+			if err != nil {
+				s.logger.Error("tool execution failed",
+					slog.String("error", err.Error()),
+					slog.String("chat_id", s.chatID),
+					slog.String("message_id", s.messageID))
+				// Continue despite error - stream may still complete
+				toolDetector = NewToolCallDetector()
+				continue
+			}
+
+			// Create continuation request with tool results
+			s.requestMu.RLock()
+			originalRequest := s.originalRequest
+			s.requestMu.RUnlock()
+
+			if originalRequest != nil && len(toolResults) > 0 {
+				s.logger.Info("creating continuation request with tool results",
+					slog.String("chat_id", s.chatID),
+					slog.String("message_id", s.messageID),
+					slog.Int("tool_result_count", len(toolResults)))
+
+				// Parse original request to get messages
+				var originalReq map[string]interface{}
+				if err := json.Unmarshal(originalRequest, &originalReq); err != nil {
+					s.logger.Error("failed to parse original request",
+						slog.String("error", err.Error()))
+					toolDetector = NewToolCallDetector()
+					continue
+				}
+
+				// Extract messages array
+				originalMessages, ok := originalReq["messages"].([]interface{})
+				if !ok {
+					s.logger.Error("original request has no messages array")
+					toolDetector = NewToolCallDetector()
+					continue
+				}
+
+				// Convert to []map[string]interface{}
+				messages := make([]map[string]interface{}, len(originalMessages))
+				for i, msg := range originalMessages {
+					if msgMap, ok := msg.(map[string]interface{}); ok {
+						messages[i] = msgMap
+					}
+				}
+
+				// Build assistant message from tool calls
+				assistantMessage := map[string]interface{}{
+					"role":       "assistant",
+					"content":    nil, // Tool calls typically have no content
+					"tool_calls": toolCalls,
+				}
+
+				// Create continuation request
+				continuationBody, err := s.toolExecutor.CreateContinuationRequest(
+					s.stopCtx,
+					messages,
+					assistantMessage,
+					toolResults,
+				)
+				if err != nil {
+					s.logger.Error("failed to create continuation request",
+						slog.String("error", err.Error()))
+					toolDetector = NewToolCallDetector()
+					continue
+				}
+
+				// Close current upstream body
+				if s.upstreamBody != nil {
+					s.upstreamBody.Close()
+				}
+
+				// Replace with continuation body and continue reading
+				s.upstreamBody = continuationBody
+				scanner = bufio.NewScanner(s.upstreamBody)
+				toolDetector = NewToolCallDetector() // Reset for next potential tool call
+
+				s.logger.Info("continuation request created, resuming stream",
+					slog.String("chat_id", s.chatID),
+					slog.String("message_id", s.messageID))
+
+				continue
+			} else {
+				s.logger.Warn("cannot create continuation: no original request or no tool results",
+					slog.String("chat_id", s.chatID),
+					slog.String("message_id", s.messageID),
+					slog.Bool("has_original_request", originalRequest != nil),
+					slog.Int("tool_result_count", len(toolResults)))
+			}
+
+			// Reset detector for potential subsequent tool calls
+			toolDetector = NewToolCallDetector()
+		}
 
 		// If this is the final chunk, we're done
 		if isFinal {

@@ -228,6 +228,72 @@ func (h *ChatStreamHub) OnStreamStarted(messageID string, session *StreamSession
 	}()
 }
 
+// OnToolCallStarted broadcasts tool_call_started event.
+func (h *ChatStreamHub) OnToolCallStarted(messageID, toolName, toolCallID string) {
+	h.logger.Info("tool call started",
+		slog.String("chat_id", h.chatID),
+		slog.String("message_id", messageID),
+		slog.String("tool_name", toolName),
+		slog.String("tool_call_id", toolCallID))
+
+	msg := WebSocketMessage{
+		Type:      "tool_call_started",
+		MessageID: messageID,
+		Timestamp: time.Now().Format(time.RFC3339),
+		Data: map[string]interface{}{
+			"tool_name":    toolName,
+			"tool_call_id": toolCallID,
+		},
+	}
+
+	h.broadcast(msg)
+}
+
+// OnToolCallCompleted broadcasts tool_call_completed event.
+func (h *ChatStreamHub) OnToolCallCompleted(messageID, toolName, toolCallID, resultSummary string) {
+	h.logger.Info("tool call completed",
+		slog.String("chat_id", h.chatID),
+		slog.String("message_id", messageID),
+		slog.String("tool_name", toolName),
+		slog.String("tool_call_id", toolCallID))
+
+	msg := WebSocketMessage{
+		Type:      "tool_call_completed",
+		MessageID: messageID,
+		Timestamp: time.Now().Format(time.RFC3339),
+		Data: map[string]interface{}{
+			"tool_name":      toolName,
+			"tool_call_id":   toolCallID,
+			"result_summary": resultSummary,
+		},
+	}
+
+	h.broadcast(msg)
+}
+
+// OnToolCallError broadcasts tool_call_error event.
+func (h *ChatStreamHub) OnToolCallError(messageID, toolName, toolCallID, errorMsg string) {
+	h.logger.Error("tool call error",
+		slog.String("chat_id", h.chatID),
+		slog.String("message_id", messageID),
+		slog.String("tool_name", toolName),
+		slog.String("tool_call_id", toolCallID),
+		slog.String("error", errorMsg))
+
+	msg := WebSocketMessage{
+		Type:      "tool_call_error",
+		MessageID: messageID,
+		Timestamp: time.Now().Format(time.RFC3339),
+		Data: map[string]interface{}{
+			"tool_name":    toolName,
+			"tool_call_id": toolCallID,
+			"error":        errorMsg,
+		},
+	}
+
+	h.broadcast(msg)
+}
+
 // subscribeToSession subscribes to a stream session and forwards chunks to all subscribers.
 func (h *ChatStreamHub) subscribeToSession(messageID string, session *StreamSession) {
 
