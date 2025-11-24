@@ -137,9 +137,9 @@ func handleStreamingWithBroadcast(
 // handleStreamingLegacy handles streaming responses the old way (no broadcast).
 //
 // This is the legacy streaming path that:
-//  - Ties upstream reading to client connection
-//  - Stops reading if client disconnects
-//  - Each client gets its own upstream request
+//   - Ties upstream reading to client connection
+//   - Stops reading if client disconnects
+//   - Each client gets its own upstream request
 //
 // This is kept for backward compatibility during migration.
 func handleStreamingLegacy(

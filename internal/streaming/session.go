@@ -63,8 +63,8 @@ type StreamSession struct {
 	messageID string
 
 	// Timing
-	startTime    time.Time
-	completedAt  time.Time
+	startTime       time.Time
+	completedAt     time.Time
 	stopRequestedAt time.Time
 
 	// Upstream reading (background goroutine)
@@ -82,7 +82,7 @@ type StreamSession struct {
 	stopMu     sync.RWMutex       // Protects stopped, stoppedBy, stopReason
 
 	// Responses API support (for GPT-5 Pro and stateful models)
-	responseID string        // OpenAI Responses API response_id (e.g., "resp_abc123")
+	responseID   string       // OpenAI Responses API response_id (e.g., "resp_abc123")
 	responseIDMu sync.RWMutex // Protects responseID
 
 	// Chunk storage (buffered for late-join replay)

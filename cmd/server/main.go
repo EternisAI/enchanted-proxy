@@ -194,12 +194,23 @@ func main() {
 
 	// Initialize stream manager for broadcast streaming
 	var streamManager *streaming.StreamManager
+	var chatStreamManager *streaming.ChatStreamManager
 	if messageService != nil {
 		streamManager = streaming.NewStreamManager(messageService, logger.WithComponent("streaming"))
 		log.Info("stream manager initialized")
 
+		// Initialize chat stream manager for WebSocket streaming
+		chatStreamManager = streaming.NewChatStreamManager(streamManager, logger.WithComponent("chat-streaming"))
+		streamManager.SetChatStreamManager(chatStreamManager)
+		log.Info("chat stream manager initialized")
+
 		// Ensure cleanup on shutdown
-		defer streamManager.Shutdown()
+		defer func() {
+			if chatStreamManager != nil {
+				chatStreamManager.Shutdown()
+			}
+			streamManager.Shutdown()
+		}()
 	} else {
 		log.Info("stream manager disabled (requires message storage)")
 	}
@@ -295,6 +306,7 @@ func main() {
 		messageService:         messageService,
 		titleService:           titleService,
 		streamManager:          streamManager,
+		chatStreamManager:      chatStreamManager,
 		modelRouter:            modelRouter,
 		oauthHandler:           oauthHandler,
 		composioHandler:        composioHandler,
@@ -411,6 +423,7 @@ type restServerInput struct {
 	messageService         *messaging.Service
 	titleService           *title_generation.Service
 	streamManager          *streaming.StreamManager
+	chatStreamManager      *streaming.ChatStreamManager
 	modelRouter            *routing.ModelRouter
 	oauthHandler           *oauth.Handler
 	composioHandler        *composio.Handler
@@ -510,12 +523,15 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		// Stream Control API routes (protected)
 		chats := api.Group("/chats")
 		{
-			chats.GET("/:chatId/active-stream", proxy.ActiveStreamHandler(input.logger, input.streamManager, input.firestoreClient)) // GET /api/v1/chats/:chatId/active-stream
+			// New WebSocket-based chat streaming
+			if input.chatStreamManager != nil {
+				chats.GET("/:chatId/stream", proxy.ChatStreamHandler(input.logger, input.chatStreamManager, input.firestoreClient)) // WS /api/v1/chats/:chatId/stream
+			}
+
+			// Message control endpoints
 			messages := chats.Group("/:chatId/messages")
 			{
-				messages.GET("/:messageId/stream", proxy.GetStreamHandler(input.logger, input.streamManager, input.firestoreClient))   // GET /api/v1/chats/:chatId/messages/:messageId/stream
-				messages.POST("/:messageId/stop", proxy.StopStreamHandler(input.logger, input.streamManager, input.firestoreClient))   // POST /api/v1/chats/:chatId/messages/:messageId/stop
-				messages.GET("/:messageId/status", proxy.StreamStatusHandler(input.logger, input.streamManager, input.firestoreClient)) // GET /api/v1/chats/:chatId/messages/:messageId/status
+				messages.POST("/:messageId/stop", proxy.StopStreamHandler(input.logger, input.streamManager, input.firestoreClient)) // POST /api/v1/chats/:chatId/messages/:messageId/stop
 			}
 		}
 
@@ -526,10 +542,10 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 				keyShare := encryption.Group("/key-share")
 				{
 					api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled)) // POST API to submit clarification response
-					api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled)) // WebSocket proxy for deep research
-					keyShare.POST("/session", input.keyshareHandler.CreateSession)                                                                                                                                                     // POST /api/v1/encryption/key-share/session
-					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)                                                                                                                                              // POST /api/v1/encryption/key-share/session/:sessionId
-					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen)                                                                                                                                  // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
+					api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled))              // WebSocket proxy for deep research
+					keyShare.POST("/session", input.keyshareHandler.CreateSession)                                                                                                                                                                  // POST /api/v1/encryption/key-share/session
+					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)                                                                                                                                                           // POST /api/v1/encryption/key-share/session/:sessionId
+					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen)                                                                                                                                               // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
 				}
 			}
 		}

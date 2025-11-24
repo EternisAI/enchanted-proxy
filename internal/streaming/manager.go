@@ -27,18 +27,6 @@ const (
 )
 
 // StreamManager manages the lifecycle of all active stream sessions.
-//
-// Responsibilities:
-//   - Create new sessions when clients request AI responses
-//   - Lookup existing sessions for multi-client broadcast
-//   - Cleanup expired sessions to prevent memory leaks
-//   - Provide observability (metrics, active streams list)
-//   - Handle graceful shutdown
-//
-// Thread-safety:
-//   - All public methods are thread-safe
-//   - Uses RWMutex for read-heavy workload (many lookups, few creates)
-//   - Safe for concurrent access from multiple HTTP handlers
 type StreamManager struct {
 	// sessions maps sessionKey ("chatID:messageID") to StreamSession
 	sessions map[string]*StreamSession
@@ -46,6 +34,9 @@ type StreamManager struct {
 
 	// messageService handles storing completed messages to Firestore
 	messageService *messaging.Service
+
+	// chatStreamManager handles chat-level WebSocket notifications (optional)
+	chatStreamManager ChatStreamManagerInterface
 
 	// logger for this manager
 	logger *logger.Logger
@@ -55,10 +46,15 @@ type StreamManager struct {
 	cleanupWg       sync.WaitGroup
 
 	// metrics tracking
-	metricsLock       sync.RWMutex
-	totalSessionsCreated  int64
+	metricsLock            sync.RWMutex
+	totalSessionsCreated   int64
 	totalSessionsCompleted int64
-	totalSubscriptions    int64
+	totalSubscriptions     int64
+}
+
+// ChatStreamManagerInterface allows StreamManager to notify chat-level hubs.
+type ChatStreamManagerInterface interface {
+	NotifyStreamStarted(chatID, messageID string, session *StreamSession)
 }
 
 // NewStreamManager creates a new stream manager.
@@ -107,12 +103,13 @@ func NewStreamManager(messageService *messaging.Service, logger *logger.Logger) 
 // Thread-safe: Uses double-check locking to prevent duplicate session creation.
 //
 // Example usage:
-//   session, isNew := manager.GetOrCreateSession(chatID, messageID, upstreamBody)
-//   if isNew {
-//       // First client for this response
-//   } else {
-//       // Additional client joining existing stream
-//   }
+//
+//	session, isNew := manager.GetOrCreateSession(chatID, messageID, upstreamBody)
+//	if isNew {
+//	    // First client for this response
+//	} else {
+//	    // Additional client joining existing stream
+//	}
 func (sm *StreamManager) GetOrCreateSession(chatID, messageID string, upstreamBody io.ReadCloser) (*StreamSession, bool) {
 	sessionKey := sm.makeSessionKey(chatID, messageID)
 
@@ -158,6 +155,10 @@ func (sm *StreamManager) GetOrCreateSession(chatID, messageID string, upstreamBo
 		slog.String("session_key", sessionKey),
 		slog.String("chat_id", chatID),
 		slog.String("message_id", messageID))
+
+	if sm.chatStreamManager != nil {
+		sm.chatStreamManager.NotifyStreamStarted(chatID, messageID, session)
+	}
 
 	return session, true
 }
@@ -445,6 +446,12 @@ func (sm *StreamManager) RecordSubscription() {
 	sm.metricsLock.Lock()
 	defer sm.metricsLock.Unlock()
 	sm.totalSubscriptions++
+}
+
+// SetChatStreamManager sets the chat stream manager for notifications.
+// This should be called during initialization, before any sessions are created.
+func (sm *StreamManager) SetChatStreamManager(csm ChatStreamManagerInterface) {
+	sm.chatStreamManager = csm
 }
 
 // SaveCompletedSession saves a completed session's message to Firestore.

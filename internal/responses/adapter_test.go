@@ -9,12 +9,12 @@ func TestAdapter_TransformRequest(t *testing.T) {
 	adapter := NewAdapter()
 
 	tests := []struct {
-		name                string
-		requestBody         string
-		previousResponseID  string
-		wantStoreField      bool
-		wantPreviousRespID  bool
-		wantErr             bool
+		name               string
+		requestBody        string
+		previousResponseID string
+		wantStoreField     bool
+		wantPreviousRespID bool
+		wantErr            bool
 	}{
 		{
 			name: "first message - adds store=true",

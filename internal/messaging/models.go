@@ -4,12 +4,12 @@ import "time"
 
 // ChatMessage represents a stored chat message in Firestore
 type ChatMessage struct {
-	ID                  string    `firestore:"id"`                   // Message UUID
-	EncryptedContent    string    `firestore:"encryptedContent"`     // Encrypted message content
-	IsFromUser          bool      `firestore:"isFromUser"`           // true = user, false = assistant
-	ChatID              string    `firestore:"chatId"`               // Chat UUID
-	IsError             bool      `firestore:"isError"`              // true if error occurred
-	Timestamp           time.Time `firestore:"timestamp"`            // Message timestamp
+	ID                  string    `firestore:"id"`                  // Message UUID
+	EncryptedContent    string    `firestore:"encryptedContent"`    // Encrypted message content
+	IsFromUser          bool      `firestore:"isFromUser"`          // true = user, false = assistant
+	ChatID              string    `firestore:"chatId"`              // Chat UUID
+	IsError             bool      `firestore:"isError"`             // true if error occurred
+	Timestamp           time.Time `firestore:"timestamp"`           // Message timestamp
 	PublicEncryptionKey string    `firestore:"publicEncryptionKey"` // Public key used (JSON string or "none")
 
 	// Stop control fields (for AI responses that were stopped mid-generation)
@@ -21,7 +21,7 @@ type ChatMessage struct {
 // UserPublicKey represents a user's ECDSA P-256 public key
 type UserPublicKey struct {
 	CreatedAt time.Time `firestore:"createdAt"`
-	Public    string    `firestore:"public"`    // JWK JSON string (EC P-256)
+	Public    string    `firestore:"public"` // JWK JSON string (EC P-256)
 	UpdatedAt time.Time `firestore:"updatedAt"`
 	Version   int       `firestore:"version"` // Key version number
 }

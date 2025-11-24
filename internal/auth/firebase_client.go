@@ -192,7 +192,7 @@ type DeepResearchSessionState struct {
 // DeepResearchState represents the state of a deep research session on a chat document.
 type DeepResearchState struct {
 	StartedAt     time.Time          `firestore:"startedAt" json:"startedAt"`
-	Status        string             `firestore:"status" json:"status"` // "in_progress", "clarify", "error", "complete"
+	Status        string             `firestore:"status" json:"status"`                                   // "in_progress", "clarify", "error", "complete"
 	ThinkingState string             `firestore:"thinkingState,omitempty" json:"thinkingState,omitempty"` // Latest progress message
 	Error         *DeepResearchError `firestore:"error,omitempty" json:"error,omitempty"`
 }
@@ -387,4 +387,3 @@ func (f *FirebaseClient) GetChatDeepResearchState(ctx context.Context, userID, c
 
 	return &state, nil
 }
-
