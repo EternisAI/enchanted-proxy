@@ -470,10 +470,18 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	router.Use(logger.RequestLoggingMiddleware(input.logger))
 
 	// Add CORS middleware
+	// Only set CORS headers if not already set by infrastructure (prevents duplicate headers)
 	router.Use(func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-BASE-URL, X-Client-Platform, X-Chat-ID, X-Message-ID, X-User-Message-ID, X-Encryption-Enabled")
+		// Check if CORS headers are already set by ALB/nginx/CloudFront
+		if c.Writer.Header().Get("Access-Control-Allow-Origin") == "" {
+			c.Header("Access-Control-Allow-Origin", "*")
+		}
+		if c.Writer.Header().Get("Access-Control-Allow-Methods") == "" {
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		}
+		if c.Writer.Header().Get("Access-Control-Allow-Headers") == "" {
+			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-BASE-URL, X-Client-Platform, X-Chat-ID, X-Message-ID, X-User-Message-ID, X-Encryption-Enabled")
+		}
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
