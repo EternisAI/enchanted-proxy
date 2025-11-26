@@ -197,8 +197,8 @@ func (te *ToolExecutor) CreateContinuationRequest(
 	// Create continuation payload by copying all original params
 	payload := make(map[string]interface{})
 	for k, v := range originalReq {
-		// Skip messages (we rebuild it) and stream (force true)
-		if k != "messages" && k != "stream" {
+		// Skip messages (we rebuild it), stream (force true), and tools (we add them below)
+		if k != "messages" && k != "stream" && k != "tools" {
 			payload[k] = v
 		}
 	}
@@ -206,6 +206,16 @@ func (te *ToolExecutor) CreateContinuationRequest(
 	// Set updated messages and ensure streaming
 	payload["messages"] = messages
 	payload["stream"] = true
+
+	// CRITICAL: Always include tool definitions in continuation requests
+	// This is necessary because the assistant message contains tool_calls,
+	// and the AI provider needs the tool definitions to understand the context
+	toolDefs := te.registry.GetDefinitions()
+	if len(toolDefs) > 0 {
+		payload["tools"] = toolDefs
+		te.logger.Debug("included tool definitions in continuation",
+			slog.Int("tool_count", len(toolDefs)))
+	}
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
