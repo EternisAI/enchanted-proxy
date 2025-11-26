@@ -74,6 +74,10 @@ func (d *ToolCallDetector) ProcessChunk(line string) bool {
 	// Check finish reason
 	if choice.FinishReason != "" {
 		d.finishReason = choice.FinishReason
+		// If finish_reason is "tool_calls", this chunk should be suppressed
+		if choice.FinishReason == "tool_calls" {
+			return true
+		}
 	}
 
 	// Process tool calls
