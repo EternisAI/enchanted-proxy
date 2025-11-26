@@ -47,6 +47,9 @@ type StreamManager struct {
 	// messageService handles storing completed messages to Firestore
 	messageService *messaging.Service
 
+	// toolExecutor handles tool call execution (optional)
+	toolExecutor *ToolExecutor
+
 	// logger for this manager
 	logger *logger.Logger
 
@@ -55,10 +58,10 @@ type StreamManager struct {
 	cleanupWg       sync.WaitGroup
 
 	// metrics tracking
-	metricsLock       sync.RWMutex
-	totalSessionsCreated  int64
+	metricsLock            sync.RWMutex
+	totalSessionsCreated   int64
 	totalSessionsCompleted int64
-	totalSubscriptions    int64
+	totalSubscriptions     int64
 }
 
 // NewStreamManager creates a new stream manager.
@@ -145,6 +148,11 @@ func (sm *StreamManager) GetOrCreateSession(chatID, messageID string, upstreamBo
 	// Create new session
 	session := NewStreamSession(chatID, messageID, upstreamBody, sm.logger)
 	sm.sessions[sessionKey] = session
+
+	// Set tool executor if available
+	if sm.toolExecutor != nil {
+		session.SetToolExecutor(sm.toolExecutor)
+	}
 
 	// Start reading upstream in background
 	session.Start()
@@ -445,6 +453,12 @@ func (sm *StreamManager) RecordSubscription() {
 	sm.metricsLock.Lock()
 	defer sm.metricsLock.Unlock()
 	sm.totalSubscriptions++
+}
+
+// SetToolExecutor sets the tool executor for tool call execution.
+// This should be called during initialization, before any sessions are created.
+func (sm *StreamManager) SetToolExecutor(executor *ToolExecutor) {
+	sm.toolExecutor = executor
 }
 
 // SaveCompletedSession saves a completed session's message to Firestore.

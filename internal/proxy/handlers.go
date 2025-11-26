@@ -280,6 +280,17 @@ func ProxyHandler(
 			orig(r)
 			r.Host = target.Host
 
+			// Capture request body for tool execution (if streaming is enabled)
+			if r.Body != nil && streamManager != nil {
+				bodyBytes, err := io.ReadAll(r.Body)
+				if err == nil {
+					// Store in context for later use in handleStreamingWithBroadcast
+					c.Set("originalRequestBody", bodyBytes)
+					// Restore body for upstream request
+					r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				}
+			}
+
 			// Set Authorization header with Bearer token for AI services
 			r.Header.Set("Authorization", "Bearer "+apiKey)
 

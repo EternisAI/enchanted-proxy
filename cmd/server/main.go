@@ -37,6 +37,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/task"
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
+	"github.com/eternisai/enchanted-proxy/internal/tools"
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -192,11 +193,31 @@ func main() {
 		log.Info("title generation service disabled (requires message storage)")
 	}
 
+	// Initialize tool system
+	toolRegistry := tools.NewRegistry()
+	exaSearchTool := tools.NewExaSearchTool(searchService, logger.WithComponent("exa-search-tool"))
+	if err := toolRegistry.Register(exaSearchTool); err != nil {
+		log.Error("failed to register exa search tool", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	log.Info("tool system initialized", slog.Int("registered_tools", len(toolRegistry.List())))
+
 	// Initialize stream manager for broadcast streaming
 	var streamManager *streaming.StreamManager
 	if messageService != nil {
 		streamManager = streaming.NewStreamManager(messageService, logger.WithComponent("streaming"))
 		log.Info("stream manager initialized")
+
+		// Initialize tool executor for tool call execution
+		// Use OpenAI as default provider for tool calls
+		toolExecutor := streaming.NewToolExecutor(
+			toolRegistry,
+			logger.WithComponent("tool-executor"),
+			"https://api.openai.com/v1/chat/completions",
+			config.AppConfig.OpenAIAPIKey,
+		)
+		streamManager.SetToolExecutor(toolExecutor)
+		log.Info("tool executor initialized")
 
 		// Ensure cleanup on shutdown
 		defer streamManager.Shutdown()
@@ -513,8 +534,8 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 			chats.GET("/:chatId/active-stream", proxy.ActiveStreamHandler(input.logger, input.streamManager, input.firestoreClient)) // GET /api/v1/chats/:chatId/active-stream
 			messages := chats.Group("/:chatId/messages")
 			{
-				messages.GET("/:messageId/stream", proxy.GetStreamHandler(input.logger, input.streamManager, input.firestoreClient))   // GET /api/v1/chats/:chatId/messages/:messageId/stream
-				messages.POST("/:messageId/stop", proxy.StopStreamHandler(input.logger, input.streamManager, input.firestoreClient))   // POST /api/v1/chats/:chatId/messages/:messageId/stop
+				messages.GET("/:messageId/stream", proxy.GetStreamHandler(input.logger, input.streamManager, input.firestoreClient))    // GET /api/v1/chats/:chatId/messages/:messageId/stream
+				messages.POST("/:messageId/stop", proxy.StopStreamHandler(input.logger, input.streamManager, input.firestoreClient))    // POST /api/v1/chats/:chatId/messages/:messageId/stop
 				messages.GET("/:messageId/status", proxy.StreamStatusHandler(input.logger, input.streamManager, input.firestoreClient)) // GET /api/v1/chats/:chatId/messages/:messageId/status
 			}
 		}
@@ -526,10 +547,10 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 				keyShare := encryption.Group("/key-share")
 				{
 					api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled)) // POST API to submit clarification response
-					api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled)) // WebSocket proxy for deep research
-					keyShare.POST("/session", input.keyshareHandler.CreateSession)                                                                                                                                                     // POST /api/v1/encryption/key-share/session
-					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)                                                                                                                                              // POST /api/v1/encryption/key-share/session/:sessionId
-					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen)                                                                                                                                  // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
+					api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled))              // WebSocket proxy for deep research
+					keyShare.POST("/session", input.keyshareHandler.CreateSession)                                                                                                                                                                  // POST /api/v1/encryption/key-share/session
+					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)                                                                                                                                                           // POST /api/v1/encryption/key-share/session/:sessionId
+					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen)                                                                                                                                               // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
 				}
 			}
 		}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/logger"
+	"github.com/eternisai/enchanted-proxy/internal/tools"
 )
 
 const (
@@ -93,6 +94,11 @@ type StreamSession struct {
 	subscribers   map[string]*StreamSubscriber
 	subscribersMu sync.RWMutex
 
+	// Tool execution
+	toolExecutor    *ToolExecutor
+	originalRequest []byte // Original request body for continuation
+	requestMu       sync.RWMutex
+
 	// Logger
 	logger *logger.Logger
 }
@@ -145,6 +151,20 @@ func (s *StreamSession) Start() {
 	go s.readUpstream()
 }
 
+// SetToolExecutor sets the tool executor for this session.
+// Must be called before Start() if tool execution is desired.
+func (s *StreamSession) SetToolExecutor(executor *ToolExecutor) {
+	s.toolExecutor = executor
+}
+
+// SetOriginalRequest stores the original request body for tool call continuation.
+// Must be called before Start() if tool execution is desired.
+func (s *StreamSession) SetOriginalRequest(requestBody []byte) {
+	s.requestMu.Lock()
+	defer s.requestMu.Unlock()
+	s.originalRequest = requestBody
+}
+
 // readUpstream reads from the upstream AI provider and broadcasts to subscribers.
 // This runs in a background goroutine and handles all upstream reading logic.
 //
@@ -184,6 +204,13 @@ func (s *StreamSession) readUpstream() {
 
 	chunkIndex := 0
 
+	// Tool call detection (if tool executor is set)
+	var toolDetector *ToolCallDetector
+	if s.toolExecutor != nil {
+		toolDetector = NewToolCallDetector()
+		s.logger.Debug("tool detection enabled")
+	}
+
 	for scanner.Scan() {
 		// Check if stop was requested
 		select {
@@ -215,6 +242,12 @@ func (s *StreamSession) readUpstream() {
 			continue
 		}
 
+		// Detect tool calls if executor is available
+		isToolCallChunk := false
+		if toolDetector != nil {
+			isToolCallChunk = toolDetector.ProcessChunk(line)
+		}
+
 		// Check if this is the final chunk
 		isFinal := strings.Contains(line, "[DONE]")
 		isError := strings.Contains(line, `"error"`)
@@ -228,13 +261,161 @@ func (s *StreamSession) readUpstream() {
 			IsError:   isError,
 		}
 
-		// Store chunk (with safety limits)
-		s.storeChunk(chunk)
-
-		// Broadcast to all subscribers (non-blocking)
-		s.broadcast(chunk)
+		// Store chunk (with safety limits) only if not a tool call chunk
+		// Tool call chunks are suppressed from the stream
+		if !isToolCallChunk {
+			s.storeChunk(chunk)
+			s.broadcast(chunk)
+		}
 
 		chunkIndex++
+
+		// Check if tool calls are complete and need execution
+		if toolDetector != nil && toolDetector.IsComplete() {
+			s.logger.Info("tool calls detected, executing tools",
+				slog.String("chat_id", s.chatID),
+				slog.String("message_id", s.messageID))
+
+			// Get tool calls
+			toolCalls := toolDetector.GetToolCalls()
+
+			// Execute tools and get notifications
+			toolResults, notifications, err := s.toolExecutor.ExecuteToolCalls(s.stopCtx, s.chatID, s.messageID, toolCalls)
+			if err != nil {
+				s.logger.Error("tool execution failed",
+					slog.String("error", err.Error()),
+					slog.String("chat_id", s.chatID),
+					slog.String("message_id", s.messageID))
+				// Continue despite error - tool results will contain error messages
+			}
+
+			// Broadcast tool notifications as special SSE chunks
+			for _, notif := range notifications {
+				notifJSON, err := json.Marshal(map[string]interface{}{
+					"type":         "tool_notification",
+					"event":        notif.Event,
+					"tool_name":    notif.ToolName,
+					"tool_call_id": notif.ToolCallID,
+					"summary":      notif.Summary,
+					"error":        notif.Error,
+				})
+				if err != nil {
+					s.logger.Error("failed to marshal tool notification",
+						slog.String("error", err.Error()))
+					continue
+				}
+
+				notifChunk := StreamChunk{
+					Index:     chunkIndex,
+					Line:      "data: " + string(notifJSON),
+					Timestamp: time.Now(),
+					IsFinal:   false,
+					IsError:   notif.Event == "error",
+				}
+
+				s.storeChunk(notifChunk)
+				s.broadcast(notifChunk)
+				chunkIndex++
+			}
+
+			// Create continuation request with tool results
+			s.requestMu.RLock()
+			originalRequest := s.originalRequest
+			s.requestMu.RUnlock()
+
+			if originalRequest != nil && len(toolResults) > 0 {
+				s.logger.Info("creating continuation request with tool results",
+					slog.String("chat_id", s.chatID),
+					slog.String("message_id", s.messageID),
+					slog.Int("tool_result_count", len(toolResults)))
+
+				// Parse original request to get messages and tools
+				var originalReq map[string]interface{}
+				if err := json.Unmarshal(originalRequest, &originalReq); err != nil {
+					s.logger.Error("failed to parse original request",
+						slog.String("error", err.Error()))
+					toolDetector = NewToolCallDetector()
+					continue
+				}
+
+				// Extract messages array
+				originalMessages, ok := originalReq["messages"].([]interface{})
+				if !ok {
+					s.logger.Error("original request has no messages array")
+					toolDetector = NewToolCallDetector()
+					continue
+				}
+
+				// Extract tool definitions if present
+				var toolDefinitions []tools.ToolDefinition
+				if toolDefs, ok := originalReq["tools"].([]interface{}); ok && len(toolDefs) > 0 {
+					toolsJSON, err := json.Marshal(toolDefs)
+					if err == nil {
+						json.Unmarshal(toolsJSON, &toolDefinitions)
+					}
+				}
+
+				// Build assistant message from buffered tool calls
+				toolCallsForMessage := make([]map[string]interface{}, len(toolCalls))
+				for i, tc := range toolCalls {
+					toolCallsForMessage[i] = map[string]interface{}{
+						"id":   tc.ID,
+						"type": tc.Type,
+						"function": map[string]interface{}{
+							"name":      tc.Function.Name,
+							"arguments": tc.Function.Arguments,
+						},
+					}
+				}
+
+				assistantMessage := map[string]interface{}{
+					"role":       "assistant",
+					"content":    nil,
+					"tool_calls": toolCallsForMessage,
+				}
+
+				// Create continuation request
+				continuationBody, err := s.toolExecutor.CreateContinuationRequest(
+					s.stopCtx,
+					originalMessages,
+					assistantMessage,
+					toolResults,
+					toolDefinitions,
+				)
+				if err != nil {
+					s.logger.Error("failed to create continuation request",
+						slog.String("error", err.Error()))
+					toolDetector = NewToolCallDetector()
+					continue
+				}
+
+				// Close current upstream body
+				if s.upstreamBody != nil {
+					s.upstreamBody.Close()
+				}
+
+				// Replace with continuation body and continue reading
+				s.upstreamBody = continuationBody
+				scanner = bufio.NewScanner(s.upstreamBody)
+				scanner.Buffer(make([]byte, 64*1024), maxChunkSize)
+				toolDetector = NewToolCallDetector() // Reset for next potential tool call
+
+				s.logger.Info("continuation request created, resuming stream",
+					slog.String("chat_id", s.chatID),
+					slog.String("message_id", s.messageID))
+
+				continue
+			} else {
+				s.logger.Warn("cannot create continuation: no original request or no tool results",
+					slog.String("chat_id", s.chatID),
+					slog.String("message_id", s.messageID),
+					slog.Bool("has_original_request", originalRequest != nil),
+					slog.Int("tool_result_count", len(toolResults)))
+
+				// Reset detector and continue
+				toolDetector = NewToolCallDetector()
+			}
+		}
 
 		// If this is the final chunk, we're done
 		if isFinal {
