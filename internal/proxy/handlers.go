@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/routing"
 	"github.com/eternisai/enchanted-proxy/internal/streaming"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
+	"github.com/eternisai/enchanted-proxy/internal/tools"
 	"github.com/gin-gonic/gin"
 )
 
@@ -68,6 +70,7 @@ func ProxyHandler(
 	titleService *title_generation.Service,
 	streamManager *streaming.StreamManager,
 	modelRouter *routing.ModelRouter,
+	toolRegistry *tools.Registry,
 	cfg *config.Config,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -280,14 +283,38 @@ func ProxyHandler(
 			orig(r)
 			r.Host = target.Host
 
-			// Capture request body for tool execution (if streaming is enabled)
-			if r.Body != nil && streamManager != nil {
+			// Inject tool definitions and capture request body
+			if r.Body != nil && toolRegistry != nil {
 				bodyBytes, err := io.ReadAll(r.Body)
 				if err == nil {
-					// Store in context for later use in handleStreamingWithBroadcast
-					c.Set("originalRequestBody", bodyBytes)
+					// Parse request body
+					var reqBody map[string]interface{}
+					if err := json.Unmarshal(bodyBytes, &reqBody); err == nil {
+						// Inject tool definitions if not already present
+						if _, hasTools := reqBody["tools"]; !hasTools {
+							toolDefs := toolRegistry.GetDefinitions()
+							if len(toolDefs) > 0 {
+								reqBody["tools"] = toolDefs
+								log.Debug("injected tool definitions",
+									slog.Int("tool_count", len(toolDefs)))
+							}
+						}
+
+						// Re-serialize with tools
+						modifiedBody, err := json.Marshal(reqBody)
+						if err == nil {
+							bodyBytes = modifiedBody
+						}
+					}
+
+					// Store original body in context for tool execution continuation
+					if streamManager != nil {
+						c.Set("originalRequestBody", bodyBytes)
+					}
+
 					// Restore body for upstream request
 					r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+					r.ContentLength = int64(len(bodyBytes))
 				}
 			}
 

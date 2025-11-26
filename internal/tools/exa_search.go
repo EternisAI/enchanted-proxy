@@ -2,8 +2,8 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/search"
@@ -25,7 +25,7 @@ func NewExaSearchTool(searchService *search.Service, logger *logger.Logger) *Exa
 
 // Name returns the tool name.
 func (t *ExaSearchTool) Name() string {
-	return "exa_search"
+	return "web_search"
 }
 
 // Definition returns the OpenAI-compatible function definition.
@@ -33,24 +33,25 @@ func (t *ExaSearchTool) Definition() ToolDefinition {
 	return ToolDefinition{
 		Type: "function",
 		Function: FunctionDef{
-			Name:        "exa_search",
-			Description: "Search the web using Exa AI to find current information, facts, articles, and research. Returns AI-generated summaries of search results.",
+			Name:        "web_search",
+			Description: "Run up to 3 search queries in one request",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"query": map[string]interface{}{
-						"type":        "string",
-						"description": "The search query to find relevant web pages",
+					"queries": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "string",
+						},
+						"maxItems": 3,
 					},
-					"num_results": map[string]interface{}{
+					"numResults": map[string]interface{}{
 						"type":        "integer",
-						"description": "Number of results to return (1-10, default: 5)",
-						"minimum":     1,
-						"maximum":     10,
-						"default":     5,
+						"description": "Number of results to return (default: 10)",
 					},
 				},
-				"required": []string{"query"},
+				"required":             []string{"queries"},
+				"additionalProperties": false,
 			},
 		},
 	}
@@ -58,8 +59,8 @@ func (t *ExaSearchTool) Definition() ToolDefinition {
 
 // ExaSearchArgs represents the arguments for Exa search.
 type ExaSearchArgs struct {
-	Query      string `json:"query"`
-	NumResults int    `json:"num_results,omitempty"`
+	Queries    []string `json:"queries"`
+	NumResults int      `json:"numResults,omitempty"`
 }
 
 // Execute runs the Exa search.
@@ -70,16 +71,21 @@ func (t *ExaSearchTool) Execute(ctx context.Context, args string) (string, error
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	if searchArgs.Query == "" {
-		return "", fmt.Errorf("query is required")
+	if len(searchArgs.Queries) == 0 {
+		return "", fmt.Errorf("queries is required")
 	}
 
-	// Set default num_results
+	// Limit to 3 queries
+	if len(searchArgs.Queries) > 3 {
+		searchArgs.Queries = searchArgs.Queries[:3]
+	}
+
+	// Set default numResults
 	if searchArgs.NumResults == 0 {
-		searchArgs.NumResults = 5
+		searchArgs.NumResults = 10
 	}
 
-	// Clamp to valid range
+	// Clamp to valid range (1-10)
 	if searchArgs.NumResults < 1 {
 		searchArgs.NumResults = 1
 	}
@@ -87,13 +93,13 @@ func (t *ExaSearchTool) Execute(ctx context.Context, args string) (string, error
 		searchArgs.NumResults = 10
 	}
 
-	t.logger.Info("executing exa search",
-		"query", searchArgs.Query,
+	t.logger.Info("executing web search",
+		"queries", searchArgs.Queries,
 		"num_results", searchArgs.NumResults)
 
 	// Call search service
 	searchReq := search.ExaSearchRequest{
-		Queries:    []string{searchArgs.Query},
+		Queries:    searchArgs.Queries,
 		NumResults: searchArgs.NumResults,
 	}
 
@@ -106,41 +112,18 @@ func (t *ExaSearchTool) Execute(ctx context.Context, args string) (string, error
 	return t.formatResults(resp), nil
 }
 
-// formatResults formats search results as a structured string for AI.
+// formatResults formats search results as plain text for AI consumption.
+// Matches iOS app format: "url: title. Snippet: summary"
 func (t *ExaSearchTool) formatResults(resp *search.ExaSearchResponse) string {
 	if len(resp.Results) == 0 {
-		return "No results found."
+		return "No search results found."
 	}
 
-	// Format as JSON for better structure
-	type FormattedResult struct {
-		Title         string `json:"title"`
-		URL           string `json:"url"`
-		Summary       string `json:"summary,omitempty"`
-		PublishedDate string `json:"published_date,omitempty"`
-		Author        string `json:"author,omitempty"`
+	var formattedResults []string
+	for _, r := range resp.Results {
+		formatted := fmt.Sprintf("%s: %s. Snippet: %s", r.URL, r.Title, r.Summary)
+		formattedResults = append(formattedResults, formatted)
 	}
 
-	results := make([]FormattedResult, len(resp.Results))
-	for i, r := range resp.Results {
-		results[i] = FormattedResult{
-			Title:         r.Title,
-			URL:           r.URL,
-			Summary:       r.Summary,
-			PublishedDate: r.PublishedDate,
-			Author:        r.Author,
-		}
-	}
-
-	output := map[string]interface{}{
-		"query":         resp.Query,
-		"results_count": len(results),
-		"results":       results,
-	}
-
-	jsonBytes, err := json.MarshalIndent(output, "", "  ")
-	if err != nil {
-		return fmt.Sprintf("Error formatting results: %v", err)
-	}
-	return string(jsonBytes)
+	return strings.Join(formattedResults, "\n")
 }

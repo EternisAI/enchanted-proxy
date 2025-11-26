@@ -317,6 +317,7 @@ func main() {
 		titleService:           titleService,
 		streamManager:          streamManager,
 		modelRouter:            modelRouter,
+		toolRegistry:           toolRegistry,
 		oauthHandler:           oauthHandler,
 		composioHandler:        composioHandler,
 		inviteCodeHandler:      inviteCodeHandler,
@@ -433,6 +434,7 @@ type restServerInput struct {
 	titleService           *title_generation.Service
 	streamManager          *streaming.StreamManager
 	modelRouter            *routing.ModelRouter
+	toolRegistry           *tools.Registry
 	oauthHandler           *oauth.Handler
 	composioHandler        *composio.Handler
 	inviteCodeHandler      *invitecode.Handler
@@ -561,13 +563,13 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger))
 	{
 		// AI service endpoints
-		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
-		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
-		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
-		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
-		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
-		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
-		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.config))
+		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
 	}
 
 	return router
