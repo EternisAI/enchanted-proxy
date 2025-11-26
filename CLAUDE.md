@@ -167,7 +167,7 @@ Structured logging using `internal/logger/` (wraps `log/slog` with colored outpu
 
 ### Working with Firebase/Firestore
 
-- **Auth**: Use `auth.FirebaseClient` for token validation
+- **Auth**: Proxy uses Firebase Auth to authenticate users. The Firebase Go SDK extracts user ID from JWT via `token.Subject` (not `token.Claims["sub"]`). This user ID is used consistently across Firebase/Supabase (PostgreSQL)/iOS/Web clients.
 - **Firestore**: Access via `firebaseClient.GetFirestoreClient()`
 - Collections: `deep_research_usage`, `messages/{chatId}/messages`, `encryption_keys/{sessionId}`
 

@@ -94,13 +94,20 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 		// Create service instance
 		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, deepResearchRateLimitEnabled)
 
-		// Save user's initial query message to Firestore immediately before any processing
-		if _, err := service.encryptAndStoreMessage(c.Request.Context(), userID, req.ChatID, req.Query, "query", true, req.UserMessageID); err != nil {
-			log.Error("failed to save user query message to Firestore",
+		// Save user's initial query message to Firestore only if message ID is provided
+		// This prevents duplicate messages when client has already saved the message locally
+		if req.UserMessageID != "" {
+			if _, err := service.encryptAndStoreMessage(c.Request.Context(), userID, req.ChatID, req.Query, "query", true, req.UserMessageID); err != nil {
+				log.Error("failed to save user query message to Firestore",
+					slog.String("user_id", userID),
+					slog.String("chat_id", req.ChatID),
+					slog.String("error", err.Error()))
+				// Don't fail the request - message saving is best-effort
+			}
+		} else {
+			log.Debug("skipping user message save - no message_id provided",
 				slog.String("user_id", userID),
-				slog.String("chat_id", req.ChatID),
-				slog.String("error", err.Error()))
-			// Don't fail the request - message saving is best-effort
+				slog.String("chat_id", req.ChatID))
 		}
 
 		// Check if there's already an active session
@@ -346,13 +353,20 @@ func ClarifyDeepResearchHandler(logger *logger.Logger, trackingService *request_
 			slog.String("user_id", userID),
 			slog.String("chat_id", req.ChatID))
 
-		// Save user's clarification response message to Firestore
-		if _, err := service.encryptAndStoreMessage(c.Request.Context(), userID, req.ChatID, req.Response, "clarification_response", true, req.UserMessageID); err != nil {
-			log.Error("failed to save clarification response message to Firestore",
+		// Save user's clarification response message to Firestore only if message ID is provided
+		// This prevents duplicate messages when client has already saved the message locally
+		if req.UserMessageID != "" {
+			if _, err := service.encryptAndStoreMessage(c.Request.Context(), userID, req.ChatID, req.Response, "clarification_response", true, req.UserMessageID); err != nil {
+				log.Error("failed to save clarification response message to Firestore",
+					slog.String("user_id", userID),
+					slog.String("chat_id", req.ChatID),
+					slog.String("error", err.Error()))
+				// Don't fail the request - message saving is best-effort
+			}
+		} else {
+			log.Debug("skipping user message save - no message_id provided",
 				slog.String("user_id", userID),
-				slog.String("chat_id", req.ChatID),
-				slog.String("error", err.Error()))
-			// Don't fail the request - message saving is best-effort
+				slog.String("chat_id", req.ChatID))
 		}
 
 		c.JSON(http.StatusOK, ClarifyDeepResearchResponse{
