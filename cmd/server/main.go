@@ -209,12 +209,9 @@ func main() {
 		log.Info("stream manager initialized")
 
 		// Initialize tool executor for tool call execution
-		// Use OpenAI as default provider for tool calls
 		toolExecutor := streaming.NewToolExecutor(
 			toolRegistry,
 			logger.WithComponent("tool-executor"),
-			"https://api.openai.com/v1/chat/completions",
-			config.AppConfig.OpenAIAPIKey,
 		)
 		streamManager.SetToolExecutor(toolExecutor)
 		log.Info("tool executor initialized")

@@ -30,8 +30,8 @@ func TestNewModelRouter(t *testing.T) {
 
 func TestRouteModelExactMatch(t *testing.T) {
 	cfg := &config.Config{
-		OpenAIAPIKey:            "test-openai-key",
-		OpenRouterMobileAPIKey:  "test-openrouter-key",
+		OpenAIAPIKey:           "test-openai-key",
+		OpenRouterMobileAPIKey: "test-openrouter-key",
 	}
 	log := logger.New(logger.Config{Level: slog.LevelError})
 	router := NewModelRouter(cfg, log)
@@ -150,7 +150,7 @@ func TestRouteModelPlatformSpecificKeys(t *testing.T) {
 		{"mobile", "mobile-key"},
 		{"desktop", "desktop-key"},
 		{"unknown", "mobile-key"}, // Falls back to mobile
-		{"", "mobile-key"},         // Empty defaults to mobile
+		{"", "mobile-key"},        // Empty defaults to mobile
 	}
 
 	for _, tt := range tests {
@@ -306,11 +306,11 @@ func TestRouteModelWithWhitespace(t *testing.T) {
 
 func TestGetOpenRouterAPIKeyFallback(t *testing.T) {
 	tests := []struct {
-		name               string
-		mobileKey          string
-		desktopKey         string
-		platform           string
-		expectedKey        string
+		name        string
+		mobileKey   string
+		desktopKey  string
+		platform    string
+		expectedKey string
 	}{
 		{
 			name:        "mobile platform with both keys",

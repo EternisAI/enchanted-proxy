@@ -76,13 +76,25 @@ func handleStreamingWithBroadcast(
 	// If session doesn't exist, we'll create it and start upstream read
 	session, isNew := streamManager.GetOrCreateSession(chatID, messageID, resp.Body)
 
-	// Set original request body on new sessions for tool execution
+	// Set original request body and provider config on new sessions for tool execution
 	if isNew {
 		if requestBody, exists := c.Get("originalRequestBody"); exists {
 			if bodyBytes, ok := requestBody.([]byte); ok {
 				session.SetOriginalRequest(bodyBytes)
 				log.Debug("set original request body for tool execution",
 					slog.Int("body_size", len(bodyBytes)))
+			}
+		}
+
+		// Set provider config for continuation requests
+		if upstreamURL, exists := c.Get("upstreamURL"); exists {
+			if urlStr, ok := upstreamURL.(string); ok {
+				session.SetUpstreamURL(urlStr)
+			}
+		}
+		if apiKey, exists := c.Get("upstreamAPIKey"); exists {
+			if keyStr, ok := apiKey.(string); ok {
+				session.SetUpstreamAPIKey(keyStr)
 			}
 		}
 	}

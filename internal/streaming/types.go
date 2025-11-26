@@ -12,8 +12,8 @@ import (
 //   - Simplicity: No need to understand every provider's response format
 //
 // Parsing happens at two points:
-//   1. In proxy handler for real-time client streaming
-//   2. In session completion for message storage
+//  1. In proxy handler for real-time client streaming
+//  2. In session completion for message storage
 type StreamChunk struct {
 	// Index is the sequential position in the stream (0, 1, 2, ...)
 	Index int `json:"index"`

@@ -110,12 +110,13 @@ func NewStreamManager(messageService *messaging.Service, logger *logger.Logger) 
 // Thread-safe: Uses double-check locking to prevent duplicate session creation.
 //
 // Example usage:
-//   session, isNew := manager.GetOrCreateSession(chatID, messageID, upstreamBody)
-//   if isNew {
-//       // First client for this response
-//   } else {
-//       // Additional client joining existing stream
-//   }
+//
+//	session, isNew := manager.GetOrCreateSession(chatID, messageID, upstreamBody)
+//	if isNew {
+//	    // First client for this response
+//	} else {
+//	    // Additional client joining existing stream
+//	}
 func (sm *StreamManager) GetOrCreateSession(chatID, messageID string, upstreamBody io.ReadCloser) (*StreamSession, bool) {
 	sessionKey := sm.makeSessionKey(chatID, messageID)
 

@@ -8,7 +8,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/tools"
@@ -16,11 +18,9 @@ import (
 
 // ToolExecutor handles executing tool calls and creating continuation requests.
 type ToolExecutor struct {
-	registry       *tools.Registry
-	logger         *logger.Logger
-	httpClient     *http.Client
-	upstreamURL    string
-	upstreamAPIKey string
+	registry   *tools.Registry
+	logger     *logger.Logger
+	httpClient *http.Client
 }
 
 // ToolNotification represents a notification about tool execution.
@@ -36,15 +36,11 @@ type ToolNotification struct {
 func NewToolExecutor(
 	registry *tools.Registry,
 	logger *logger.Logger,
-	upstreamURL string,
-	upstreamAPIKey string,
 ) *ToolExecutor {
 	return &ToolExecutor{
-		registry:       registry,
-		logger:         logger.WithComponent("tool-executor"),
-		httpClient:     &http.Client{},
-		upstreamURL:    upstreamURL,
-		upstreamAPIKey: upstreamAPIKey,
+		registry:   registry,
+		logger:     logger.WithComponent("tool-executor"),
+		httpClient: &http.Client{Timeout: 2 * time.Minute},
 	}
 }
 
@@ -177,10 +173,12 @@ func (te *ToolExecutor) getSummary(content string) string {
 // This sends the tool results back to the AI and gets a new streaming response.
 func (te *ToolExecutor) CreateContinuationRequest(
 	ctx context.Context,
+	upstreamURL string,
+	upstreamAPIKey string,
+	originalReq map[string]interface{},
 	originalMessages []interface{},
 	assistantMessage map[string]interface{},
 	toolResults []tools.ToolResult,
-	toolDefinitions []tools.ToolDefinition,
 ) (io.ReadCloser, error) {
 	// Build new messages array: original messages + assistant message + tool results
 	messages := make([]interface{}, 0, len(originalMessages)+1+len(toolResults))
@@ -196,16 +194,18 @@ func (te *ToolExecutor) CreateContinuationRequest(
 		})
 	}
 
-	// Create request payload
-	payload := map[string]interface{}{
-		"messages": messages,
-		"stream":   true,
+	// Create continuation payload by copying all original params
+	payload := make(map[string]interface{})
+	for k, v := range originalReq {
+		// Skip messages (we rebuild it) and stream (force true)
+		if k != "messages" && k != "stream" {
+			payload[k] = v
+		}
 	}
 
-	// Include tools if provided (so AI can call tools again if needed)
-	if len(toolDefinitions) > 0 {
-		payload["tools"] = toolDefinitions
-	}
+	// Set updated messages and ensure streaming
+	payload["messages"] = messages
+	payload["stream"] = true
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -213,17 +213,24 @@ func (te *ToolExecutor) CreateContinuationRequest(
 	}
 
 	te.logger.Debug("creating continuation request",
+		slog.String("upstream_url", upstreamURL),
 		slog.Int("messages", len(messages)),
 		slog.Int("tool_results", len(toolResults)))
 
+	// Determine final URL: use provided URL + /chat/completions if needed
+	finalURL := upstreamURL
+	if !strings.HasSuffix(upstreamURL, "/chat/completions") {
+		finalURL = strings.TrimSuffix(upstreamURL, "/") + "/v1/chat/completions"
+	}
+
 	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "POST", te.upstreamURL, bytes.NewBuffer(payloadBytes))
+	req, err := http.NewRequestWithContext(ctx, "POST", finalURL, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+te.upstreamAPIKey)
+	req.Header.Set("Authorization", "Bearer "+upstreamAPIKey)
 
 	// Execute request
 	resp, err := te.httpClient.Do(req)

@@ -318,6 +318,10 @@ func ProxyHandler(
 				}
 			}
 
+			// Store provider config for tool continuation requests
+			c.Set("upstreamURL", baseURL)
+			c.Set("upstreamAPIKey", apiKey)
+
 			// Set Authorization header with Bearer token for AI services
 			r.Header.Set("Authorization", "Bearer "+apiKey)
 

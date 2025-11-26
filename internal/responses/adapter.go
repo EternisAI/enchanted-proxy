@@ -13,11 +13,12 @@ import (
 //   - This adapter translates between the two formats transparently
 //
 // Key differences:
-//   Chat Completions:     Responses API:
-//   - Stateless           - Stateful (server-side state)
-//   - /chat/completions   - /responses
-//   - Full message array  - Optional previous_response_id
-//   - No store param      - store: true for persistence
+//
+//	Chat Completions:     Responses API:
+//	- Stateless           - Stateful (server-side state)
+//	- /chat/completions   - /responses
+//	- Full message array  - Optional previous_response_id
+//	- No store param      - store: true for persistence
 //
 // Thread-safety: All methods are stateless and thread-safe.
 type Adapter struct{}
@@ -38,20 +39,21 @@ func NewAdapter() *Adapter {
 //   - error: If transformation failed
 //
 // Transformations applied:
-//   1. Add "store": true to enable server-side state persistence
-//   2. Add "previous_response_id" if continuing conversation
-//   3. Keep all other parameters (model, messages, temperature, etc.)
+//  1. Add "store": true to enable server-side state persistence
+//  2. Add "previous_response_id" if continuing conversation
+//  3. Keep all other parameters (model, messages, temperature, etc.)
 //
 // Example:
-//   Input (Chat Completions):
-//     {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Hello"}]}
 //
-//   Output (Responses API, first message):
-//     {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Hello"}], "store": true}
+//	Input (Chat Completions):
+//	  {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Hello"}]}
 //
-//   Output (Responses API, continuation):
-//     {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Tell me more"}],
-//      "store": true, "previous_response_id": "resp_abc123"}
+//	Output (Responses API, first message):
+//	  {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Hello"}], "store": true}
+//
+//	Output (Responses API, continuation):
+//	  {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Tell me more"}],
+//	   "store": true, "previous_response_id": "resp_abc123"}
 func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string) ([]byte, error) {
 	// Parse original request
 	var req map[string]interface{}
@@ -86,12 +88,13 @@ func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string
 //   - string: The response ID if found (e.g., "resp_abc123"), or empty string if not present
 //
 // The Responses API includes the response ID in the first chunk:
-//   data: {"id":"resp_abc123","object":"response","created":1234567890,...}
+//
+//	data: {"id":"resp_abc123","object":"response","created":1234567890,...}
 //
 // This ID is needed for:
-//   1. Continuing conversations (previous_response_id parameter)
-//   2. Canceling responses (DELETE /responses/{responseId})
-//   3. Tracking conversation state across devices
+//  1. Continuing conversations (previous_response_id parameter)
+//  2. Canceling responses (DELETE /responses/{responseId})
+//  3. Tracking conversation state across devices
 //
 // Thread-safe: Pure function, no shared state.
 func (a *Adapter) ExtractResponseID(sseChunk string) string {
@@ -138,9 +141,10 @@ func (a *Adapter) ExtractResponseID(sseChunk string) string {
 //   - We translate so clients don't need to know about Responses API
 //
 // Transformation:
-//   Responses API format varies - sometimes uses "message", sometimes "delta"
-//   We normalize to the familiar Chat Completions delta format:
-//     data: {"choices":[{"delta":{"content":"Hello"}}]}
+//
+//	Responses API format varies - sometimes uses "message", sometimes "delta"
+//	We normalize to the familiar Chat Completions delta format:
+//	  data: {"choices":[{"delta":{"content":"Hello"}}]}
 //
 // Special cases:
 //   - [DONE] token: Pass through unchanged
@@ -176,7 +180,8 @@ func (a *Adapter) TransformResponseChunk(responsesChunk string) (string, error) 
 //   - bool: true if this is an error chunk
 //
 // Responses API error format:
-//   data: {"error":{"message":"...", "type":"...", "code":"..."}}
+//
+//	data: {"error":{"message":"...", "type":"...", "code":"..."}}
 func (a *Adapter) IsResponsesAPIError(sseChunk string) bool {
 	if len(sseChunk) < 6 || sseChunk[:6] != "data: " {
 		return false

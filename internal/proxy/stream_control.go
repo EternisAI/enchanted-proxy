@@ -150,12 +150,12 @@ func StopStreamHandler(
 
 		// Return success response
 		c.JSON(http.StatusOK, gin.H{
-			"stopped":                 true,
-			"message_id":              messageID,
-			"chunks_generated":        len(chunks),
-			"stopped_at":              time.Now().UTC().Format(time.RFC3339),
-			"partial_content_stored":  len(chunks) > 0,
-			"subscriber_count":        info.SubscriberCount,
+			"stopped":                true,
+			"message_id":             messageID,
+			"chunks_generated":       len(chunks),
+			"stopped_at":             time.Now().UTC().Format(time.RFC3339),
+			"partial_content_stored": len(chunks) > 0,
+			"subscriber_count":       info.SubscriberCount,
 		})
 	}
 }
@@ -267,7 +267,7 @@ func GetStreamHandler(
 			}
 		}
 
-		sessionFound:
+	sessionFound:
 		if session == nil {
 			log.Error("stream not found",
 				slog.String("chat_id", chatID),

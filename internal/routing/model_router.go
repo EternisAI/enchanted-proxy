@@ -28,10 +28,11 @@ import (
 //  3. Fallback: Unknown models → OpenRouter
 //
 // Example Usage:
-//   router := NewModelRouter(config, logger)
-//   provider, err := router.RouteModel("gpt-4", "mobile")
-//   // provider.BaseURL = "https://api.openai.com/v1"
-//   // provider.APIKey = config.OpenAIAPIKey
+//
+//	router := NewModelRouter(config, logger)
+//	provider, err := router.RouteModel("gpt-4", "mobile")
+//	// provider.BaseURL = "https://api.openai.com/v1"
+//	// provider.APIKey = config.OpenAIAPIKey
 type ModelRouter struct {
 	routes map[string]ProviderConfig
 	config *config.Config // Store config for platform-specific keys
@@ -171,8 +172,9 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 //   - default → OpenRouterMobileAPIKey
 //
 // Example:
-//   provider, err := router.RouteModel("gpt-4-0125-preview", "mobile")
-//   // Returns OpenAI provider (prefix match on "gpt-4")
+//
+//	provider, err := router.RouteModel("gpt-4-0125-preview", "mobile")
+//	// Returns OpenAI provider (prefix match on "gpt-4")
 func (mr *ModelRouter) RouteModel(modelID string, platform string) (*ProviderConfig, error) {
 	if modelID == "" {
 		return nil, fmt.Errorf("model ID is required")

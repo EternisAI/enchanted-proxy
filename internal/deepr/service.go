@@ -418,7 +418,6 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 					Status:    sessionState,
 				}
 
-
 				// Update thinkingState based on message type
 				// For progress messages, store the message text as thinking state
 				if messageType == "research_progress" && msg.Message != "" {
@@ -437,7 +436,6 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 						}
 					}
 				}
-
 
 				if err := s.firebaseClient.UpdateChatDeepResearchState(ctx, userID, chatID, chatState); err != nil {
 					log.Error("failed to update chat deep research state",

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/logger"
-	"github.com/eternisai/enchanted-proxy/internal/tools"
 )
 
 const (
@@ -33,6 +32,10 @@ const (
 	// upstreamReadTimeout is the maximum time to wait for upstream response
 	// Prevents hanging forever if AI provider becomes unresponsive
 	upstreamReadTimeout = 10 * time.Minute
+
+	// maxContinuations is the maximum number of tool call continuations per session
+	// Prevents infinite loops if AI keeps calling tools
+	maxContinuations = 5
 )
 
 // StreamSession manages a single AI response stream, broadcasting it to multiple clients.
@@ -64,8 +67,8 @@ type StreamSession struct {
 	messageID string
 
 	// Timing
-	startTime    time.Time
-	completedAt  time.Time
+	startTime       time.Time
+	completedAt     time.Time
 	stopRequestedAt time.Time
 
 	// Upstream reading (background goroutine)
@@ -83,7 +86,7 @@ type StreamSession struct {
 	stopMu     sync.RWMutex       // Protects stopped, stoppedBy, stopReason
 
 	// Responses API support (for GPT-5 Pro and stateful models)
-	responseID string        // OpenAI Responses API response_id (e.g., "resp_abc123")
+	responseID   string       // OpenAI Responses API response_id (e.g., "resp_abc123")
 	responseIDMu sync.RWMutex // Protects responseID
 
 	// Chunk storage (buffered for late-join replay)
@@ -95,9 +98,12 @@ type StreamSession struct {
 	subscribersMu sync.RWMutex
 
 	// Tool execution
-	toolExecutor    *ToolExecutor
-	originalRequest []byte // Original request body for continuation
-	requestMu       sync.RWMutex
+	toolExecutor      *ToolExecutor
+	originalRequest   []byte // Original request body for continuation
+	upstreamURL       string // Provider base URL for continuation
+	upstreamAPIKey    string // Provider API key for continuation
+	continuationCount int    // Number of tool continuations executed
+	requestMu         sync.RWMutex
 
 	// Logger
 	logger *logger.Logger
@@ -163,6 +169,22 @@ func (s *StreamSession) SetOriginalRequest(requestBody []byte) {
 	s.requestMu.Lock()
 	defer s.requestMu.Unlock()
 	s.originalRequest = requestBody
+}
+
+// SetUpstreamURL stores the provider base URL for tool call continuation.
+// Must be called before Start() if tool execution is desired.
+func (s *StreamSession) SetUpstreamURL(url string) {
+	s.requestMu.Lock()
+	defer s.requestMu.Unlock()
+	s.upstreamURL = url
+}
+
+// SetUpstreamAPIKey stores the provider API key for tool call continuation.
+// Must be called before Start() if tool execution is desired.
+func (s *StreamSession) SetUpstreamAPIKey(apiKey string) {
+	s.requestMu.Lock()
+	defer s.requestMu.Unlock()
+	s.upstreamAPIKey = apiKey
 }
 
 // readUpstream reads from the upstream AI provider and broadcasts to subscribers.
@@ -321,15 +343,49 @@ func (s *StreamSession) readUpstream() {
 			// Create continuation request with tool results
 			s.requestMu.RLock()
 			originalRequest := s.originalRequest
+			upstreamURL := s.upstreamURL
+			upstreamAPIKey := s.upstreamAPIKey
+			continuationCount := s.continuationCount
 			s.requestMu.RUnlock()
 
-			if originalRequest != nil && len(toolResults) > 0 {
+			// Check max continuation depth
+			if continuationCount >= maxContinuations {
+				s.logger.Warn("max continuation depth reached, stopping tool execution",
+					slog.String("chat_id", s.chatID),
+					slog.String("message_id", s.messageID),
+					slog.Int("continuation_count", continuationCount))
+
+				// Broadcast max depth error
+				maxDepthJSON, marshalErr := json.Marshal(map[string]interface{}{
+					"type":  "tool_notification",
+					"event": "max_depth_reached",
+					"error": fmt.Sprintf("Maximum tool continuation depth (%d) reached", maxContinuations),
+				})
+				if marshalErr == nil {
+					maxDepthChunk := StreamChunk{
+						Index:     chunkIndex,
+						Line:      "data: " + string(maxDepthJSON),
+						Timestamp: time.Now(),
+						IsFinal:   false,
+						IsError:   true,
+					}
+					s.storeChunk(maxDepthChunk)
+					s.broadcast(maxDepthChunk)
+					chunkIndex++
+				}
+
+				toolDetector = NewToolCallDetector()
+				continue
+			}
+
+			if originalRequest != nil && len(toolResults) > 0 && upstreamURL != "" && upstreamAPIKey != "" {
 				s.logger.Info("creating continuation request with tool results",
 					slog.String("chat_id", s.chatID),
 					slog.String("message_id", s.messageID),
-					slog.Int("tool_result_count", len(toolResults)))
+					slog.Int("tool_result_count", len(toolResults)),
+					slog.Int("continuation_count", continuationCount))
 
-				// Parse original request to get messages and tools
+				// Parse original request to extract all parameters
 				var originalReq map[string]interface{}
 				if err := json.Unmarshal(originalRequest, &originalReq); err != nil {
 					s.logger.Error("failed to parse original request",
@@ -344,15 +400,6 @@ func (s *StreamSession) readUpstream() {
 					s.logger.Error("original request has no messages array")
 					toolDetector = NewToolCallDetector()
 					continue
-				}
-
-				// Extract tool definitions if present
-				var toolDefinitions []tools.ToolDefinition
-				if toolDefs, ok := originalReq["tools"].([]interface{}); ok && len(toolDefs) > 0 {
-					toolsJSON, err := json.Marshal(toolDefs)
-					if err == nil {
-						json.Unmarshal(toolsJSON, &toolDefinitions)
-					}
 				}
 
 				// Build assistant message from buffered tool calls
@@ -374,17 +421,39 @@ func (s *StreamSession) readUpstream() {
 					"tool_calls": toolCallsForMessage,
 				}
 
-				// Create continuation request
+				// Create continuation request with full original params
 				continuationBody, err := s.toolExecutor.CreateContinuationRequest(
 					s.stopCtx,
+					upstreamURL,
+					upstreamAPIKey,
+					originalReq,
 					originalMessages,
 					assistantMessage,
 					toolResults,
-					toolDefinitions,
 				)
 				if err != nil {
 					s.logger.Error("failed to create continuation request",
 						slog.String("error", err.Error()))
+
+					// Broadcast error notification
+					errNotifJSON, marshalErr := json.Marshal(map[string]interface{}{
+						"type":  "tool_notification",
+						"event": "continuation_error",
+						"error": err.Error(),
+					})
+					if marshalErr == nil {
+						errChunk := StreamChunk{
+							Index:     chunkIndex,
+							Line:      "data: " + string(errNotifJSON),
+							Timestamp: time.Now(),
+							IsFinal:   false,
+							IsError:   true,
+						}
+						s.storeChunk(errChunk)
+						s.broadcast(errChunk)
+						chunkIndex++
+					}
+
 					toolDetector = NewToolCallDetector()
 					continue
 				}
@@ -394,6 +463,11 @@ func (s *StreamSession) readUpstream() {
 					s.upstreamBody.Close()
 				}
 
+				// Increment continuation counter
+				s.requestMu.Lock()
+				s.continuationCount++
+				s.requestMu.Unlock()
+
 				// Replace with continuation body and continue reading
 				s.upstreamBody = continuationBody
 				scanner = bufio.NewScanner(s.upstreamBody)
@@ -402,7 +476,8 @@ func (s *StreamSession) readUpstream() {
 
 				s.logger.Info("continuation request created, resuming stream",
 					slog.String("chat_id", s.chatID),
-					slog.String("message_id", s.messageID))
+					slog.String("message_id", s.messageID),
+					slog.Int("continuation_count", s.continuationCount))
 
 				continue
 			} else {

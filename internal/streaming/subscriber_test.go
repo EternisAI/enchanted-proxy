@@ -166,11 +166,11 @@ func TestSubscriberBufferSizeLimits(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name           string
-		inputSize      int
-		expectedSize   int
+		name         string
+		inputSize    int
+		expectedSize int
 	}{
-		{"too small", 5, 10},      // Minimum is 10
+		{"too small", 5, 10}, // Minimum is 10
 		{"just right", 50, 50},
 		{"too large", 2000, 1000}, // Maximum is 1000
 		{"zero", 0, 10},           // Default to minimum
