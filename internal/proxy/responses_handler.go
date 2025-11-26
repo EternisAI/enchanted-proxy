@@ -243,7 +243,7 @@ func handleResponsesAPI(
 		}
 
 		// Save completed session to Firestore (message content)
-		err := streamManager.SaveCompletedSession(context.Background(), session, userID, encryptionEnabled)
+		err := streamManager.SaveCompletedSession(context.Background(), session, userID, encryptionEnabled, model)
 		if err != nil {
 			log.Error("failed to save completed Responses API session", slog.String("error", err.Error()))
 		}

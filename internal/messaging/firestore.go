@@ -87,9 +87,10 @@ func (f *FirestoreClient) SaveMessage(ctx context.Context, userID string, msg *C
 		return status.Error(codes.InvalidArgument, "userID, chatID, and messageID must be non-empty")
 	}
 	// NOTE: EncryptedContent can be either base64 encrypted data OR plaintext (when publicEncryptionKey = "none")
-	// This validation only checks non-empty - encryption verification happens at service layer
-	if len(msg.EncryptedContent) == 0 {
-		return status.Error(codes.InvalidArgument, "encrypted content must be non-empty")
+	// OR empty for placeholder messages (generationState = "thinking")
+	// Validation: content can be empty ONLY if this is a "thinking" placeholder message
+	if len(msg.EncryptedContent) == 0 && msg.GenerationState != "thinking" {
+		return status.Error(codes.InvalidArgument, "encrypted content must be non-empty (except for thinking placeholders)")
 	}
 
 	// Update parent chat document with lastMessageAt timestamp (if it exists)
@@ -174,6 +175,60 @@ func (f *FirestoreClient) GetMessage(ctx context.Context, userID, chatID, messag
 	}
 
 	return &msg, nil
+}
+
+// UpdateMessage updates specific fields of an existing message in Firestore.
+// This is used to update generation state without overwriting the entire message.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - userID: User ID who owns the message
+//   - chatID: Chat ID
+//   - messageID: Message ID
+//   - updates: Map of field paths to new values (e.g., {"generationState": "completed"})
+//
+// Returns:
+//   - error: If update failed
+//
+// Path: /users/{userId}/chats/{chatId}/messages/{messageId}
+func (f *FirestoreClient) UpdateMessage(ctx context.Context, userID, chatID, messageID string, updates map[string]interface{}) error {
+	if f == nil || f.client == nil {
+		return status.Error(codes.Internal, "firestore client is nil")
+	}
+	if userID == "" || chatID == "" || messageID == "" {
+		return status.Error(codes.InvalidArgument, "userID, chatID, and messageID must be non-empty")
+	}
+	if len(updates) == 0 {
+		return status.Error(codes.InvalidArgument, "updates must be non-empty")
+	}
+
+	// Path: /users/{userId}/chats/{chatId}/messages/{messageId}
+	docRef := f.client.
+		Collection("users").
+		Doc(userID).
+		Collection("chats").
+		Doc(chatID).
+		Collection("messages").
+		Doc(messageID)
+
+	// Convert map to firestore.Update slice
+	firestoreUpdates := make([]firestore.Update, 0, len(updates))
+	for path, value := range updates {
+		firestoreUpdates = append(firestoreUpdates, firestore.Update{
+			Path:  path,
+			Value: value,
+		})
+	}
+
+	_, err := docRef.Update(ctx, firestoreUpdates)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return status.Errorf(codes.NotFound, "message not found: user=%s chat=%s id=%s", userID, chatID, messageID)
+		}
+		return status.Errorf(codes.Internal, "failed to update message user=%s chat=%s id=%s: %v", userID, chatID, messageID, err)
+	}
+
+	return nil
 }
 
 // SaveChatTitle saves/updates chat title (plaintext or encrypted)

@@ -434,12 +434,13 @@ func (sm *StreamManager) SetToolExecutor(executor *ToolExecutor) {
 //   - session: The completed session
 //   - userID: User ID for Firestore path
 //   - encryptionEnabled: Whether to encrypt the message
+//   - model: Model ID (e.g., "gpt-5-pro") for generation state tracking
 //
 // This should be called by the proxy handler immediately after stream completion.
 //
 // Returns:
 //   - error: If save failed
-func (sm *StreamManager) SaveCompletedSession(ctx context.Context, session *StreamSession, userID string, encryptionEnabled *bool) error {
+func (sm *StreamManager) SaveCompletedSession(ctx context.Context, session *StreamSession, userID string, encryptionEnabled *bool, model string) error {
 	if sm.messageService == nil {
 		return fmt.Errorf("message service not configured")
 	}
@@ -463,7 +464,18 @@ func (sm *StreamManager) SaveCompletedSession(ctx context.Context, session *Stre
 		slog.Bool("stopped", stopped),
 		slog.String("stopped_by", stoppedBy))
 
-	// Build message with stop metadata
+	// Determine generation state based on error/stop status
+	var generationState string
+	var generationError string
+	if session.GetError() != nil {
+		generationState = "failed"
+		generationError = session.GetError().Error()
+	} else {
+		generationState = "completed"
+	}
+
+	// Build message with stop metadata and generation state
+	now := time.Now()
 	msg := messaging.MessageToStore{
 		UserID:            userID,
 		ChatID:            session.chatID,
@@ -475,6 +487,10 @@ func (sm *StreamManager) SaveCompletedSession(ctx context.Context, session *Stre
 		Stopped:           stopped,
 		StoppedBy:         stoppedBy,
 		StopReason:        string(stopReason),
+		Model:             model,
+		GenerationState:   generationState,
+		GenerationCompletedAt: &now,
+		GenerationError:   generationError,
 	}
 
 	// Store asynchronously

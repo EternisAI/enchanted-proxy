@@ -97,6 +97,26 @@ func handleStreamingWithBroadcast(
 				session.SetUpstreamAPIKey(keyStr)
 			}
 		}
+
+		// For GPT-5 Pro, save placeholder message immediately to allow client reconnection
+		// This creates a "thinking" message in Firestore before streaming starts
+		if model == "gpt-5-pro" && messageService != nil {
+			userID, exists := auth.GetUserID(c)
+			if exists {
+				// Extract encryption setting
+				var encryptionEnabled *bool
+				if val, exists := c.Get("encryptionEnabled"); exists {
+					if boolPtr, ok := val.(*bool); ok {
+						encryptionEnabled = boolPtr
+					}
+				}
+
+				// Save synchronously (fast operation, avoids race with completion save)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				_ = messageService.SaveThinkingMessage(ctx, userID, chatID, messageID, model, encryptionEnabled)
+				cancel()
+			}
+		}
 	}
 
 	if !isNew {
@@ -141,7 +161,7 @@ func handleStreamingWithBroadcast(
 		userID, exists := auth.GetUserID(c)
 		if exists {
 			// Save completed session to Firestore
-			err := streamManager.SaveCompletedSession(context.Background(), session, userID, encryptionEnabled)
+			err := streamManager.SaveCompletedSession(context.Background(), session, userID, encryptionEnabled, model)
 			if err != nil {
 				log.Error("failed to save completed session",
 					slog.String("error", err.Error()),

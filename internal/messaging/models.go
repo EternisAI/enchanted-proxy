@@ -16,6 +16,13 @@ type ChatMessage struct {
 	Stopped    bool   `firestore:"stopped,omitempty"`    // true if generation was stopped by user/system
 	StoppedBy  string `firestore:"stoppedBy,omitempty"`  // User ID who stopped, or "system_timeout"/"system_shutdown"
 	StopReason string `firestore:"stopReason,omitempty"` // Why stopped: "user_cancelled", "timeout", "error", "system_shutdown"
+
+	// Generation state tracking (for GPT-5 Pro and other long-running models)
+	Model                  string    `firestore:"model,omitempty"`                  // Model ID (e.g., "gpt-5-pro")
+	GenerationState        string    `firestore:"generationState,omitempty"`        // "thinking", "completed", "failed"
+	GenerationStartedAt    time.Time `firestore:"generationStartedAt,omitempty"`    // When generation started
+	GenerationCompletedAt  time.Time `firestore:"generationCompletedAt,omitempty"`  // When generation completed/failed
+	GenerationError        string    `firestore:"generationError,omitempty"`        // Error message if failed
 }
 
 // UserPublicKey represents a user's ECDSA P-256 public key
@@ -50,6 +57,13 @@ type MessageToStore struct {
 	Stopped    bool   // true if generation was stopped mid-stream
 	StoppedBy  string // User ID who stopped, or "system_timeout"/"system_shutdown"
 	StopReason string // Why stopped: "user_cancelled", "timeout", "error", "system_shutdown"
+
+	// Model and generation state (for GPT-5 Pro long-running generation tracking)
+	Model                 string // Model ID (e.g., "gpt-5-pro")
+	GenerationState       string // "thinking", "completed", "failed"
+	GenerationStartedAt   *time.Time
+	GenerationCompletedAt *time.Time
+	GenerationError       string
 }
 
 // ChatTitle represents a stored chat title in Firestore
