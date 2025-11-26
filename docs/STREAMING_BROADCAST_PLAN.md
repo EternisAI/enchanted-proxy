@@ -1,5 +1,12 @@
 # Streaming Broadcast Architecture Plan
 
+> **NOTE**: This document reflects the original architectural plan. As of implementation, some features have been **deferred** to simplify the initial rollout:
+> - ❌ **Multi-device streaming endpoints removed**: GET `/messages/:messageId/stream`, GET `/active-stream`, GET `/status`
+> - ✅ **Stop control kept**: POST `/messages/:messageId/stop` - users can cancel in-progress generation
+> - ✅ **Core streaming works**: Single-device streaming with complete message storage
+>
+> Multi-device broadcast support may be added in the future if needed. The architecture supports it, but the REST API endpoints have been removed for simplicity.
+
 ## Table of Contents
 1. [Overview](#overview)
 2. [Current Architecture Analysis](#current-architecture-analysis)
@@ -1630,7 +1637,9 @@ curl -X POST http://proxy/chat/completions \
 
 ### 2. New Endpoints
 
-#### `GET /api/v1/chats/:chatId/messages/:messageId/stream`
+> **IMPLEMENTATION STATUS**: Only the `/stop` endpoint has been implemented. The subscription endpoints (`/stream`, `/active-stream`, `/status`) have been **removed** to simplify the system until multi-device streaming is needed.
+
+#### `GET /api/v1/chats/:chatId/messages/:messageId/stream` ❌ NOT IMPLEMENTED
 
 **Purpose**: Subscribe to active or completed stream
 
@@ -1664,7 +1673,7 @@ data: [DONE]
 
 ---
 
-#### `POST /api/v1/chats/:chatId/messages/:messageId/stop`
+#### `POST /api/v1/chats/:chatId/messages/:messageId/stop` ✅ IMPLEMENTED
 
 **Purpose**: Stop/cancel an in-progress AI response generation
 
