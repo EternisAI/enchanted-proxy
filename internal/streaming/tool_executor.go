@@ -227,11 +227,15 @@ func (te *ToolExecutor) CreateContinuationRequest(
 		slog.Int("messages", len(messages)),
 		slog.Int("tool_results", len(toolResults)))
 
-	// Determine final URL: use provided URL + /chat/completions if needed
+	// Determine final URL: append /chat/completions if not already present
 	finalURL := upstreamURL
 	if !strings.HasSuffix(upstreamURL, "/chat/completions") {
-		finalURL = strings.TrimSuffix(upstreamURL, "/") + "/v1/chat/completions"
+		// Trim trailing slash and append endpoint
+		finalURL = strings.TrimSuffix(upstreamURL, "/") + "/chat/completions"
 	}
+
+	te.logger.Debug("continuation request URL",
+		slog.String("final_url", finalURL))
 
 	// Create HTTP request
 	req, err := http.NewRequestWithContext(ctx, "POST", finalURL, bytes.NewBuffer(payloadBytes))

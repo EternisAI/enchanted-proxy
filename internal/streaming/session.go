@@ -374,8 +374,26 @@ func (s *StreamSession) readUpstream() {
 					chunkIndex++
 				}
 
-				toolDetector = NewToolCallDetector()
-				continue
+				// Send error message as content
+				errorMsg := fmt.Sprintf("I apologize, but I've reached the maximum number of tool calls (%d) for this request. Please try breaking your request into smaller parts.", maxContinuations)
+				errorContentChunk := s.createContentChunk(chunkIndex, errorMsg)
+				s.storeChunk(errorContentChunk)
+				s.broadcast(errorContentChunk)
+				chunkIndex++
+
+				// Send [DONE] to complete the stream
+				doneChunk := StreamChunk{
+					Index:     chunkIndex,
+					Line:      "data: [DONE]",
+					Timestamp: time.Now(),
+					IsFinal:   true,
+					IsError:   false,
+				}
+				s.storeChunk(doneChunk)
+				s.broadcast(doneChunk)
+
+				// Exit loop to mark as completed
+				break
 			}
 
 			if originalRequest != nil && len(toolResults) > 0 && upstreamURL != "" && upstreamAPIKey != "" {
@@ -454,8 +472,26 @@ func (s *StreamSession) readUpstream() {
 						chunkIndex++
 					}
 
-					toolDetector = NewToolCallDetector()
-					continue
+					// Send error message as content so stream has saveable content
+					errorMsg := fmt.Sprintf("I apologize, but I encountered an error while processing the tool results: %s", err.Error())
+					errorContentChunk := s.createContentChunk(chunkIndex, errorMsg)
+					s.storeChunk(errorContentChunk)
+					s.broadcast(errorContentChunk)
+					chunkIndex++
+
+					// Send [DONE] to complete the stream
+					doneChunk := StreamChunk{
+						Index:     chunkIndex,
+						Line:      "data: [DONE]",
+						Timestamp: time.Now(),
+						IsFinal:   true,
+						IsError:   false,
+					}
+					s.storeChunk(doneChunk)
+					s.broadcast(doneChunk)
+
+					// Exit loop to mark as completed
+					break
 				}
 
 				// Close current upstream body
@@ -481,14 +517,34 @@ func (s *StreamSession) readUpstream() {
 
 				continue
 			} else {
-				s.logger.Warn("cannot create continuation: no original request or no tool results",
+				s.logger.Warn("cannot create continuation: missing configuration",
 					slog.String("chat_id", s.chatID),
 					slog.String("message_id", s.messageID),
 					slog.Bool("has_original_request", originalRequest != nil),
+					slog.Bool("has_upstream_url", upstreamURL != ""),
+					slog.Bool("has_api_key", upstreamAPIKey != ""),
 					slog.Int("tool_result_count", len(toolResults)))
 
-				// Reset detector and continue
-				toolDetector = NewToolCallDetector()
+				// Send error message as content
+				errorMsg := "I apologize, but I encountered a configuration error while trying to process the tool results. Please try again."
+				errorContentChunk := s.createContentChunk(chunkIndex, errorMsg)
+				s.storeChunk(errorContentChunk)
+				s.broadcast(errorContentChunk)
+				chunkIndex++
+
+				// Send [DONE] to complete the stream
+				doneChunk := StreamChunk{
+					Index:     chunkIndex,
+					Line:      "data: [DONE]",
+					Timestamp: time.Now(),
+					IsFinal:   true,
+					IsError:   false,
+				}
+				s.storeChunk(doneChunk)
+				s.broadcast(doneChunk)
+
+				// Exit loop to mark as completed
+				break
 			}
 		}
 
@@ -526,6 +582,41 @@ func (s *StreamSession) readUpstream() {
 		slog.Int("total_chunks", chunkIndex))
 
 	s.markCompleted(nil)
+}
+
+// createContentChunk creates an SSE chunk with content delta (OpenAI format).
+func (s *StreamSession) createContentChunk(index int, content string) StreamChunk {
+	chunkData := map[string]interface{}{
+		"choices": []map[string]interface{}{
+			{
+				"index": 0,
+				"delta": map[string]interface{}{
+					"content": content,
+				},
+				"finish_reason": nil,
+			},
+		},
+	}
+
+	chunkJSON, err := json.Marshal(chunkData)
+	if err != nil {
+		s.logger.Error("failed to marshal content chunk", slog.String("error", err.Error()))
+		return StreamChunk{
+			Index:     index,
+			Line:      fmt.Sprintf("data: {\"error\": \"failed to create chunk: %s\"}", err.Error()),
+			Timestamp: time.Now(),
+			IsFinal:   false,
+			IsError:   true,
+		}
+	}
+
+	return StreamChunk{
+		Index:     index,
+		Line:      "data: " + string(chunkJSON),
+		Timestamp: time.Now(),
+		IsFinal:   false,
+		IsError:   false,
+	}
 }
 
 // storeChunk adds a chunk to the buffer with safety limits.
