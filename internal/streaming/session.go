@@ -301,18 +301,10 @@ func (s *StreamSession) readUpstream() {
 			// Get tool calls
 			toolCalls := toolDetector.GetToolCalls()
 
-			// Execute tools and get notifications
-			toolResults, notifications, err := s.toolExecutor.ExecuteToolCalls(s.stopCtx, s.chatID, s.messageID, toolCalls)
-			if err != nil {
-				s.logger.Error("tool execution failed",
-					slog.String("error", err.Error()),
-					slog.String("chat_id", s.chatID),
-					slog.String("message_id", s.messageID))
-				// Continue despite error - tool results will contain error messages
-			}
-
-			// Broadcast tool notifications as special SSE chunks
-			for _, notif := range notifications {
+			// Create callback to broadcast notifications in real-time
+			// This is called from tool executor goroutines as events occur
+			var chunkMu sync.Mutex
+			onNotification := func(notif ToolNotification) {
 				notifJSON, err := json.Marshal(map[string]interface{}{
 					"type":         "tool_notification",
 					"event":        notif.Event,
@@ -324,9 +316,11 @@ func (s *StreamSession) readUpstream() {
 				if err != nil {
 					s.logger.Error("failed to marshal tool notification",
 						slog.String("error", err.Error()))
-					continue
+					return
 				}
 
+				// Thread-safe chunk creation and broadcasting
+				chunkMu.Lock()
 				notifChunk := StreamChunk{
 					Index:     chunkIndex,
 					Line:      "data: " + string(notifJSON),
@@ -334,10 +328,21 @@ func (s *StreamSession) readUpstream() {
 					IsFinal:   false,
 					IsError:   notif.Event == "error",
 				}
+				chunkIndex++
+				chunkMu.Unlock()
 
 				s.storeChunk(notifChunk)
 				s.broadcast(notifChunk)
-				chunkIndex++
+			}
+
+			// Execute tools with real-time notification callback
+			toolResults, err := s.toolExecutor.ExecuteToolCalls(s.stopCtx, s.chatID, s.messageID, toolCalls, onNotification)
+			if err != nil {
+				s.logger.Error("tool execution failed",
+					slog.String("error", err.Error()),
+					slog.String("chat_id", s.chatID),
+					slog.String("message_id", s.messageID))
+				// Continue despite error - tool results will contain error messages
 			}
 
 			// Create continuation request with tool results

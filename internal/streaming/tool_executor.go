@@ -44,15 +44,21 @@ func NewToolExecutor(
 	}
 }
 
+// NotificationCallback is called when a tool execution event occurs.
+// This allows real-time notification broadcasting instead of batching.
+type NotificationCallback func(ToolNotification)
+
 // ExecuteToolCalls executes multiple tool calls in parallel.
-// Returns tool results and notifications for broadcasting.
+// The onNotification callback is called immediately when events occur (started, completed, error).
+// Returns tool results only (notifications sent via callback).
 func (te *ToolExecutor) ExecuteToolCalls(
 	ctx context.Context,
 	chatID, messageID string,
 	toolCalls []tools.ToolCall,
-) ([]tools.ToolResult, []ToolNotification, error) {
+	onNotification NotificationCallback,
+) ([]tools.ToolResult, error) {
 	if len(toolCalls) == 0 {
-		return nil, nil, nil
+		return nil, nil
 	}
 
 	te.logger.Info("executing tool calls",
@@ -61,8 +67,6 @@ func (te *ToolExecutor) ExecuteToolCalls(
 		slog.Int("count", len(toolCalls)))
 
 	results := make([]tools.ToolResult, len(toolCalls))
-	notifications := make([]ToolNotification, 0, len(toolCalls)*2) // *2 for started + (completed|error)
-	var notifMu sync.Mutex
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	errors := make([]error, 0)
@@ -73,14 +77,14 @@ func (te *ToolExecutor) ExecuteToolCalls(
 		go func(idx int, tc tools.ToolCall) {
 			defer wg.Done()
 
-			// Notify started
-			notifMu.Lock()
-			notifications = append(notifications, ToolNotification{
-				Event:      "started",
-				ToolName:   tc.Function.Name,
-				ToolCallID: tc.ID,
-			})
-			notifMu.Unlock()
+			// Notify started IMMEDIATELY via callback
+			if onNotification != nil {
+				onNotification(ToolNotification{
+					Event:      "started",
+					ToolName:   tc.Function.Name,
+					ToolCallID: tc.ID,
+				})
+			}
 
 			// Execute tool
 			result, err := te.executeSingleTool(ctx, tc)
@@ -90,15 +94,15 @@ func (te *ToolExecutor) ExecuteToolCalls(
 					slog.String("tool_call_id", tc.ID),
 					slog.String("error", err.Error()))
 
-				// Notify error
-				notifMu.Lock()
-				notifications = append(notifications, ToolNotification{
-					Event:      "error",
-					ToolName:   tc.Function.Name,
-					ToolCallID: tc.ID,
-					Error:      err.Error(),
-				})
-				notifMu.Unlock()
+				// Notify error IMMEDIATELY via callback
+				if onNotification != nil {
+					onNotification(ToolNotification{
+						Event:      "error",
+						ToolName:   tc.Function.Name,
+						ToolCallID: tc.ID,
+						Error:      err.Error(),
+					})
+				}
 
 				mu.Lock()
 				errors = append(errors, fmt.Errorf("tool %s: %w", tc.Function.Name, err))
@@ -112,15 +116,15 @@ func (te *ToolExecutor) ExecuteToolCalls(
 					Content:    fmt.Sprintf("Error executing tool: %s", err.Error()),
 				}
 			} else {
-				// Notify completed
-				notifMu.Lock()
-				notifications = append(notifications, ToolNotification{
-					Event:      "completed",
-					ToolName:   tc.Function.Name,
-					ToolCallID: tc.ID,
-					Summary:    te.getSummary(result.Content),
-				})
-				notifMu.Unlock()
+				// Notify completed IMMEDIATELY via callback
+				if onNotification != nil {
+					onNotification(ToolNotification{
+						Event:      "completed",
+						ToolName:   tc.Function.Name,
+						ToolCallID: tc.ID,
+						Summary:    te.getSummary(result.Content),
+					})
+				}
 			}
 
 			results[idx] = result
@@ -135,7 +139,7 @@ func (te *ToolExecutor) ExecuteToolCalls(
 			slog.Int("total_count", len(toolCalls)))
 	}
 
-	return results, notifications, nil
+	return results, nil
 }
 
 // executeSingleTool executes a single tool call.
