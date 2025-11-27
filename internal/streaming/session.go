@@ -72,10 +72,11 @@ type StreamSession struct {
 	stopRequestedAt time.Time
 
 	// Upstream reading (background goroutine)
-	upstreamBody io.ReadCloser
-	completed    bool
-	err          error
-	completedMu  sync.RWMutex
+	upstreamBody  io.ReadCloser
+	completed     bool
+	completedChan chan struct{} // Closed when session completes
+	err           error
+	completedMu   sync.RWMutex
 
 	// Stop control
 	stopCtx    context.Context    // Context for stopping upstream read
@@ -130,15 +131,16 @@ func NewStreamSession(chatID, messageID string, upstreamBody io.ReadCloser, logg
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), upstreamReadTimeout)
 
 	return &StreamSession{
-		chatID:       chatID,
-		messageID:    messageID,
-		startTime:    time.Now(),
-		upstreamBody: upstreamBody,
-		stopCtx:      stopCtx,
-		stopCancel:   stopCancel,
-		chunks:       make([]StreamChunk, 0, 100), // Pre-allocate for typical response
-		subscribers:  make(map[string]*StreamSubscriber),
-		logger:       logger,
+		chatID:        chatID,
+		messageID:     messageID,
+		startTime:     time.Now(),
+		upstreamBody:  upstreamBody,
+		stopCtx:       stopCtx,
+		stopCancel:    stopCancel,
+		completedChan: make(chan struct{}),
+		chunks:        make([]StreamChunk, 0, 100), // Pre-allocate for typical response
+		subscribers:   make(map[string]*StreamSubscriber),
+		logger:        logger,
 	}
 }
 
@@ -705,6 +707,9 @@ func (s *StreamSession) markCompleted(err error) {
 		slog.Duration("duration", time.Since(s.startTime)),
 		slog.Bool("has_error", err != nil))
 
+	// Signal completion to waiters
+	close(s.completedChan)
+
 	// Close all subscriber channels
 	s.closeAllSubscribers()
 }
@@ -887,6 +892,13 @@ func (s *StreamSession) IsCompleted() bool {
 	s.completedMu.RLock()
 	defer s.completedMu.RUnlock()
 	return s.completed
+}
+
+// WaitForCompletion blocks until the session completes.
+// This is safe to call even if the session is already completed.
+// Used by handlers to wait for completion independently of client connections.
+func (s *StreamSession) WaitForCompletion() {
+	<-s.completedChan
 }
 
 // IsStopped returns whether the stream was stopped by user/system.

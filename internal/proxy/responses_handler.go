@@ -140,6 +140,23 @@ func handleResponsesAPI(
 		}
 	}
 
+	// Step 2.5: For GPT-5 Pro, save placeholder message immediately (BEFORE making request)
+	// This allows clients to detect in-progress generation when reconnecting
+	if messageService != nil {
+		// Extract encryption setting
+		var encryptionEnabled *bool
+		if val, exists := c.Get("encryptionEnabled"); exists {
+			if boolPtr, ok := val.(*bool); ok {
+				encryptionEnabled = boolPtr
+			}
+		}
+
+		// Save placeholder synchronously (fast operation)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = messageService.SaveThinkingMessage(ctx, userID, chatID, messageID, model, encryptionEnabled)
+		cancel()
+	}
+
 	// Step 3: Transform request for Responses API
 	adapter := responses.NewAdapter()
 	transformedBody, err := adapter.TransformRequest(requestBody, previousResponseID)
@@ -195,6 +212,47 @@ func handleResponsesAPI(
 	// Get or create stream session
 	session, isNew := streamManager.GetOrCreateSession(chatID, messageID, resp.Body)
 
+	// Step 5.5: Register completion handler (BEFORE subscribing)
+	// This ensures message gets saved even if client disconnects early
+	if isNew && messageService != nil {
+		// Extract encryption setting
+		var encryptionEnabled *bool
+		if val, exists := c.Get("encryptionEnabled"); exists {
+			if boolPtr, ok := val.(*bool); ok {
+				encryptionEnabled = boolPtr
+			}
+		}
+
+		// Capture variables for goroutine
+		capturedUserID := userID
+		capturedChatID := chatID
+		capturedModel := model
+		capturedEncryption := encryptionEnabled
+
+		// Start goroutine that waits for session completion
+		// This runs independently of client connection
+		go func() {
+			// Wait for session to complete (blocking)
+			session.WaitForCompletion()
+
+			// Save response_id
+			responseID := session.GetResponseID()
+			if responseID != "" {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if err := messageService.SaveResponseID(ctx, capturedUserID, capturedChatID, responseID); err != nil {
+					log.Error("failed to save response_id", slog.String("error", err.Error()))
+				}
+				cancel()
+			}
+
+			// Save completed message
+			err := streamManager.SaveCompletedSession(context.Background(), session, capturedUserID, capturedEncryption, capturedModel)
+			if err != nil {
+				log.Error("failed to save completed session", slog.String("error", err.Error()))
+			}
+		}()
+	}
+
 	// Subscribe to the session
 	subscriberID := uuid.New().String()
 	subscriber, err := session.Subscribe(c.Request.Context(), subscriberID, streaming.SubscriberOptions{
@@ -213,41 +271,6 @@ func handleResponsesAPI(
 	// Step 6: Stream to client and extract response_id
 	// This is done in a modified streamToClient that extracts response_id
 	streamToClientWithResponseID(c, subscriber, session, log, adapter)
-
-	// Step 7: After streaming completes, save response_id to Firestore
-	// Only the first subscriber (isNew) saves to avoid duplicate writes
-	if isNew && session.IsCompleted() {
-		responseID := session.GetResponseID()
-		if responseID != "" && messageService != nil {
-			// Capture userID for goroutine (avoid closure issues)
-			capturedUserID := userID
-			capturedChatID := chatID
-
-			// Save response_id to Firestore (async, non-blocking)
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-
-				if err := messageService.SaveResponseID(ctx, capturedUserID, capturedChatID, responseID); err != nil {
-					log.Error("failed to save response_id to Firestore", slog.String("error", err.Error()))
-				}
-			}()
-		}
-
-		// Extract encryption setting
-		var encryptionEnabled *bool
-		if val, exists := c.Get("encryptionEnabled"); exists {
-			if boolPtr, ok := val.(*bool); ok {
-				encryptionEnabled = boolPtr
-			}
-		}
-
-		// Save completed session to Firestore (message content)
-		err := streamManager.SaveCompletedSession(context.Background(), session, userID, encryptionEnabled, model)
-		if err != nil {
-			log.Error("failed to save completed Responses API session", slog.String("error", err.Error()))
-		}
-	}
 
 	// Log request to database (token usage)
 	// TODO: Extract token usage from Responses API response
