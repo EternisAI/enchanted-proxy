@@ -119,7 +119,14 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 		}
 
 		// OpenAI models - Responses API (stateful)
+		// Support both "gpt-5-pro" and "openai/gpt-5-pro" for client compatibility
 		routes["gpt-5-pro"] = ProviderConfig{
+			BaseURL: "https://api.openai.com/v1",
+			APIKey:  cfg.OpenAIAPIKey,
+			Name:    "OpenAI",
+			APIType: APITypeResponses,
+		}
+		routes["openai/gpt-5-pro"] = ProviderConfig{
 			BaseURL: "https://api.openai.com/v1",
 			APIKey:  cfg.OpenAIAPIKey,
 			Name:    "OpenAI",
