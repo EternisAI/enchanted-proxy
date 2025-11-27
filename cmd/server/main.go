@@ -30,11 +30,14 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/oauth"
 	"github.com/eternisai/enchanted-proxy/internal/proxy"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
+	"github.com/eternisai/enchanted-proxy/internal/routing"
 	"github.com/eternisai/enchanted-proxy/internal/search"
 	"github.com/eternisai/enchanted-proxy/internal/storage/pg"
+	"github.com/eternisai/enchanted-proxy/internal/streaming"
 	"github.com/eternisai/enchanted-proxy/internal/task"
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
+	"github.com/eternisai/enchanted-proxy/internal/tools"
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -151,6 +154,13 @@ func main() {
 	deeprStorage := deepr.NewDBStorage(logger.WithComponent("deepr-storage"), db.DB)
 	deeprSessionManager := deepr.NewSessionManager(logger.WithComponent("deepr-session"))
 
+	// Initialize Firestore client for chat operations
+	var firestoreClient *messaging.FirestoreClient
+	if firebaseClient != nil {
+		firestoreClient = messaging.NewFirestoreClient(firebaseClient.GetFirestoreClient())
+		log.Info("firestore client initialized for chat operations")
+	}
+
 	// Initialize message storage service
 	var messageService *messaging.Service
 	if config.AppConfig.MessageStorageEnabled && firebaseClient != nil {
@@ -183,6 +193,38 @@ func main() {
 	} else {
 		log.Info("title generation service disabled (requires message storage)")
 	}
+
+	// Initialize tool system
+	toolRegistry := tools.NewRegistry()
+	exaSearchTool := tools.NewExaSearchTool(searchService, logger.WithComponent("exa-search-tool"))
+	if err := toolRegistry.Register(exaSearchTool); err != nil {
+		log.Error("failed to register exa search tool", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	log.Info("tool system initialized", slog.Int("registered_tools", len(toolRegistry.List())))
+
+	// Initialize stream manager for broadcast streaming
+	var streamManager *streaming.StreamManager
+	if messageService != nil {
+		streamManager = streaming.NewStreamManager(messageService, logger.WithComponent("streaming"))
+		log.Info("stream manager initialized")
+
+		// Initialize tool executor for tool call execution
+		toolExecutor := streaming.NewToolExecutor(
+			toolRegistry,
+			logger.WithComponent("tool-executor"),
+		)
+		streamManager.SetToolExecutor(toolExecutor)
+		log.Info("tool executor initialized")
+
+		// Ensure cleanup on shutdown
+		defer streamManager.Shutdown()
+	} else {
+		log.Info("stream manager disabled (requires message storage)")
+	}
+
+	// Initialize model router for automatic provider routing
+	modelRouter := routing.NewModelRouter(config.AppConfig, logger.WithComponent("routing"))
 
 	// Initialize key sharing service
 	var keyshareHandler *keyshare.Handler
@@ -267,9 +309,13 @@ func main() {
 		logger:                 logger,
 		firebaseAuth:           firebaseAuth,
 		firebaseClient:         firebaseClient,
+		firestoreClient:        firestoreClient,
 		requestTrackingService: requestTrackingService,
 		messageService:         messageService,
 		titleService:           titleService,
+		streamManager:          streamManager,
+		modelRouter:            modelRouter,
+		toolRegistry:           toolRegistry,
 		oauthHandler:           oauthHandler,
 		composioHandler:        composioHandler,
 		inviteCodeHandler:      inviteCodeHandler,
@@ -380,9 +426,13 @@ type restServerInput struct {
 	logger                 *logger.Logger
 	firebaseAuth           *auth.FirebaseAuthMiddleware
 	firebaseClient         *auth.FirebaseClient
+	firestoreClient        *messaging.FirestoreClient
 	requestTrackingService *request_tracking.Service
 	messageService         *messaging.Service
 	titleService           *title_generation.Service
+	streamManager          *streaming.StreamManager
+	modelRouter            *routing.ModelRouter
+	toolRegistry           *tools.Registry
 	oauthHandler           *oauth.Handler
 	composioHandler        *composio.Handler
 	inviteCodeHandler      *invitecode.Handler
@@ -478,6 +528,15 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		// Deep Research endpoints (protected)
 		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled)) // POST API to start deep research
 
+		// Stream Control API routes (protected)
+		chats := api.Group("/chats")
+		{
+			messages := chats.Group("/:chatId/messages")
+			{
+				messages.POST("/:messageId/stop", proxy.StopStreamHandler(input.logger, input.streamManager, input.firestoreClient)) // POST /api/v1/chats/:chatId/messages/:messageId/stop
+			}
+		}
+
 		// Key Sharing API routes (protected)
 		if input.keyshareHandler != nil {
 			encryption := api.Group("/encryption")
@@ -485,10 +544,10 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 				keyShare := encryption.Group("/key-share")
 				{
 					api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled)) // POST API to submit clarification response
-					api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled)) // WebSocket proxy for deep research
-					keyShare.POST("/session", input.keyshareHandler.CreateSession)                                                                                                                                                     // POST /api/v1/encryption/key-share/session
-					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)                                                                                                                                              // POST /api/v1/encryption/key-share/session/:sessionId
-					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen)                                                                                                                                  // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
+					api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.config.DeepResearchRateLimitEnabled))              // WebSocket proxy for deep research
+					keyShare.POST("/session", input.keyshareHandler.CreateSession)                                                                                                                                                                  // POST /api/v1/encryption/key-share/session
+					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)                                                                                                                                                           // POST /api/v1/encryption/key-share/session/:sessionId
+					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen)                                                                                                                                               // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
 				}
 			}
 		}
@@ -499,13 +558,13 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger))
 	{
 		// AI service endpoints
-		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
-		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
-		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
-		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
-		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
-		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
-		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService))
+		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
 	}
 
 	return router

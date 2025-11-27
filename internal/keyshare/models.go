@@ -23,14 +23,14 @@ type EphemeralPublicKey struct {
 
 // KeyShareSession represents a session for sharing encryption keys between devices
 type KeyShareSession struct {
-	SessionID            string              `json:"sessionId" firestore:"sessionId"`
-	UserID               string              `json:"userId" firestore:"userId"`
-	EphemeralPublicKey   EphemeralPublicKey  `json:"ephemeralPublicKey" firestore:"ephemeralPublicKey"`
-	Status               SessionStatus       `json:"status" firestore:"status"`
-	EncryptedPrivateKey  string              `json:"encryptedPrivateKey,omitempty" firestore:"encryptedPrivateKey,omitempty"`
-	CreatedAt            time.Time           `json:"createdAt" firestore:"createdAt"`
-	ExpiresAt            time.Time           `json:"expiresAt" firestore:"expiresAt"`
-	CompletedAt          *time.Time          `json:"completedAt,omitempty" firestore:"completedAt,omitempty"`
+	SessionID           string             `json:"sessionId" firestore:"sessionId"`
+	UserID              string             `json:"userId" firestore:"userId"`
+	EphemeralPublicKey  EphemeralPublicKey `json:"ephemeralPublicKey" firestore:"ephemeralPublicKey"`
+	Status              SessionStatus      `json:"status" firestore:"status"`
+	EncryptedPrivateKey string             `json:"encryptedPrivateKey,omitempty" firestore:"encryptedPrivateKey,omitempty"`
+	CreatedAt           time.Time          `json:"createdAt" firestore:"createdAt"`
+	ExpiresAt           time.Time          `json:"expiresAt" firestore:"expiresAt"`
+	CompletedAt         *time.Time         `json:"completedAt,omitempty" firestore:"completedAt,omitempty"`
 }
 
 // CreateSessionRequest represents the request to create a new key sharing session
@@ -56,11 +56,11 @@ type SubmitKeyResponse struct {
 
 // WebSocketMessage represents messages sent over the WebSocket connection
 type WebSocketMessage struct {
-	Type                string  `json:"type"`
-	SessionID           string  `json:"sessionId,omitempty"`
-	EncryptedPrivateKey string  `json:"encryptedPrivateKey,omitempty"`
-	Message             string  `json:"message,omitempty"`
-	Error               string  `json:"error,omitempty"`
+	Type                string `json:"type"`
+	SessionID           string `json:"sessionId,omitempty"`
+	EncryptedPrivateKey string `json:"encryptedPrivateKey,omitempty"`
+	Message             string `json:"message,omitempty"`
+	Error               string `json:"error,omitempty"`
 }
 
 // WebSocket message types

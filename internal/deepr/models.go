@@ -6,8 +6,8 @@ import "time"
 type Message struct {
 	Type        string `json:"type"`
 	Content     string `json:"content"`
-	Message     string `json:"message,omitempty"`     // Used by Python backend for clarifications
-	Reporter    string `json:"reporter,omitempty"`    // Message reporter type from Python backend
+	Message     string `json:"message,omitempty"`  // Used by Python backend for clarifications
+	Reporter    string `json:"reporter,omitempty"` // Message reporter type from Python backend
 	Data        string `json:"data,omitempty"`
 	FinalReport string `json:"final_report,omitempty"`
 	Error       string `json:"error,omitempty"`

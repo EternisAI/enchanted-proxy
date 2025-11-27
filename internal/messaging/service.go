@@ -182,6 +182,20 @@ func (s *Service) handleMessage(msg MessageToStore) {
 		IsError:             msg.IsError,
 		Timestamp:           time.Now(),
 		PublicEncryptionKey: publicKeyUsed,
+		Stopped:             msg.Stopped,
+		StoppedBy:           msg.StoppedBy,
+		StopReason:          msg.StopReason,
+		Model:               msg.Model,
+		GenerationState:     msg.GenerationState,
+		GenerationError:     msg.GenerationError,
+	}
+
+	// Set generation timestamps if provided
+	if msg.GenerationStartedAt != nil {
+		chatMsg.GenerationStartedAt = *msg.GenerationStartedAt
+	}
+	if msg.GenerationCompletedAt != nil {
+		chatMsg.GenerationCompletedAt = *msg.GenerationCompletedAt
 	}
 
 	// Save to Firestore
@@ -276,4 +290,143 @@ func (s *Service) GetPublicKey(ctx context.Context, userID string) (*UserPublicK
 // EncryptContent exposes encryption function for title service
 func (s *Service) EncryptContent(content string, publicKeyJWK string) (string, error) {
 	return s.encryptionService.EncryptMessage(content, publicKeyJWK)
+}
+
+// SaveResponseID stores the latest OpenAI Responses API response_id for a chat.
+// This is used for continuing conversations with GPT-5 Pro and other stateful models.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - userID: User ID who owns the chat
+//   - chatID: Chat ID
+//   - responseID: The response_id from OpenAI (e.g., "resp_abc123")
+//
+// Returns:
+//   - error: If save failed
+func (s *Service) SaveResponseID(ctx context.Context, userID, chatID, responseID string) error {
+	if s.firestoreClient == nil {
+		return fmt.Errorf("firestore client is nil")
+	}
+	return s.firestoreClient.SaveResponseID(ctx, userID, chatID, responseID)
+}
+
+// GetResponseID retrieves the latest OpenAI Responses API response_id for a chat.
+// This is used for continuing conversations with GPT-5 Pro and other stateful models.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - userID: User ID who owns the chat
+//   - chatID: Chat ID
+//
+// Returns:
+//   - string: The response_id (e.g., "resp_abc123"), or empty string if not found
+//   - error: If retrieval failed
+func (s *Service) GetResponseID(ctx context.Context, userID, chatID string) (string, error) {
+	if s.firestoreClient == nil {
+		return "", fmt.Errorf("firestore client is nil")
+	}
+	return s.firestoreClient.GetResponseID(ctx, userID, chatID)
+}
+
+// SaveThinkingMessage saves a placeholder message for long-running generations (GPT-5 Pro).
+// This allows clients to detect in-progress generation when reconnecting.
+//
+// The message is saved immediately when streaming starts with:
+//   - generationState: "thinking"
+//   - encryptedContent: empty (will be updated when complete)
+//   - generationStartedAt: current timestamp
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - userID: User ID who owns the message
+//   - chatID: Chat ID
+//   - messageID: AI message ID
+//   - model: Model ID (e.g., "gpt-5-pro")
+//   - encryptionEnabled: Whether to encrypt (can be nil for backward compat)
+//
+// Returns:
+//   - error: If save failed
+func (s *Service) SaveThinkingMessage(ctx context.Context, userID, chatID, messageID, model string, encryptionEnabled *bool) error {
+	// Handle encryption for placeholder content
+	var encryptedContent string
+	var publicKeyUsed string
+
+	if encryptionEnabled != nil && *encryptionEnabled {
+		// Client wants encryption - encrypt empty placeholder
+		publicKey, err := s.getPublicKey(ctx, userID)
+		if err != nil {
+			// Graceful degradation or strict mode based on config
+			if config.AppConfig.MessageStorageRequireEncryption {
+				return fmt.Errorf("encryption required but no public key found: %w", err)
+			}
+			encryptedContent = "" // Empty placeholder
+			publicKeyUsed = "none"
+		} else {
+			// Encrypt empty placeholder content
+			encrypted, err := s.encryptionService.EncryptMessage("", publicKey.Public)
+			if err != nil {
+				if config.AppConfig.MessageStorageRequireEncryption {
+					return fmt.Errorf("encryption failed: %w", err)
+				}
+				encryptedContent = ""
+				publicKeyUsed = "none"
+			} else {
+				encryptedContent = encrypted
+				publicKeyUsed = publicKey.Public
+			}
+		}
+	} else {
+		// No encryption requested
+		encryptedContent = ""
+		publicKeyUsed = "none"
+	}
+
+	// Create placeholder message with "thinking" state
+	now := time.Now()
+	chatMsg := &ChatMessage{
+		ID:                  messageID,
+		EncryptedContent:    encryptedContent,
+		IsFromUser:          false,
+		ChatID:              chatID,
+		IsError:             false,
+		Timestamp:           now,
+		PublicEncryptionKey: publicKeyUsed,
+		Model:               model,
+		GenerationState:     "thinking",
+		GenerationStartedAt: now,
+	}
+
+	// Save to Firestore
+	return s.firestoreClient.SaveMessage(ctx, userID, chatMsg)
+}
+
+// UpdateMessageGenerationState updates a message's generation state.
+// Used to mark messages as "completed" or "failed" after generation finishes.
+//
+// This method updates an existing message in Firestore - it does NOT create a new message.
+// The full message content should already be stored via the normal StoreMessageAsync flow.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - userID: User ID who owns the message
+//   - chatID: Chat ID
+//   - messageID: AI message ID
+//   - state: New state ("completed" or "failed")
+//   - errorMsg: Error message (only if state="failed")
+//
+// Returns:
+//   - error: If update failed
+func (s *Service) UpdateMessageGenerationState(ctx context.Context, userID, chatID, messageID, state, errorMsg string) error {
+	now := time.Now()
+	updates := map[string]interface{}{
+		"generationState":       state,
+		"generationCompletedAt": now,
+	}
+
+	if errorMsg != "" {
+		updates["generationError"] = errorMsg
+	}
+
+	// Update in Firestore
+	return s.firestoreClient.UpdateMessage(ctx, userID, chatID, messageID, updates)
 }

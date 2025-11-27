@@ -4,6 +4,7 @@ on:
   push:
     branches:
     - ananta-staging
+    - feature/ETERNIS-Proxy-refactor
     - main
     - production
     - staging

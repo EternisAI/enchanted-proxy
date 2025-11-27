@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -19,7 +21,10 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
+	"github.com/eternisai/enchanted-proxy/internal/routing"
+	"github.com/eternisai/enchanted-proxy/internal/streaming"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
+	"github.com/eternisai/enchanted-proxy/internal/tools"
 	"github.com/gin-gonic/gin"
 )
 
@@ -58,7 +63,16 @@ func createReverseProxyWithPooling(target *url.URL) *httputil.ReverseProxy {
 	return proxy
 }
 
-func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Service, messageService *messaging.Service, titleService *title_generation.Service) gin.HandlerFunc {
+func ProxyHandler(
+	logger *logger.Logger,
+	trackingService *request_tracking.Service,
+	messageService *messaging.Service,
+	titleService *title_generation.Service,
+	streamManager *streaming.StreamManager,
+	modelRouter *routing.ModelRouter,
+	toolRegistry *tools.Registry,
+	cfg *config.Config,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		log := logger.WithContext(c.Request.Context()).WithComponent("proxy")
@@ -81,19 +95,90 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			model = extractModelFromRequestBody(c.Request.URL.Path, requestBody)
 		}
 
-		// Extract X-BASE-URL from header
-		baseURL := c.GetHeader("X-BASE-URL")
-		if baseURL == "" {
-			log.Warn("missing base url header")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "X-BASE-URL header is required"})
+		// Get client platform for routing
+		platform := c.GetHeader("X-Client-Platform")
+		if platform == "" {
+			platform = "mobile" // Default to mobile
+		}
+
+		// Determine provider: X-BASE-URL (legacy) or model-based routing (new)
+		var baseURL string
+		var apiKey string
+		var provider *routing.ProviderConfig
+
+		legacyBaseURL := c.GetHeader("X-BASE-URL")
+		if legacyBaseURL != "" {
+			// BACKWARD COMPATIBILITY: Use X-BASE-URL if provided
+			baseURL = legacyBaseURL
+			apiKey = GetAPIKey(baseURL, platform, cfg)
+			if apiKey == "" {
+				log.Warn("unauthorized base url", slog.String("base_url", baseURL))
+				c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized base URL"})
+				return
+			}
+			log.Debug("using legacy X-BASE-URL routing", slog.String("base_url", baseURL))
+			// Legacy mode: assume Chat Completions API
+			provider = &routing.ProviderConfig{
+				BaseURL: baseURL,
+				APIKey:  apiKey,
+				Name:    "Legacy",
+				APIType: routing.APITypeChatCompletions,
+			}
+		} else if model != "" && modelRouter != nil {
+			// NEW: Auto-route based on model ID
+			providerCfg, err := modelRouter.RouteModel(model, platform)
+			if err != nil {
+				log.Error("failed to route model",
+					slog.String("error", err.Error()),
+					slog.String("model", model))
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("No provider configured for model: %s", model)})
+				return
+			}
+			provider = providerCfg
+			baseURL = provider.BaseURL
+			apiKey = provider.APIKey
+			log.Info("auto-routed model to provider",
+				slog.String("model", model),
+				slog.String("provider", provider.Name),
+				slog.String("base_url", baseURL),
+				slog.String("api_type", string(provider.APIType)))
+		} else {
+			// Neither X-BASE-URL nor model provided
+			log.Warn("missing routing information: need X-BASE-URL or model ID")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "X-BASE-URL header or model field is required"})
 			return
 		}
 
-		platform := c.GetHeader("X-Client-Platform")
-		if platform == "" {
-			log.Warn("missing client platform header, defaulting to mobile")
-			platform = "mobile"
+		// Route based on API type
+		if provider.APIType == routing.APITypeResponses {
+			// Handle Responses API (GPT-5 Pro, GPT-4.5+)
+			log.Info("routing to Responses API handler",
+				slog.String("model", model),
+				slog.String("provider", provider.Name))
+
+			// Extract encryption enabled header
+			encryptionEnabledStr := c.GetHeader("X-Encryption-Enabled")
+			if encryptionEnabledStr != "" {
+				encryptionEnabled := encryptionEnabledStr == "true"
+				c.Set("encryptionEnabled", &encryptionEnabled)
+			}
+
+			// Save user message to Firestore before forwarding request
+			if len(requestBody) > 0 {
+				saveUserMessageAsync(c, messageService, requestBody)
+			}
+
+			// Handle Responses API request (includes streaming, response_id management)
+			if err := handleResponsesAPI(c, requestBody, provider, model, log, trackingService, messageService, titleService, streamManager, cfg); err != nil {
+				log.Error("Responses API handler failed",
+					slog.String("error", err.Error()),
+					slog.String("model", model))
+				// Error already sent to client by handler
+			}
+			return
 		}
+
+		// Continue with Chat Completions API (existing logic below)
 
 		// Extract encryption enabled header
 		encryptionEnabledStr := c.GetHeader("X-Encryption-Enabled")
@@ -102,14 +187,6 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			c.Set("encryptionEnabled", &encryptionEnabled)
 		}
 		// If header not provided, leave as nil for backward compatibility
-
-		// Check if base URL is in our allowed dictionary
-		apiKey := GetAPIKey(baseURL, platform, config.AppConfig)
-		if apiKey == "" {
-			log.Warn("unauthorized base url", slog.String("base_url", baseURL))
-			c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized base URL"})
-			return
-		}
 
 		// Save user message to Firestore before forwarding request
 		// This ensures consistent server-side timestamps and eliminates client-side storage complexity
@@ -165,9 +242,9 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			slog.Int64("request_size", max(0, c.Request.ContentLength)),
 		}
 
-		if log.Enabled(c.Request.Context(), slog.LevelDebug) {
-			logArgs = append(logArgs, slog.String("request_body", logRequestBody(requestBody, 300)))
-		}
+		// NOTE: Request body logging removed for security/privacy reasons
+		// User messages and AI responses contain sensitive data (PII, PHI, etc.)
+		// Only metadata (size, model, target) is logged for debugging
 
 		log.Info("proxy request started", logArgs...)
 
@@ -190,7 +267,12 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 			isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
 			if isStreaming {
-				return handleStreamingResponse(resp, log, model, upstreamLatency, c, trackingService, messageService)
+				// Use broadcast streaming if StreamManager available, otherwise legacy
+				if streamManager != nil {
+					return handleStreamingWithBroadcast(c, resp, log, model, upstreamLatency, trackingService, messageService, streamManager, cfg)
+				} else {
+					return handleStreamingLegacy(resp, log, model, upstreamLatency, c, trackingService, messageService)
+				}
 			} else {
 				return handleNonStreamingResponse(resp, log, model, upstreamLatency, c, trackingService, messageService)
 			}
@@ -200,6 +282,45 @@ func ProxyHandler(logger *logger.Logger, trackingService *request_tracking.Servi
 		proxy.Director = func(r *http.Request) {
 			orig(r)
 			r.Host = target.Host
+
+			// Inject tool definitions and capture request body
+			if r.Body != nil && toolRegistry != nil {
+				bodyBytes, err := io.ReadAll(r.Body)
+				if err == nil {
+					// Parse request body
+					var reqBody map[string]interface{}
+					if err := json.Unmarshal(bodyBytes, &reqBody); err == nil {
+						// Inject tool definitions if not already present
+						if _, hasTools := reqBody["tools"]; !hasTools {
+							toolDefs := toolRegistry.GetDefinitions()
+							if len(toolDefs) > 0 {
+								reqBody["tools"] = toolDefs
+								log.Debug("injected tool definitions",
+									slog.Int("tool_count", len(toolDefs)))
+							}
+						}
+
+						// Re-serialize with tools
+						modifiedBody, err := json.Marshal(reqBody)
+						if err == nil {
+							bodyBytes = modifiedBody
+						}
+					}
+
+					// Store original body in context for tool execution continuation
+					if streamManager != nil {
+						c.Set("originalRequestBody", bodyBytes)
+					}
+
+					// Restore body for upstream request
+					r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+					r.ContentLength = int64(len(bodyBytes))
+				}
+			}
+
+			// Store provider config for tool continuation requests
+			c.Set("upstreamURL", baseURL)
+			c.Set("upstreamAPIKey", apiKey)
 
 			// Set Authorization header with Bearer token for AI services
 			r.Header.Set("Authorization", "Bearer "+apiKey)
@@ -261,7 +382,6 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 		scanner := bufio.NewScanner(reader)
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 64KB initial, 1MB max.
 		var tokenUsage *Usage
-		var firstChunk string
 		var fullContent strings.Builder // Accumulate full response content
 
 		ctx := c.Request.Context()
@@ -281,10 +401,6 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 				return
 			}
 
-			if firstChunk == "" && log.Enabled(ctx, slog.LevelDebug) && strings.HasPrefix(line, "data: ") && !strings.Contains(line, "[DONE]") {
-				firstChunk = line
-			}
-
 			// Extract and accumulate content for message storage
 			if content := extractContentFromSSELine(line); content != "" {
 				fullContent.WriteString(content)
@@ -301,7 +417,7 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 			log.Error("scanner error while processing SSE stream", slog.String("error", err.Error()))
 		}
 
-		logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, []byte(firstChunk), c.Request.Context())
+		logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, nil, c.Request.Context())
 
 		logRequestToDatabase(c, trackingService, model, tokenUsage)
 
@@ -368,23 +484,31 @@ func logProxyResponse(log *logger.Logger, resp *http.Response, isStreaming bool,
 		)
 	}
 
-	// Add response body to debug logs.
-	if log.Enabled(ctx, slog.LevelDebug) && len(responseBody) > 0 {
-		responseLogArgs = append(responseLogArgs, slog.String("response_body", logRequestBody(responseBody, 500)))
-	}
+	// NOTE: Response body logging removed for security/privacy reasons
+	// AI responses contain sensitive user data (PII, PHI, financial data, etc.)
+	// Only metadata (status, size, duration, model) is logged for debugging
 
 	log.Info("proxy response received", responseLogArgs...)
 }
 
 // logRequestToDatabase logs a request to the database with token usage data.
 func logRequestToDatabase(c *gin.Context, trackingService *request_tracking.Service, model string, tokenUsage *Usage) {
+	logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, "")
+}
+
+func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_tracking.Service, model string, tokenUsage *Usage, providerName string) {
 	userID, exists := auth.GetUserID(c)
 	if !exists {
 		return
 	}
 
-	baseURL := c.GetHeader("X-BASE-URL")
-	provider := request_tracking.GetProviderFromBaseURL(baseURL)
+	var provider string
+	if providerName != "" {
+		provider = providerName
+	} else {
+		baseURL := c.GetHeader("X-BASE-URL")
+		provider = request_tracking.GetProviderFromBaseURL(baseURL)
+	}
 	endpoint := c.Request.URL.Path
 
 	info := request_tracking.RequestInfo{

@@ -45,6 +45,8 @@ Thumbs.db
 # Binary output
 oauth-proxy
 oauth-proxy.exe
+server
+server.exe
 
 # Log files
 *.log

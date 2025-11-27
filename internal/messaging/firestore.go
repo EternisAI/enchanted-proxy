@@ -87,9 +87,10 @@ func (f *FirestoreClient) SaveMessage(ctx context.Context, userID string, msg *C
 		return status.Error(codes.InvalidArgument, "userID, chatID, and messageID must be non-empty")
 	}
 	// NOTE: EncryptedContent can be either base64 encrypted data OR plaintext (when publicEncryptionKey = "none")
-	// This validation only checks non-empty - encryption verification happens at service layer
-	if len(msg.EncryptedContent) == 0 {
-		return status.Error(codes.InvalidArgument, "encrypted content must be non-empty")
+	// OR empty for placeholder messages (generationState = "thinking")
+	// Validation: content can be empty ONLY if this is a "thinking" placeholder message
+	if len(msg.EncryptedContent) == 0 && msg.GenerationState != "thinking" {
+		return status.Error(codes.InvalidArgument, "encrypted content must be non-empty (except for thinking placeholders)")
 	}
 
 	// Update parent chat document with lastMessageAt timestamp (if it exists)
@@ -176,6 +177,60 @@ func (f *FirestoreClient) GetMessage(ctx context.Context, userID, chatID, messag
 	return &msg, nil
 }
 
+// UpdateMessage updates specific fields of an existing message in Firestore.
+// This is used to update generation state without overwriting the entire message.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - userID: User ID who owns the message
+//   - chatID: Chat ID
+//   - messageID: Message ID
+//   - updates: Map of field paths to new values (e.g., {"generationState": "completed"})
+//
+// Returns:
+//   - error: If update failed
+//
+// Path: /users/{userId}/chats/{chatId}/messages/{messageId}
+func (f *FirestoreClient) UpdateMessage(ctx context.Context, userID, chatID, messageID string, updates map[string]interface{}) error {
+	if f == nil || f.client == nil {
+		return status.Error(codes.Internal, "firestore client is nil")
+	}
+	if userID == "" || chatID == "" || messageID == "" {
+		return status.Error(codes.InvalidArgument, "userID, chatID, and messageID must be non-empty")
+	}
+	if len(updates) == 0 {
+		return status.Error(codes.InvalidArgument, "updates must be non-empty")
+	}
+
+	// Path: /users/{userId}/chats/{chatId}/messages/{messageId}
+	docRef := f.client.
+		Collection("users").
+		Doc(userID).
+		Collection("chats").
+		Doc(chatID).
+		Collection("messages").
+		Doc(messageID)
+
+	// Convert map to firestore.Update slice
+	firestoreUpdates := make([]firestore.Update, 0, len(updates))
+	for path, value := range updates {
+		firestoreUpdates = append(firestoreUpdates, firestore.Update{
+			Path:  path,
+			Value: value,
+		})
+	}
+
+	_, err := docRef.Update(ctx, firestoreUpdates)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return status.Errorf(codes.NotFound, "message not found: user=%s chat=%s id=%s", userID, chatID, messageID)
+		}
+		return status.Errorf(codes.Internal, "failed to update message user=%s chat=%s id=%s: %v", userID, chatID, messageID, err)
+	}
+
+	return nil
+}
+
 // SaveChatTitle saves/updates chat title (plaintext or encrypted)
 // Path: /users/{userId}/chats/{chatId}
 // IMPORTANT: This only UPDATES existing chat documents, does not create new ones
@@ -243,4 +298,142 @@ func (f *FirestoreClient) SaveChatTitle(ctx context.Context, userID, chatID stri
 	}
 
 	return nil
+}
+
+// VerifyChatOwnership checks if a user owns a specific chat
+// Returns nil if user owns the chat, error otherwise
+func (f *FirestoreClient) VerifyChatOwnership(ctx context.Context, userID, chatID string) error {
+	if f == nil || f.client == nil {
+		return status.Error(codes.Internal, "firestore client is nil")
+	}
+	if userID == "" || chatID == "" {
+		return status.Error(codes.InvalidArgument, "userID and chatID must be non-empty")
+	}
+
+	// Path: /users/{userId}/chats/{chatId}
+	docRef := f.client.
+		Collection("users").
+		Doc(userID).
+		Collection("chats").
+		Doc(chatID)
+
+	// Check if chat document exists
+	_, err := docRef.Get(ctx)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return status.Errorf(codes.PermissionDenied, "chat not found or access denied")
+		}
+		return status.Errorf(codes.Internal, "failed to verify chat ownership: %v", err)
+	}
+
+	return nil
+}
+
+// SaveResponseID stores the latest OpenAI Responses API response_id for a chat.
+// This is used for continuing conversations with GPT-5 Pro and other stateful models.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - userID: User ID who owns the chat
+//   - chatID: Chat ID
+//   - responseID: The response_id from OpenAI (e.g., "resp_abc123")
+//
+// Path: /users/{userId}/chats/{chatId}
+// Field: lastResponseId (string)
+//
+// Returns:
+//   - error: If save failed
+//
+// Note: This updates an existing chat document. If the chat doesn't exist,
+// the update will fail gracefully (returns FailedPrecondition error).
+func (f *FirestoreClient) SaveResponseID(ctx context.Context, userID, chatID, responseID string) error {
+	if f == nil || f.client == nil {
+		return status.Error(codes.Internal, "firestore client is nil")
+	}
+	if userID == "" || chatID == "" || responseID == "" {
+		return status.Error(codes.InvalidArgument, "userID, chatID, and responseID must be non-empty")
+	}
+
+	// Validate response_id format (OpenAI Responses API uses "resp_" prefix)
+	if len(responseID) < 5 || responseID[:5] != "resp_" {
+		return status.Errorf(codes.InvalidArgument, "invalid responseID format: %s (expected resp_* prefix)", responseID)
+	}
+
+	docRef := f.client.
+		Collection("users").
+		Doc(userID).
+		Collection("chats").
+		Doc(chatID)
+
+	// Update chat document with latest response_id
+	// Use Update() not Set() to avoid creating the chat document
+	_, err := docRef.Update(ctx, []firestore.Update{
+		{Path: "lastResponseId", Value: responseID},
+		{Path: "updatedAt", Value: time.Now()},
+	})
+
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			// Chat document doesn't exist - this is expected if client hasn't created it yet
+			return status.Errorf(codes.FailedPrecondition, "chat document not found - cannot save response_id user=%s chat=%s", userID, chatID)
+		}
+		return status.Errorf(codes.Internal, "failed to save response_id user=%s chat=%s: %v", userID, chatID, err)
+	}
+
+	return nil
+}
+
+// GetResponseID retrieves the latest OpenAI Responses API response_id for a chat.
+// This is used for continuing conversations with GPT-5 Pro and other stateful models.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - userID: User ID who owns the chat
+//   - chatID: Chat ID
+//
+// Returns:
+//   - string: The response_id (e.g., "resp_abc123"), or empty string if not found
+//   - error: If retrieval failed (network error, permission denied, etc.)
+//
+// Note: Returns empty string (not error) if chat exists but has no lastResponseId field.
+// This is normal for chats that haven't used Responses API yet.
+func (f *FirestoreClient) GetResponseID(ctx context.Context, userID, chatID string) (string, error) {
+	if f == nil || f.client == nil {
+		return "", status.Error(codes.Internal, "firestore client is nil")
+	}
+	if userID == "" || chatID == "" {
+		return "", status.Error(codes.InvalidArgument, "userID and chatID must be non-empty")
+	}
+
+	docRef := f.client.
+		Collection("users").
+		Doc(userID).
+		Collection("chats").
+		Doc(chatID)
+
+	doc, err := docRef.Get(ctx)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			// Chat doesn't exist - return empty string (not error)
+			// This is normal for new chats
+			return "", nil
+		}
+		return "", status.Errorf(codes.Internal, "failed to get chat document user=%s chat=%s: %v", userID, chatID, err)
+	}
+
+	// Try to extract lastResponseId field
+	responseID, err := doc.DataAt("lastResponseId")
+	if err != nil {
+		// Field doesn't exist - return empty string (not error)
+		// This is normal for chats that haven't used Responses API yet
+		return "", nil
+	}
+
+	// Convert to string
+	responseIDStr, ok := responseID.(string)
+	if !ok {
+		return "", status.Errorf(codes.Internal, "lastResponseId field is not a string for user=%s chat=%s", userID, chatID)
+	}
+
+	return responseIDStr, nil
 }

@@ -8,6 +8,17 @@ This architecture, built on AWS Nitro Enclaves, is designed to give users confid
 
 You can read instructions on verifying the security guarantees provided by the live AWS Nitro Enclave deployments of this project in the [following document](docs/attestation.md).
 
+## Features
+
+- **Multi-Provider Support**: OpenAI (Chat Completions and Responses API), Anthropic, OpenRouter, Near AI, Tinfoil, and more
+- **GPT-5 Pro Support**: Full support for OpenAI's Responses API with stateful conversations
+- **Streaming Broadcast**: Multi-client support with efficient stream sharing
+- **Rate Limiting**: Freemium/Pro tier quotas with usage tracking
+- **Message Encryption**: Optional end-to-end encryption via key exchange
+- **Deep Research**: WebSocket-based advanced research with session persistence
+- **Cross-Device Continuity**: Conversation state maintained across devices
+- **Automatic Model Routing**: Smart routing based on model ID
+
 ## License
 
 BSD
