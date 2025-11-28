@@ -56,17 +56,37 @@ func handleStreamingWithBroadcast(
 	chatID := c.GetHeader("X-Chat-ID")
 	messageID := c.GetHeader("X-Message-ID")
 
-	// If either is missing, generate fallback values
+	// If headers are missing, try to get from request body (stored in context by ProxyHandler)
+	if chatID == "" {
+		if bodyID, exists := c.Get("bodyChatId"); exists {
+			if idStr, ok := bodyID.(string); ok && idStr != "" {
+				chatID = idStr
+				log.Info("using chatId from request body (header missing)")
+			}
+		}
+	}
+	if messageID == "" {
+		if bodyID, exists := c.Get("bodyMessageId"); exists {
+			if idStr, ok := bodyID.(string); ok && idStr != "" {
+				messageID = idStr
+				log.Info("using messageId from request body (header missing)")
+			}
+		}
+	}
+
+	// If still missing after checking body, generate fallback values
 	if chatID == "" {
 		chatID = uuid.New().String()
-		log.Debug("generated fallback chat ID", slog.String("chat_id", chatID))
+		log.Warn("X-Chat-ID header and body field missing, generated fallback",
+			slog.String("generated_chat_id", chatID))
 	}
 	if messageID == "" {
 		messageID = uuid.New().String()
-		log.Debug("generated fallback message ID", slog.String("message_id", messageID))
+		log.Warn("X-Message-ID header and body field missing, generated fallback",
+			slog.String("generated_message_id", messageID))
 	}
 
-	log.Info("handling streaming response with broadcast",
+	log.Info("Chat Completions request headers",
 		slog.String("chat_id", chatID),
 		slog.String("message_id", messageID),
 		slog.String("model", model))

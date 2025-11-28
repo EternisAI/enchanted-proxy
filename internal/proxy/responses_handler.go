@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -83,13 +84,40 @@ func handleResponsesAPI(
 	chatID := c.GetHeader("X-Chat-ID")
 	messageID := c.GetHeader("X-Message-ID")
 
-	// If either is missing, generate fallback values
+	// If headers are missing, try to extract from request body as fallback
+	if chatID == "" || messageID == "" {
+		var reqBody map[string]interface{}
+		if err := json.Unmarshal(requestBody, &reqBody); err == nil {
+			if chatID == "" {
+				if bodyID, ok := reqBody["chatId"].(string); ok && bodyID != "" {
+					chatID = bodyID
+					log.Info("using chatId from request body (header missing)")
+				}
+			}
+			if messageID == "" {
+				if bodyID, ok := reqBody["messageId"].(string); ok && bodyID != "" {
+					messageID = bodyID
+					log.Info("using messageId from request body (header missing)")
+				}
+			}
+		}
+	}
+
+	// If still missing after checking body, generate fallback values
 	if chatID == "" {
 		chatID = uuid.New().String()
+		log.Warn("X-Chat-ID header and body field missing, generated fallback",
+			slog.String("generated_chat_id", chatID))
 	}
 	if messageID == "" {
 		messageID = uuid.New().String()
+		log.Warn("X-Message-ID header and body field missing, generated fallback",
+			slog.String("generated_message_id", messageID))
 	}
+
+	log.Info("GPT-5 Pro request headers",
+		slog.String("chat_id", chatID),
+		slog.String("message_id", messageID))
 
 	// Get user ID for response_id retrieval
 	userID, exists := auth.GetUserID(c)
@@ -140,8 +168,7 @@ func handleResponsesAPI(
 		}
 	}
 
-	// Step 2.5: For GPT-5 Pro, save placeholder message immediately (BEFORE making request)
-	// This allows clients to detect in-progress generation when reconnecting
+	// Save placeholder message immediately (before making request)
 	if messageService != nil {
 		// Extract encryption setting
 		var encryptionEnabled *bool
@@ -167,8 +194,7 @@ func handleResponsesAPI(
 		return fmt.Errorf("failed to transform request: %w", err)
 	}
 
-	// Step 4: Make HTTP request to OpenAI /responses endpoint
-	// Use background context to ensure upstream request completes even if client disconnects
+	// Make HTTP request to OpenAI /responses endpoint
 	targetURL := provider.BaseURL + "/responses"
 	req, err := http.NewRequestWithContext(context.Background(), "POST", targetURL, bytes.NewReader(transformedBody))
 	if err != nil {
@@ -268,12 +294,10 @@ func handleResponsesAPI(
 	// Record subscription metric
 	streamManager.RecordSubscription()
 
-	// Step 6: Stream to client and extract response_id
-	// This is done in a modified streamToClient that extracts response_id
+	// Stream to client and extract response_id
 	streamToClientWithResponseID(c, subscriber, session, log, adapter)
 
-	// Log request to database (token usage)
-	// TODO: Extract token usage from Responses API response
+	// Log request to database
 	logRequestToDatabaseWithProvider(c, trackingService, model, nil, provider.Name)
 
 	return nil

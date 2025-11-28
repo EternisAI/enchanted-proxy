@@ -93,6 +93,18 @@ func ProxyHandler(
 			c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
 
 			model = extractModelFromRequestBody(c.Request.URL.Path, requestBody)
+
+			// Extract chatId and messageId from request body for session tracking
+			// Store in context so handlers can access them as fallback if headers are missing
+			var reqBody map[string]interface{}
+			if err := json.Unmarshal(requestBody, &reqBody); err == nil {
+				if chatID, ok := reqBody["chatId"].(string); ok && chatID != "" {
+					c.Set("bodyChatId", chatID)
+				}
+				if messageID, ok := reqBody["messageId"].(string); ok && messageID != "" {
+					c.Set("bodyMessageId", messageID)
+				}
+			}
 		}
 
 		// Get client platform for routing
@@ -108,7 +120,7 @@ func ProxyHandler(
 
 		legacyBaseURL := c.GetHeader("X-BASE-URL")
 		if legacyBaseURL != "" {
-			// BACKWARD COMPATIBILITY: Use X-BASE-URL if provided
+			// Backward compatibility: Use X-BASE-URL if provided
 			baseURL = legacyBaseURL
 			apiKey = GetAPIKey(baseURL, platform, cfg)
 			if apiKey == "" {
@@ -117,7 +129,6 @@ func ProxyHandler(
 				return
 			}
 			log.Debug("using legacy X-BASE-URL routing", slog.String("base_url", baseURL))
-			// Legacy mode: assume Chat Completions API
 			provider = &routing.ProviderConfig{
 				BaseURL: baseURL,
 				APIKey:  apiKey,
@@ -125,7 +136,7 @@ func ProxyHandler(
 				APIType: routing.APITypeChatCompletions,
 			}
 		} else if model != "" && modelRouter != nil {
-			// NEW: Auto-route based on model ID
+			// Auto-route based on model ID
 			providerCfg, err := modelRouter.RouteModel(model, platform)
 			if err != nil {
 				log.Error("failed to route model",

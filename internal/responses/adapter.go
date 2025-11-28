@@ -61,8 +61,7 @@ func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string
 		return nil, fmt.Errorf("failed to parse request body: %w", err)
 	}
 
-	// Add store: true to enable stateful conversation
-	// This tells OpenAI to maintain conversation state server-side
+	// Enable stateful conversation
 	req["store"] = true
 
 	// Add previous_response_id if continuing conversation

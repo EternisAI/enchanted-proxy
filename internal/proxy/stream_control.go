@@ -78,17 +78,24 @@ func StopStreamHandler(
 			}
 		}
 
+		sessionKey := fmt.Sprintf("%s:%s", chatID, messageID)
 		log.Info("stop request received",
 			slog.String("chat_id", chatID),
 			slog.String("message_id", messageID),
+			slog.String("session_key", sessionKey),
 			slog.String("user_id", userID))
 
 		// Get existing session
 		session := streamManager.GetSession(chatID, messageID)
 		if session == nil {
+			// Get metrics to see what sessions exist
+			metrics := streamManager.GetMetrics()
 			log.Error("stream not found",
 				slog.String("chat_id", chatID),
-				slog.String("message_id", messageID))
+				slog.String("message_id", messageID),
+				slog.String("session_key", sessionKey),
+				slog.Int("active_streams", metrics.ActiveStreams),
+				slog.Int("completed_streams", metrics.CompletedStreams))
 			c.JSON(http.StatusNotFound, gin.H{
 				"error":      "Stream not found",
 				"message_id": messageID,
