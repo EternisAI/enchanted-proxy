@@ -259,6 +259,36 @@ func ProxyHandler(
 
 		log.Info("proxy request started", logArgs...)
 
+		// Create pending session BEFORE making upstream request (for early stop support)
+		if streamManager != nil {
+			chatID := c.GetHeader("X-Chat-ID")
+			messageID := c.GetHeader("X-Message-ID")
+
+			// Fall back to body IDs if headers missing
+			if chatID == "" {
+				if bodyID, exists := c.Get("bodyChatId"); exists {
+					if idStr, ok := bodyID.(string); ok {
+						chatID = idStr
+					}
+				}
+			}
+			if messageID == "" {
+				if bodyID, exists := c.Get("bodyMessageId"); exists {
+					if idStr, ok := bodyID.(string); ok {
+						messageID = idStr
+					}
+				}
+			}
+
+			// Create pending session if we have valid IDs
+			if chatID != "" && messageID != "" {
+				streamManager.CreatePendingSession(chatID, messageID)
+				log.Debug("created pending session before upstream request",
+					slog.String("chat_id", chatID),
+					slog.String("message_id", messageID))
+			}
+		}
+
 		// Create reverse proxy for this specific target
 		proxy := createReverseProxyWithPooling(target)
 

@@ -159,6 +159,38 @@ func (s *StreamSession) Start() {
 	go s.readUpstream()
 }
 
+// SetUpstreamBodyAndStart attaches an upstream response body to a pending session and starts reading.
+// This allows creating a session before making the HTTP request (for early stop support),
+// then attaching the response body once it arrives.
+//
+// Parameters:
+//   - upstreamBody: The response body stream from the AI provider
+//
+// This method is thread-safe and can only be called once per session.
+func (s *StreamSession) SetUpstreamBodyAndStart(upstreamBody io.ReadCloser) {
+	s.completedMu.Lock()
+	defer s.completedMu.Unlock()
+
+	// Check if upstream body already set (prevent double-start)
+	if s.upstreamBody != nil {
+		s.logger.Warn("upstream body already set, ignoring",
+			slog.String("chat_id", s.chatID),
+			slog.String("message_id", s.messageID))
+		if upstreamBody != nil {
+			upstreamBody.Close()
+		}
+		return
+	}
+
+	s.upstreamBody = upstreamBody
+	s.logger.Debug("upstream body attached to pending session",
+		slog.String("chat_id", s.chatID),
+		slog.String("message_id", s.messageID))
+
+	// Start reading
+	go s.readUpstream()
+}
+
 // SetToolExecutor sets the tool executor for this session.
 // Must be called before Start() if tool execution is desired.
 func (s *StreamSession) SetToolExecutor(executor *ToolExecutor) {
@@ -892,6 +924,14 @@ func (s *StreamSession) IsCompleted() bool {
 	s.completedMu.RLock()
 	defer s.completedMu.RUnlock()
 	return s.completed
+}
+
+// IsStarted returns true if the session has started reading from upstream.
+// Returns false for pending sessions that haven't had their upstream body attached yet.
+func (s *StreamSession) IsStarted() bool {
+	s.completedMu.RLock()
+	defer s.completedMu.RUnlock()
+	return s.upstreamBody != nil
 }
 
 // WaitForCompletion blocks until the session completes.

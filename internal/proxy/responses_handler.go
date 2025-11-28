@@ -184,7 +184,11 @@ func handleResponsesAPI(
 		cancel()
 	}
 
-	// Step 3: Transform request for Responses API
+	// Step 3: Create pending session BEFORE making upstream request
+	// This ensures the session exists if user clicks stop during initial connection
+	session, _ := streamManager.CreatePendingSession(chatID, messageID)
+
+	// Step 4: Transform request for Responses API
 	adapter := responses.NewAdapter()
 	transformedBody, err := adapter.TransformRequest(requestBody, previousResponseID)
 	if err != nil {
@@ -194,7 +198,7 @@ func handleResponsesAPI(
 		return fmt.Errorf("failed to transform request: %w", err)
 	}
 
-	// Make HTTP request to OpenAI /responses endpoint
+	// Step 5: Make HTTP request to OpenAI /responses endpoint
 	targetURL := provider.BaseURL + "/responses"
 	req, err := http.NewRequestWithContext(context.Background(), "POST", targetURL, bytes.NewReader(transformedBody))
 	if err != nil {
@@ -234,13 +238,13 @@ func handleResponsesAPI(
 		return fmt.Errorf("Responses API error: %d", resp.StatusCode)
 	}
 
-	// Step 5: Use StreamManager for multi-client broadcast
-	// Get or create stream session
-	session, isNew := streamManager.GetOrCreateSession(chatID, messageID, resp.Body)
+	// Step 6: Attach upstream response body to pending session and start reading
+	// Session was already created in step 3 (before HTTP request)
+	session.SetUpstreamBodyAndStart(resp.Body)
 
-	// Step 5.5: Register completion handler (BEFORE subscribing)
+	// Step 7: Register completion handler (BEFORE subscribing)
 	// This ensures message gets saved even if client disconnects early
-	if isNew && messageService != nil {
+	if messageService != nil {
 		// Extract encryption setting
 		var encryptionEnabled *bool
 		if val, exists := c.Get("encryptionEnabled"); exists {
@@ -282,7 +286,7 @@ func handleResponsesAPI(
 	// Subscribe to the session
 	subscriberID := uuid.New().String()
 	subscriber, err := session.Subscribe(c.Request.Context(), subscriberID, streaming.SubscriberOptions{
-		ReplayFromStart: !isNew, // Replay from start if joining existing stream
+		ReplayFromStart: false, // First subscriber, no replay needed
 		BufferSize:      100,
 	})
 	if err != nil {

@@ -170,6 +170,65 @@ func (sm *StreamManager) GetOrCreateSession(chatID, messageID string, upstreamBo
 	return session, true
 }
 
+// CreatePendingSession creates a new session without an upstream body (for early stop support).
+// The upstream body must be attached later using session.SetUpstreamBodyAndStart().
+//
+// This allows creating a session BEFORE making the HTTP request to the AI provider,
+// ensuring the session exists if the user clicks "stop" during the initial connection phase.
+//
+// Parameters:
+//   - chatID: Chat session identifier
+//   - messageID: AI response message identifier
+//
+// Returns:
+//   - *StreamSession: The pending session (upstream reading NOT started yet)
+//   - bool: true if session was newly created, false if it already existed
+func (sm *StreamManager) CreatePendingSession(chatID, messageID string) (*StreamSession, bool) {
+	sessionKey := sm.makeSessionKey(chatID, messageID)
+
+	// Check if session already exists
+	sm.mu.RLock()
+	if session, exists := sm.sessions[sessionKey]; exists {
+		sm.mu.RUnlock()
+		sm.logger.Debug("reusing existing stream session (pending creation)",
+			slog.String("session_key", sessionKey))
+		return session, false
+	}
+	sm.mu.RUnlock()
+
+	// Create new pending session (write lock with double-check)
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// Double-check
+	if session, exists := sm.sessions[sessionKey]; exists {
+		sm.logger.Debug("session created by another goroutine (pending)",
+			slog.String("session_key", sessionKey))
+		return session, false
+	}
+
+	// Create session with nil upstream body (will be set later)
+	session := NewStreamSession(chatID, messageID, nil, sm.logger)
+	sm.sessions[sessionKey] = session
+
+	// Set tool executor if available
+	if sm.toolExecutor != nil {
+		session.SetToolExecutor(sm.toolExecutor)
+	}
+
+	// Update metrics
+	sm.metricsLock.Lock()
+	sm.totalSessionsCreated++
+	sm.metricsLock.Unlock()
+
+	sm.logger.Info("created pending stream session (upstream not yet attached)",
+		slog.String("session_key", sessionKey),
+		slog.String("chat_id", chatID),
+		slog.String("message_id", messageID))
+
+	return session, true
+}
+
 // GetSession retrieves an existing session by chatID and messageID.
 //
 // Parameters:

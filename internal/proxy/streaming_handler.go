@@ -91,12 +91,37 @@ func handleStreamingWithBroadcast(
 		slog.String("message_id", messageID),
 		slog.String("model", model))
 
-	// Get or create stream session
-	// If session exists, we'll join it (multi-client broadcast)
-	// If session doesn't exist, we'll create it and start upstream read
-	session, isNew := streamManager.GetOrCreateSession(chatID, messageID, resp.Body)
+	// Check if pending session exists (created before HTTP request)
+	session := streamManager.GetSession(chatID, messageID)
+	var isNew bool
 
-	// Set original request body and provider config on new sessions for tool execution
+	if session != nil {
+		// Check if this is a pending session (no upstream body yet) or an existing active stream
+		if session.IsStarted() {
+			// Already streaming - this is a late joiner
+			log.Info("joining existing active stream session",
+				slog.String("chat_id", chatID),
+				slog.String("message_id", messageID),
+				slog.Int("existing_subscribers", session.GetSubscriberCount()))
+			isNew = false
+		} else {
+			// Pending session - attach upstream body and start reading
+			log.Debug("attaching upstream body to pending session",
+				slog.String("chat_id", chatID),
+				slog.String("message_id", messageID))
+			session.SetUpstreamBodyAndStart(resp.Body)
+			isNew = true // First time starting this session
+		}
+	} else {
+		// No session at all - create new one (shouldn't happen often with pending session creation)
+		log.Debug("creating new session with upstream body (no pending session found)",
+			slog.String("chat_id", chatID),
+			slog.String("message_id", messageID))
+		session, isNew = streamManager.GetOrCreateSession(chatID, messageID, resp.Body)
+	}
+
+	// Set original request body and provider config (needed for tool execution and continuation)
+	// Do this for all new sessions (whether created now or earlier as pending)
 	if isNew {
 		if requestBody, exists := c.Get("originalRequestBody"); exists {
 			if bodyBytes, ok := requestBody.([]byte); ok {
@@ -137,13 +162,6 @@ func handleStreamingWithBroadcast(
 				cancel()
 			}
 		}
-	}
-
-	if !isNew {
-		log.Info("joining existing stream session",
-			slog.String("chat_id", chatID),
-			slog.String("message_id", messageID),
-			slog.Int("existing_subscribers", session.GetSubscriberCount()))
 	}
 
 	// Subscribe to the session
