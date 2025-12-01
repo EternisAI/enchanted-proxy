@@ -45,7 +45,12 @@ func NewOpenAIClient(apiKey, baseURL string, logger *logger.Logger) *OpenAIClien
 // Example response from OpenAI:
 //   {"id": "resp_abc123", "status": "in_progress", "created_at": 1234567890}
 func (c *OpenAIClient) GetResponseStatus(ctx context.Context, responseID string) (*ResponseStatus, error) {
-	url := fmt.Sprintf("%s/v1/responses/%s", c.baseURL, responseID)
+	// Note: baseURL already includes /v1, so we just append /responses/{id}
+	url := fmt.Sprintf("%s/responses/%s", c.baseURL, responseID)
+
+	c.logger.Debug("polling OpenAI response status",
+		slog.String("response_id", responseID),
+		slog.String("url", url))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -93,7 +98,8 @@ func (c *OpenAIClient) GetResponseStatus(ctx context.Context, responseID string)
 //   - *ResponseContent: The full response content with choices
 //   - error: If fetching failed
 func (c *OpenAIClient) GetResponseContent(ctx context.Context, responseID string) (*ResponseContent, error) {
-	url := fmt.Sprintf("%s/v1/responses/%s", c.baseURL, responseID)
+	// Note: baseURL already includes /v1, so we just append /responses/{id}
+	url := fmt.Sprintf("%s/responses/%s", c.baseURL, responseID)
 
 	c.logger.Info("fetching completed response from OpenAI API",
 		slog.String("response_id", responseID),
