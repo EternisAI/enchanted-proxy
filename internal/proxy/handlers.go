@@ -130,7 +130,9 @@ func ProxyHandler(
 				c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized base URL"})
 				return
 			}
-			log.Debug("using legacy X-BASE-URL routing", slog.String("base_url", baseURL))
+			log.Info("using legacy X-BASE-URL routing (Chat Completions / streaming)",
+				slog.String("base_url", baseURL),
+				slog.String("model", model))
 			provider = &routing.ProviderConfig{
 				BaseURL: baseURL,
 				APIKey:  apiKey,

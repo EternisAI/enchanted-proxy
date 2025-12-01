@@ -193,8 +193,35 @@ func handleResponsesAPI(
 		return fmt.Errorf("failed to transform request: %w", err)
 	}
 
+	// Log the transformed request body (for debugging)
+	var requestDebug map[string]interface{}
+	if err := json.Unmarshal(transformedBody, &requestDebug); err == nil {
+		log.Info("transformed request for OpenAI",
+			slog.String("model", model),
+			slog.Bool("background", requestDebug["background"] == true),
+			slog.Bool("store", requestDebug["store"] == true),
+			slog.String("previous_response_id", fmt.Sprintf("%v", requestDebug["previous_response_id"])),
+			slog.String("reasoning_effort", func() string {
+				if r, ok := requestDebug["reasoning"].(map[string]interface{}); ok {
+					return fmt.Sprintf("%v", r["effort"])
+				}
+				return "none"
+			}()))
+	}
+
 	// Step 4: Make HTTP request to OpenAI /responses endpoint with background=true
-	targetURL := provider.BaseURL + "/v1/responses"
+	// Note: provider.BaseURL already includes "/v1", so we just append "/responses"
+	targetURL := provider.BaseURL + "/responses"
+
+	log.Info("submitting request to OpenAI Responses API",
+		slog.String("url", targetURL),
+		slog.String("provider_base_url", provider.BaseURL),
+		slog.String("provider_name", provider.Name),
+		slog.String("api_type", string(provider.APIType)),
+		slog.String("model", model),
+		slog.Int("body_size", len(transformedBody)),
+		slog.Int("api_key_length", len(provider.APIKey)))
+
 	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(transformedBody))
 	if err != nil {
 		log.Error("failed to create request",
@@ -226,7 +253,35 @@ func handleResponsesAPI(
 	// Check for errors
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
-		log.Error("Responses API returned error", slog.Int("status_code", resp.StatusCode))
+
+		// Try to parse error as JSON for better logging
+		var errorResponse map[string]interface{}
+		errorMessage := string(body)
+		if json.Unmarshal(body, &errorResponse) == nil {
+			if errObj, ok := errorResponse["error"].(map[string]interface{}); ok {
+				log.Error("OpenAI Responses API error",
+					slog.Int("status_code", resp.StatusCode),
+					slog.String("url", targetURL),
+					slog.String("model", model),
+					slog.String("error_type", fmt.Sprintf("%v", errObj["type"])),
+					slog.String("error_message", fmt.Sprintf("%v", errObj["message"])),
+					slog.String("error_code", fmt.Sprintf("%v", errObj["code"])),
+					slog.String("full_response", string(body)))
+			} else {
+				log.Error("OpenAI Responses API error (non-standard format)",
+					slog.Int("status_code", resp.StatusCode),
+					slog.String("url", targetURL),
+					slog.String("model", model),
+					slog.String("response_body", string(body)))
+			}
+		} else {
+			log.Error("OpenAI Responses API error (non-JSON response)",
+				slog.Int("status_code", resp.StatusCode),
+				slog.String("url", targetURL),
+				slog.String("model", model),
+				slog.String("response_body", errorMessage))
+		}
+
 		c.Data(resp.StatusCode, "application/json", body)
 		return fmt.Errorf("Responses API error: %d", resp.StatusCode)
 	}
