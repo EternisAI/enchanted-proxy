@@ -39,11 +39,12 @@ func NewAdapter() *Adapter {
 //   - error: If transformation failed
 //
 // Transformations applied:
-//  1. Add "store": true to enable server-side state persistence
-//  2. Add "background": true to enable polling mode (avoids timeout issues)
-//  3. Add "previous_response_id" if continuing conversation
-//  4. Set "reasoning.effort" to "high" (default for GPT-5 Pro)
-//  5. Keep all other parameters (model, messages, temperature, etc.)
+//  1. Rename "messages" to "input" (Responses API requirement)
+//  2. Add "store": true to enable server-side state persistence
+//  3. Add "background": true to enable polling mode (avoids timeout issues)
+//  4. Add "previous_response_id" if continuing conversation
+//  5. Set "reasoning.effort" to "high" (default for GPT-5 Pro)
+//  6. Keep all other parameters (model, temperature, etc.)
 //
 // Example:
 //
@@ -51,11 +52,11 @@ func NewAdapter() *Adapter {
 //	  {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Hello"}]}
 //
 //	Output (Responses API, first message):
-//	  {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Hello"}],
+//	  {"model": "gpt-5-pro", "input": [{"role": "user", "content": "Hello"}],
 //	   "store": true, "background": true, "reasoning": {"effort": "high"}}
 //
 //	Output (Responses API, continuation):
-//	  {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Tell me more"}],
+//	  {"model": "gpt-5-pro", "input": [{"role": "user", "content": "Tell me more"}],
 //	   "store": true, "background": true, "previous_response_id": "resp_abc123",
 //	   "reasoning": {"effort": "high"}}
 func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string) ([]byte, error) {
@@ -63,6 +64,13 @@ func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string
 	var req map[string]interface{}
 	if err := json.Unmarshal(requestBody, &req); err != nil {
 		return nil, fmt.Errorf("failed to parse request body: %w", err)
+	}
+
+	// Responses API uses "input" instead of "messages"
+	// Move messages array to input
+	if messages, exists := req["messages"]; exists {
+		req["input"] = messages
+		delete(req, "messages")
 	}
 
 	// Enable stateful conversation
