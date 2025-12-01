@@ -40,11 +40,12 @@ func NewAdapter() *Adapter {
 //
 // Transformations applied:
 //  1. Rename "messages" to "input" (Responses API requirement)
-//  2. Add "store": true to enable server-side state persistence
-//  3. Add "background": true to enable polling mode (avoids timeout issues)
-//  4. Add "previous_response_id" if continuing conversation
-//  5. Set "reasoning.effort" to "high" (default for GPT-5 Pro)
-//  6. Keep all other parameters (model, temperature, etc.)
+//  2. Transform "reasoning_effort" to "reasoning.effort" (Responses API requirement)
+//  3. Add "store": true to enable server-side state persistence
+//  4. Add "background": true to enable polling mode (avoids timeout issues)
+//  5. Add "previous_response_id" if continuing conversation
+//  6. Set "reasoning.effort" to "high" (default for GPT-5 Pro, if not provided)
+//  7. Keep all other parameters (model, temperature, etc.)
 //
 // Example:
 //
@@ -73,6 +74,16 @@ func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string
 		delete(req, "messages")
 	}
 
+	// Transform "reasoning_effort" to "reasoning.effort"
+	// Client might send reasoning_effort as top-level parameter (Chat Completions style)
+	// Responses API expects it nested under reasoning.effort
+	if reasoningEffort, exists := req["reasoning_effort"]; exists {
+		req["reasoning"] = map[string]interface{}{
+			"effort": reasoningEffort,
+		}
+		delete(req, "reasoning_effort")
+	}
+
 	// Enable stateful conversation
 	req["store"] = true
 
@@ -86,7 +97,7 @@ func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string
 	}
 
 	// Set reasoning effort to "high" (default for GPT-5 Pro)
-	// Client can override by providing their own reasoning parameter
+	// Only set default if client hasn't provided reasoning parameter
 	if _, exists := req["reasoning"]; !exists {
 		req["reasoning"] = map[string]interface{}{
 			"effort": "high",
