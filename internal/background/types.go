@@ -1,15 +1,46 @@
 package background
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ResponseStatus represents the status of an OpenAI background response.
 type ResponseStatus struct {
-	ID                string    `json:"id"`                  // Response ID (e.g., "resp_abc123")
-	Status            string    `json:"status"`              // "queued" | "in_progress" | "completed" | "failed"
-	Model             string    `json:"model,omitempty"`     // Model ID
-	CreatedAt         time.Time `json:"created_at"`          // When response was created
-	CompletedAt       time.Time `json:"completed_at,omitempty"` // When response completed (if completed)
-	Error             *ErrorInfo `json:"error,omitempty"`    // Error details (if failed)
+	ID                string     `json:"id"`                           // Response ID (e.g., "resp_abc123")
+	Status            string     `json:"status"`                       // "queued" | "in_progress" | "completed" | "failed"
+	Model             string     `json:"model,omitempty"`              // Model ID
+	CreatedAt         *UnixTime  `json:"created_at,omitempty"`         // When response was created
+	CompletedAt       *UnixTime  `json:"completed_at,omitempty"`       // When response completed (if completed)
+	Error             *ErrorInfo `json:"error,omitempty"`              // Error details (if failed)
+}
+
+// UnixTime handles Unix timestamp (integer) from OpenAI API.
+// OpenAI returns timestamps as Unix seconds (integer), not RFC3339 strings.
+type UnixTime struct {
+	time.Time
+}
+
+// UnmarshalJSON handles both Unix timestamp integers and RFC3339 strings.
+func (ut *UnixTime) UnmarshalJSON(b []byte) error {
+	// Try to unmarshal as integer (Unix timestamp)
+	var timestamp int64
+	if err := json.Unmarshal(b, &timestamp); err == nil {
+		ut.Time = time.Unix(timestamp, 0)
+		return nil
+	}
+
+	// Fallback: try to unmarshal as RFC3339 string
+	var str string
+	if err := json.Unmarshal(b, &str); err != nil {
+		return err
+	}
+	t, err := time.Parse(time.RFC3339, str)
+	if err != nil {
+		return err
+	}
+	ut.Time = t
+	return nil
 }
 
 // ErrorInfo represents error information from OpenAI.
