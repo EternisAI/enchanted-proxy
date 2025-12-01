@@ -268,7 +268,10 @@ func handleResponsesAPI(
 		StartedAt:         time.Now(),
 	}
 
-	if err := pollingManager.StartPolling(c.Request.Context(), pollingJob, provider.APIKey, provider.BaseURL); err != nil {
+	// CRITICAL: Use context.Background() instead of c.Request.Context()
+	// The polling worker MUST continue even if the client disconnects
+	// Otherwise long-running GPT-5 Pro requests will be killed when client app closes
+	if err := pollingManager.StartPolling(context.Background(), pollingJob, provider.APIKey, provider.BaseURL); err != nil {
 		log.Error("failed to start polling worker",
 			slog.String("response_id", bgResponse.ID),
 			slog.String("error", err.Error()))
