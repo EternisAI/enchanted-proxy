@@ -25,7 +25,8 @@ func NewOpenAIClient(apiKey, baseURL string, logger *logger.Logger) *OpenAIClien
 		apiKey:  apiKey,
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second, // Short timeout for polling requests
+			Timeout: 5 * time.Minute, // Longer timeout for fetching large response content
+			// Context timeout (30 min) will override if request takes longer
 		},
 		logger: logger,
 	}
@@ -119,9 +120,11 @@ func (c *OpenAIClient) GetResponseContent(ctx context.Context, responseID string
 		return nil, fmt.Errorf("failed to decode response content: %w", err)
 	}
 
+	// Log response structure for debugging
 	c.logger.Info("fetched completed response content",
 		slog.String("response_id", responseID),
 		slog.String("status", content.Status),
+		slog.Int("output_items", len(content.Output)),
 		slog.Int("choices", len(content.Choices)))
 
 	return &content, nil
@@ -130,29 +133,66 @@ func (c *OpenAIClient) GetResponseContent(ctx context.Context, responseID string
 // ExtractContent extracts the text content from a ResponseContent.
 //
 // Parameters:
-//   - content: The response content from OpenAI
+//   - content: The response content from OpenAI Responses API
 //
 // Returns:
 //   - string: The extracted message content
 //
-// Example OpenAI response structure:
+// Responses API format (primary):
+//   {"output": [
+//     {"type": "reasoning", "id": "rs_xxx..."},
+//     {"type": "message", "status": "completed", "content": [{"type": "output_text", "text": "Hello"}]}
+//   ]}
+//
+// Legacy Chat Completions format (fallback):
 //   {"choices": [{"message": {"content": "Hello world"}}]}
 func ExtractContent(content *ResponseContent) string {
-	if len(content.Choices) == 0 {
-		return ""
-	}
+	// Try Responses API format first (output array)
+	if len(content.Output) > 0 {
+		// Iterate through output items to find message with completed status
+		for _, item := range content.Output {
+			itemType, _ := item["type"].(string)
+			if itemType == "message" {
+				// Found a message item - extract content array
+				if contentArray, ok := item["content"].([]interface{}); ok {
+					for _, contentItem := range contentArray {
+						if contentMap, ok := contentItem.(map[string]interface{}); ok {
+							contentType, _ := contentMap["type"].(string)
+							if contentType == "output_text" {
+								if text, ok := contentMap["text"].(string); ok {
+									return text
+								}
+							}
+						}
+					}
+				}
 
-	choice := content.Choices[0]
-
-	// Try to extract from message.content (non-streaming format)
-	if message, ok := choice["message"].(map[string]interface{}); ok {
-		if contentStr, ok := message["content"].(string); ok {
-			return contentStr
+				// Fallback: try direct content field
+				if contentStr, ok := item["content"].(string); ok {
+					return contentStr
+				}
+			}
 		}
 	}
 
-	// Try to extract from other formats if needed
-	// (OpenAI format may vary)
+	// Fallback: Try legacy Chat Completions format (choices array)
+	if len(content.Choices) > 0 {
+		choice := content.Choices[0]
+
+		// Try to extract from message.content
+		if message, ok := choice["message"].(map[string]interface{}); ok {
+			if contentStr, ok := message["content"].(string); ok {
+				return contentStr
+			}
+		}
+
+		// Try delta.content (streaming format)
+		if delta, ok := choice["delta"].(map[string]interface{}); ok {
+			if contentStr, ok := delta["content"].(string); ok {
+				return contentStr
+			}
+		}
+	}
 
 	return ""
 }

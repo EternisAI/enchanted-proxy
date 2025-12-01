@@ -19,12 +19,17 @@ type ErrorInfo struct {
 	Code    string `json:"code,omitempty"`
 }
 
-// ResponseContent represents the full response content from OpenAI.
+// ResponseContent represents the full response content from OpenAI Responses API.
+//
+// NOTE: Responses API uses a different format than Chat Completions:
+// - output: Array of items (reasoning + message items)
+// - choices: Legacy format (for backwards compatibility, may not be present)
 type ResponseContent struct {
 	ID      string                   `json:"id"`
 	Status  string                   `json:"status"`
 	Model   string                   `json:"model"`
-	Choices []map[string]interface{} `json:"choices"` // Response choices
+	Output  []map[string]interface{} `json:"output,omitempty"`  // Responses API format (primary)
+	Choices []map[string]interface{} `json:"choices,omitempty"` // Legacy format (fallback)
 	Usage   *UsageInfo               `json:"usage,omitempty"`
 }
 

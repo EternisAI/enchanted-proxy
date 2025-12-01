@@ -130,6 +130,14 @@ func (w *PollingWorker) Run(ctx context.Context) error {
 					w.logger.Error("failed to save completed response",
 						slog.String("response_id", w.job.ResponseID),
 						slog.String("error", err.Error()))
+
+					// CRITICAL: Update Firestore to "failed" so message doesn't stay stuck in "thinking"
+					if saveErr := w.saveFailure(fmt.Sprintf("Failed to save response: %v", err)); saveErr != nil {
+						w.logger.Error("failed to save failure state",
+							slog.String("response_id", w.job.ResponseID),
+							slog.String("error", saveErr.Error()))
+					}
+
 					return err
 				}
 
@@ -204,11 +212,14 @@ func (w *PollingWorker) fetchAndSaveResponse(ctx context.Context) error {
 	// Extract text content
 	textContent := ExtractContent(content)
 	if textContent == "" {
-		w.logger.Warn("no content in completed response",
-			slog.String("response_id", w.job.ResponseID))
+		w.logger.Error("failed to extract content from completed response",
+			slog.String("response_id", w.job.ResponseID),
+			slog.Int("output_items", len(content.Output)),
+			slog.Int("choices", len(content.Choices)))
+		return fmt.Errorf("extracted content is empty (output_items=%d, choices=%d)", len(content.Output), len(content.Choices))
 	}
 
-	w.logger.Debug("fetched completed response",
+	w.logger.Info("extracted content from completed response",
 		slog.String("response_id", w.job.ResponseID),
 		slog.Int("content_length", len(textContent)))
 
