@@ -39,7 +39,7 @@ func TestAdapter_TransformRequest(t *testing.T) {
 			wantErr:            false,
 		},
 		{
-			name: "preserves existing fields",
+			name: "preserves and transforms fields",
 			requestBody: `{
 				"model": "gpt-5-pro",
 				"messages": [{"role": "user", "content": "Hello"}],
@@ -103,13 +103,18 @@ func TestAdapter_TransformRequest(t *testing.T) {
 				}
 			}
 
-			// Verify original fields preserved
-			if tt.name == "preserves existing fields" {
+			// Verify original fields preserved and transformations applied
+			if tt.name == "preserves and transforms fields" {
 				if temp, ok := result["temperature"].(float64); !ok || temp != 0.7 {
 					t.Errorf("TransformRequest() temperature not preserved")
 				}
-				if maxTokens, ok := result["max_tokens"].(float64); !ok || maxTokens != 1000 {
-					t.Errorf("TransformRequest() max_tokens not preserved")
+				// max_tokens should be transformed to max_output_tokens
+				if maxTokens, ok := result["max_output_tokens"].(float64); !ok || maxTokens != 1000 {
+					t.Errorf("TransformRequest() max_tokens not transformed to max_output_tokens correctly, got: %v", result["max_output_tokens"])
+				}
+				// max_tokens should be removed
+				if _, exists := result["max_tokens"]; exists {
+					t.Errorf("TransformRequest() max_tokens should be removed after transformation")
 				}
 			}
 		})

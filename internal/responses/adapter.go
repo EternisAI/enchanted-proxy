@@ -39,26 +39,30 @@ func NewAdapter() *Adapter {
 //   - error: If transformation failed
 //
 // Transformations applied:
-//  1. Rename "messages" to "input" (Responses API requirement)
-//  2. Transform "reasoning_effort" to "reasoning.effort" (Responses API requirement)
-//  3. Transform "max_completion_tokens" to "max_output_tokens" (Responses API requirement)
-//  4. Add "store": true to enable server-side state persistence
-//  5. Add "background": true to enable polling mode (avoids timeout issues)
-//  6. Add "previous_response_id" if continuing conversation
-//  7. Set "reasoning.effort" to "high" (default for GPT-5 Pro, if not provided)
-//  8. Keep all other parameters (model, temperature, etc.)
+//  1. Filter out internal parameters (chatId, messageId) - not part of OpenAI API
+//  2. Filter out streaming parameters (stream, stream_options) - incompatible with background mode
+//  3. Rename "messages" to "input" (Responses API requirement)
+//  4. Transform "reasoning_effort" to "reasoning.effort" (Responses API requirement)
+//  5. Transform "max_completion_tokens" to "max_output_tokens" (Responses API requirement)
+//  6. Transform "max_tokens" to "max_output_tokens" (legacy parameter support)
+//  7. Add "store": true to enable server-side state persistence
+//  8. Add "background": true to enable polling mode (avoids timeout issues)
+//  9. Add "previous_response_id" if continuing conversation
+// 10. Set "reasoning.effort" to "high" (default for GPT-5 Pro, if not provided)
+// 11. Keep all other parameters (model, temperature, etc.)
 //
 // Example:
 //
-//	Input (Chat Completions):
-//	  {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Hello"}]}
+//	Input (Client sends):
+//	  {"model": "gpt-5-pro", "messages": [...], "chatId": "chat_123", "messageId": "msg_456"}
 //
-//	Output (Responses API, first message):
-//	  {"model": "gpt-5-pro", "input": [{"role": "user", "content": "Hello"}],
+//	Output (Sent to OpenAI - first message):
+//	  {"model": "gpt-5-pro", "input": [...],
 //	   "store": true, "background": true, "reasoning": {"effort": "high"}}
+//	  Note: chatId and messageId are filtered out
 //
-//	Output (Responses API, continuation):
-//	  {"model": "gpt-5-pro", "input": [{"role": "user", "content": "Tell me more"}],
+//	Output (Sent to OpenAI - continuation):
+//	  {"model": "gpt-5-pro", "input": [...],
 //	   "store": true, "background": true, "previous_response_id": "resp_abc123",
 //	   "reasoning": {"effort": "high"}}
 func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string) ([]byte, error) {
@@ -67,6 +71,16 @@ func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string
 	if err := json.Unmarshal(requestBody, &req); err != nil {
 		return nil, fmt.Errorf("failed to parse request body: %w", err)
 	}
+
+	// Remove internal parameters that are not part of OpenAI's API
+	// These are used by our proxy for tracking but should not be sent to OpenAI
+	delete(req, "chatId")
+	delete(req, "messageId")
+
+	// Remove streaming-related parameters (incompatible with background mode)
+	// Background mode uses polling instead of SSE streaming
+	delete(req, "stream")
+	delete(req, "stream_options")
 
 	// Responses API uses "input" instead of "messages"
 	// Move messages array to input
@@ -91,6 +105,16 @@ func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string
 	if maxTokens, exists := req["max_completion_tokens"]; exists {
 		req["max_output_tokens"] = maxTokens
 		delete(req, "max_completion_tokens")
+	}
+
+	// Also transform legacy "max_tokens" parameter (if not already transformed)
+	// Some clients may use the older max_tokens parameter
+	if maxTokens, exists := req["max_tokens"]; exists {
+		// Only transform if max_output_tokens wasn't already set
+		if _, hasOutput := req["max_output_tokens"]; !hasOutput {
+			req["max_output_tokens"] = maxTokens
+			delete(req, "max_tokens")
+		}
 	}
 
 	// Enable stateful conversation
