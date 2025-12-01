@@ -164,19 +164,28 @@ func (w *PollingWorker) Run(ctx context.Context) error {
 
 			case "in_progress", "queued":
 				// Still processing - continue polling
-				w.logger.Debug("response still processing",
-					slog.String("response_id", w.job.ResponseID),
-					slog.String("status", status.Status),
-					slog.Int("poll_count", w.pollCount),
-					slog.Duration("elapsed", time.Since(w.job.StartedAt)))
+				// Log at Info level every 10 polls so we can see progress in Grafana
+				if w.pollCount%10 == 0 {
+					w.logger.Info("polling progress",
+						slog.String("response_id", w.job.ResponseID),
+						slog.String("status", status.Status),
+						slog.Int("poll_count", w.pollCount),
+						slog.Duration("elapsed", time.Since(w.job.StartedAt)))
+				} else {
+					w.logger.Debug("response still processing",
+						slog.String("response_id", w.job.ResponseID),
+						slog.String("status", status.Status),
+						slog.Int("poll_count", w.pollCount))
+				}
 
 				// Slow down polling after initial phase (after 10 polls = ~20 seconds)
 				if w.pollCount > 10 && pollInterval < maxPollInterval {
 					pollInterval = maxPollInterval
 					ticker.Reset(pollInterval)
-					w.logger.Debug("slowed down polling interval",
+					w.logger.Info("slowed down polling interval",
 						slog.String("response_id", w.job.ResponseID),
-						slog.Duration("interval", pollInterval))
+						slog.Duration("new_interval", pollInterval),
+						slog.Int("poll_count", w.pollCount))
 				}
 
 			default:
@@ -203,23 +212,38 @@ func (w *PollingWorker) updateFirestoreState(ctx context.Context, state string) 
 
 // fetchAndSaveResponse fetches the completed response from OpenAI and saves to Firestore.
 func (w *PollingWorker) fetchAndSaveResponse(ctx context.Context) error {
+	w.logger.Info("fetching completed response from OpenAI",
+		slog.String("response_id", w.job.ResponseID))
+
 	// Fetch full response content
 	content, err := w.openAIClient.GetResponseContent(ctx, w.job.ResponseID)
 	if err != nil {
+		w.logger.Error("failed to fetch response content from OpenAI",
+			slog.String("response_id", w.job.ResponseID),
+			slog.String("error", err.Error()))
 		return fmt.Errorf("failed to fetch response content: %w", err)
 	}
 
 	// Extract text content
+	w.logger.Info("extracting content from response",
+		slog.String("response_id", w.job.ResponseID),
+		slog.Int("output_items", len(content.Output)),
+		slog.Int("choices", len(content.Choices)),
+		slog.String("status", content.Status))
+
 	textContent := ExtractContent(content)
 	if textContent == "" {
-		w.logger.Error("failed to extract content from completed response",
+		// Log the structure to help debug
+		w.logger.Error("failed to extract content from completed response - content is empty",
 			slog.String("response_id", w.job.ResponseID),
 			slog.Int("output_items", len(content.Output)),
-			slog.Int("choices", len(content.Choices)))
+			slog.Int("choices", len(content.Choices)),
+			slog.String("status", content.Status),
+			slog.String("model", content.Model))
 		return fmt.Errorf("extracted content is empty (output_items=%d, choices=%d)", len(content.Output), len(content.Choices))
 	}
 
-	w.logger.Info("extracted content from completed response",
+	w.logger.Info("successfully extracted content from response",
 		slog.String("response_id", w.job.ResponseID),
 		slog.Int("content_length", len(textContent)))
 
@@ -242,11 +266,18 @@ func (w *PollingWorker) fetchAndSaveResponse(ctx context.Context) error {
 	saveCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	w.logger.Info("saving completed response to Firestore",
+		slog.String("response_id", w.job.ResponseID),
+		slog.Int("content_length", len(textContent)))
+
 	if err := w.messageService.StoreMessageAsync(saveCtx, msg); err != nil {
+		w.logger.Error("failed to save completed message to Firestore",
+			slog.String("response_id", w.job.ResponseID),
+			slog.String("error", err.Error()))
 		return fmt.Errorf("failed to save completed message: %w", err)
 	}
 
-	w.logger.Debug("saved completed response to Firestore",
+	w.logger.Info("successfully saved completed response to Firestore",
 		slog.String("response_id", w.job.ResponseID))
 
 	return nil

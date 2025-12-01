@@ -62,9 +62,10 @@ func (c *OpenAIClient) GetResponseStatus(ctx context.Context, responseID string)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		c.logger.Error("OpenAI polling returned error",
+		c.logger.Error("OpenAI polling request failed",
 			slog.Int("status_code", resp.StatusCode),
-			slog.String("response_id", responseID))
+			slog.String("response_id", responseID),
+			slog.String("url", url))
 		return nil, fmt.Errorf("OpenAI returned status %d", resp.StatusCode)
 	}
 
@@ -94,6 +95,10 @@ func (c *OpenAIClient) GetResponseStatus(ctx context.Context, responseID string)
 func (c *OpenAIClient) GetResponseContent(ctx context.Context, responseID string) (*ResponseContent, error) {
 	url := fmt.Sprintf("%s/v1/responses/%s", c.baseURL, responseID)
 
+	c.logger.Info("fetching completed response from OpenAI API",
+		slog.String("response_id", responseID),
+		slog.String("url", url))
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -109,9 +114,10 @@ func (c *OpenAIClient) GetResponseContent(ctx context.Context, responseID string
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		c.logger.Error("failed to fetch completed response",
+		c.logger.Error("OpenAI content fetch returned non-200 status",
 			slog.Int("status_code", resp.StatusCode),
-			slog.String("response_id", responseID))
+			slog.String("response_id", responseID),
+			slog.String("url", url))
 		return nil, fmt.Errorf("OpenAI returned status %d", resp.StatusCode)
 	}
 

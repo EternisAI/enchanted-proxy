@@ -109,6 +109,12 @@ func (pm *PollingManager) runWorker(ctx context.Context, job PollingJob, apiKey,
 	defer pm.activeCount.Add(-1)
 	defer pm.unregisterWorker(job.ResponseID)
 
+	startTime := time.Now()
+
+	pm.logger.Info("polling worker goroutine started",
+		slog.String("response_id", job.ResponseID),
+		slog.Int("active_workers", int(pm.activeCount.Load())))
+
 	// Create OpenAI client for this worker
 	openAIClient := NewOpenAIClient(apiKey, baseURL, pm.logger)
 
@@ -117,13 +123,17 @@ func (pm *PollingManager) runWorker(ctx context.Context, job PollingJob, apiKey,
 
 	// Run worker (blocks until done)
 	if err := worker.Run(ctx); err != nil {
-		pm.logger.Error("polling worker failed",
+		pm.logger.Error("polling worker exited with error",
 			slog.String("response_id", job.ResponseID),
-			slog.String("error", err.Error()))
+			slog.String("error", err.Error()),
+			slog.Duration("total_duration", time.Since(startTime)),
+			slog.Int("remaining_workers", int(pm.activeCount.Load())-1))
 		// Error already logged and saved by worker
 	} else {
-		pm.logger.Info("polling worker completed successfully",
-			slog.String("response_id", job.ResponseID))
+		pm.logger.Info("polling worker exited successfully",
+			slog.String("response_id", job.ResponseID),
+			slog.Duration("total_duration", time.Since(startTime)),
+			slog.Int("remaining_workers", int(pm.activeCount.Load())-1))
 	}
 }
 
