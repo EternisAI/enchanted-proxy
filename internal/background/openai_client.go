@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -62,7 +61,6 @@ func (c *OpenAIClient) GetResponseStatus(ctx context.Context, responseID string)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
 		c.logger.Error("OpenAI polling returned error",
 			slog.Int("status_code", resp.StatusCode),
 			slog.String("response_id", responseID))
@@ -110,7 +108,6 @@ func (c *OpenAIClient) GetResponseContent(ctx context.Context, responseID string
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
 		c.logger.Error("failed to fetch completed response",
 			slog.Int("status_code", resp.StatusCode),
 			slog.String("response_id", responseID))
