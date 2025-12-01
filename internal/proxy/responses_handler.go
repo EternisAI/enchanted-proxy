@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/background"
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
@@ -25,20 +26,18 @@ import (
 
 // handleResponsesAPI handles requests to OpenAI's Responses API (GPT-5 Pro, GPT-4.5+).
 //
-// This handler provides:
-//   - Transparent client interface (clients still use /chat/completions format)
-//   - Request transformation (Chat Completions → Responses API)
-//   - Conversation continuation (previous_response_id management)
-//   - Multi-client broadcast (via StreamManager)
-//   - Response ID tracking (stored in Firestore)
+// This handler uses OpenAI's background mode + polling approach to avoid timeout issues.
 //
 // Flow:
 //  1. Fetch previous response_id from Firestore (for continuation)
-//  2. Transform request: add store=true, previous_response_id if exists
-//  3. Make HTTP request to OpenAI /responses endpoint
-//  4. Use StreamManager for multi-client broadcast
-//  5. Extract response_id from first chunk
-//  6. Save response_id to Firestore when complete
+//  2. Transform request: add store=true, background=true, reasoning.effort=high
+//  3. Make HTTP request to OpenAI /responses endpoint with background=true
+//  4. Get response_id immediately (response status = "queued")
+//  5. Save initial message with generationState="thinking" to Firestore
+//  6. Start background polling worker to monitor OpenAI status
+//  7. Return immediately to client (202 Accepted)
+//  8. Worker polls OpenAI and updates Firestore as status changes
+//  9. Client listens to Firestore real-time updates for progress
 //
 // Parameters:
 //   - c: Gin context
@@ -47,8 +46,9 @@ import (
 //   - model: Model ID (e.g., "gpt-5-pro")
 //   - log: Logger
 //   - trackingService: Request tracking service
-//   - messageService: Message storage service (includes response_id storage)
-//   - streamManager: Stream manager for broadcast
+//   - messageService: Message storage service
+//   - titleService: Title generation service
+//   - pollingManager: Background polling manager
 //   - cfg: Application configuration
 //
 // Returns:
@@ -62,7 +62,7 @@ func handleResponsesAPI(
 	trackingService *request_tracking.Service,
 	messageService *messaging.Service,
 	titleService *title_generation.Service,
-	streamManager *streaming.StreamManager,
+	pollingManager *background.PollingManager,
 	cfg *config.Config,
 ) error {
 	// Validate required parameters
@@ -70,12 +70,11 @@ func handleResponsesAPI(
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Provider configuration is nil"})
 		return fmt.Errorf("provider is nil")
 	}
-	if streamManager == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Stream manager not initialized"})
-		return fmt.Errorf("streamManager is nil")
+	if pollingManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Polling manager not initialized"})
+		return fmt.Errorf("pollingManager is nil")
 	}
 	if log == nil {
-		// Can't log error if logger is nil, just return
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Logger not initialized"})
 		return fmt.Errorf("logger is nil")
 	}
@@ -168,27 +167,23 @@ func handleResponsesAPI(
 		}
 	}
 
+	// Extract encryption setting (used for placeholder save and polling job)
+	var encryptionEnabled *bool
+	if val, exists := c.Get("encryptionEnabled"); exists {
+		if boolPtr, ok := val.(*bool); ok {
+			encryptionEnabled = boolPtr
+		}
+	}
+
 	// Save placeholder message immediately (before making request)
 	if messageService != nil {
-		// Extract encryption setting
-		var encryptionEnabled *bool
-		if val, exists := c.Get("encryptionEnabled"); exists {
-			if boolPtr, ok := val.(*bool); ok {
-				encryptionEnabled = boolPtr
-			}
-		}
-
 		// Save placeholder synchronously (fast operation)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = messageService.SaveThinkingMessage(ctx, userID, chatID, messageID, model, encryptionEnabled)
 		cancel()
 	}
 
-	// Step 3: Create pending session BEFORE making upstream request
-	// This ensures the session exists if user clicks stop during initial connection
-	session, _ := streamManager.CreatePendingSession(chatID, messageID)
-
-	// Step 4: Transform request for Responses API
+	// Step 3: Transform request for Responses API (adds background=true, reasoning.effort=high)
 	adapter := responses.NewAdapter()
 	transformedBody, err := adapter.TransformRequest(requestBody, previousResponseID)
 	if err != nil {
@@ -198,9 +193,9 @@ func handleResponsesAPI(
 		return fmt.Errorf("failed to transform request: %w", err)
 	}
 
-	// Step 5: Make HTTP request to OpenAI /responses endpoint
-	targetURL := provider.BaseURL + "/responses"
-	req, err := http.NewRequestWithContext(context.Background(), "POST", targetURL, bytes.NewReader(transformedBody))
+	// Step 4: Make HTTP request to OpenAI /responses endpoint with background=true
+	targetURL := provider.BaseURL + "/v1/responses"
+	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(transformedBody))
 	if err != nil {
 		log.Error("failed to create request",
 			slog.String("error", err.Error()),
@@ -212,94 +207,88 @@ func handleResponsesAPI(
 	// Set headers
 	req.Header.Set("Authorization", "Bearer "+provider.APIKey)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
 
-	// Make request
+	// Make request with short timeout (we're just submitting the request, not waiting for completion)
 	client := &http.Client{
-		Transport: proxyTransport,
-		Timeout:   10 * time.Minute,
+		Timeout: 30 * time.Second, // Short timeout for initial submission
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Error("failed to make request to Responses API",
+		log.Error("failed to submit request to Responses API",
 			slog.String("error", err.Error()),
 			slog.String("target_url", targetURL))
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to connect to Responses API"})
 		return fmt.Errorf("failed to make request: %w", err)
 	}
+	defer resp.Body.Close()
 
 	// Check for errors
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
 		log.Error("Responses API returned error", slog.Int("status_code", resp.StatusCode))
 		c.Data(resp.StatusCode, "application/json", body)
 		return fmt.Errorf("Responses API error: %d", resp.StatusCode)
 	}
 
-	// Step 6: Attach upstream response body to pending session and start reading
-	// Session was already created in step 3 (before HTTP request)
-	session.SetUpstreamBodyAndStart(resp.Body)
-
-	// Step 7: Register completion handler (BEFORE subscribing)
-	// This ensures message gets saved even if client disconnects early
-	if messageService != nil {
-		// Extract encryption setting
-		var encryptionEnabled *bool
-		if val, exists := c.Get("encryptionEnabled"); exists {
-			if boolPtr, ok := val.(*bool); ok {
-				encryptionEnabled = boolPtr
-			}
-		}
-
-		// Capture variables for goroutine
-		capturedUserID := userID
-		capturedChatID := chatID
-		capturedModel := model
-		capturedEncryption := encryptionEnabled
-
-		// Start goroutine that waits for session completion
-		// This runs independently of client connection
-		go func() {
-			// Wait for session to complete (blocking)
-			session.WaitForCompletion()
-
-			// Save response_id
-			responseID := session.GetResponseID()
-			if responseID != "" {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				if err := messageService.SaveResponseID(ctx, capturedUserID, capturedChatID, responseID); err != nil {
-					log.Error("failed to save response_id", slog.String("error", err.Error()))
-				}
-				cancel()
-			}
-
-			// Save completed message
-			err := streamManager.SaveCompletedSession(context.Background(), session, capturedUserID, capturedEncryption, capturedModel)
-			if err != nil {
-				log.Error("failed to save completed session", slog.String("error", err.Error()))
-			}
-		}()
+	// Step 5: Parse response to get response_id
+	// OpenAI returns: {"id": "resp_abc123", "status": "queued", ...}
+	var bgResponse background.ResponseStatus
+	if err := json.NewDecoder(resp.Body).Decode(&bgResponse); err != nil {
+		log.Error("failed to decode background response",
+			slog.String("error", err.Error()))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse OpenAI response"})
+		return fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Subscribe to the session
-	subscriberID := uuid.New().String()
-	subscriber, err := session.Subscribe(c.Request.Context(), subscriberID, streaming.SubscriberOptions{
-		ReplayFromStart: false, // First subscriber, no replay needed
-		BufferSize:      100,
+	log.Info("received background response from OpenAI",
+		slog.String("response_id", bgResponse.ID),
+		slog.String("status", bgResponse.Status),
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.String("message_id", messageID))
+
+	// Step 6: Save response_id to Firestore for conversation continuation
+	if err := messageService.SaveResponseID(c.Request.Context(), userID, chatID, bgResponse.ID); err != nil {
+		log.Error("failed to save response_id",
+			slog.String("response_id", bgResponse.ID),
+			slog.String("error", err.Error()))
+		// Continue anyway - this is not critical for polling
+	}
+
+	// Step 7: Start background polling worker
+	// This worker will poll OpenAI every few seconds and update Firestore as status changes
+	pollingJob := background.PollingJob{
+		ResponseID:        bgResponse.ID,
+		UserID:            userID,
+		ChatID:            chatID,
+		MessageID:         messageID,
+		Model:             model,
+		EncryptionEnabled: encryptionEnabled,
+		StartedAt:         time.Now(),
+	}
+
+	if err := pollingManager.StartPolling(c.Request.Context(), pollingJob, provider.APIKey, provider.BaseURL); err != nil {
+		log.Error("failed to start polling worker",
+			slog.String("response_id", bgResponse.ID),
+			slog.String("error", err.Error()))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start background polling"})
+		return fmt.Errorf("failed to start polling: %w", err)
+	}
+
+	log.Info("started background polling worker",
+		slog.String("response_id", bgResponse.ID),
+		slog.String("message_id", messageID),
+		slog.Int("active_workers", pollingManager.GetActiveCount()))
+
+	// Step 8: Return immediately to client
+	// Client will listen to Firestore for real-time updates
+	c.JSON(http.StatusAccepted, gin.H{
+		"message_id":  messageID,
+		"response_id": bgResponse.ID,
+		"status":      "queued",
+		"message":     "Request submitted successfully. Listen to Firestore for updates.",
 	})
-	if err != nil {
-		log.Error("failed to subscribe to Responses API stream", slog.String("error", err.Error()))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to subscribe to stream"})
-		return fmt.Errorf("failed to subscribe: %w", err)
-	}
-
-	// Record subscription metric
-	streamManager.RecordSubscription()
-
-	// Stream to client and extract response_id
-	streamToClientWithResponseID(c, subscriber, session, log, adapter)
 
 	// Log request to database
 	logRequestToDatabaseWithProvider(c, trackingService, model, nil, provider.Name)

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/background"
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
@@ -69,6 +70,7 @@ func ProxyHandler(
 	messageService *messaging.Service,
 	titleService *title_generation.Service,
 	streamManager *streaming.StreamManager,
+	pollingManager *background.PollingManager,
 	modelRouter *routing.ModelRouter,
 	toolRegistry *tools.Registry,
 	cfg *config.Config,
@@ -179,8 +181,8 @@ func ProxyHandler(
 				saveUserMessageAsync(c, messageService, requestBody)
 			}
 
-			// Handle Responses API request (includes streaming, response_id management)
-			if err := handleResponsesAPI(c, requestBody, provider, model, log, trackingService, messageService, titleService, streamManager, cfg); err != nil {
+			// Handle Responses API request (uses background polling mode)
+			if err := handleResponsesAPI(c, requestBody, provider, model, log, trackingService, messageService, titleService, pollingManager, cfg); err != nil {
 				log.Error("Responses API handler failed",
 					slog.String("error", err.Error()),
 					slog.String("model", model))

@@ -18,6 +18,7 @@ import (
 	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/eternisai/enchanted-proxy/graph"
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/background"
 	"github.com/eternisai/enchanted-proxy/internal/composio"
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/deepr"
@@ -223,6 +224,30 @@ func main() {
 		log.Info("stream manager disabled (requires message storage)")
 	}
 
+	// Initialize background polling manager for GPT-5 Pro
+	var pollingManager *background.PollingManager
+	if messageService != nil && config.AppConfig.BackgroundPollingEnabled {
+		pollingManager = background.NewPollingManager(
+			messageService,
+			logger.WithComponent("polling"),
+			config.AppConfig,
+		)
+		log.Info("background polling manager initialized",
+			slog.Int("max_concurrent_workers", config.AppConfig.BackgroundMaxConcurrentPolls),
+			slog.Int("poll_interval_seconds", config.AppConfig.BackgroundPollingInterval),
+			slog.Int("timeout_minutes", config.AppConfig.BackgroundPollingTimeout))
+
+		// Ensure cleanup on shutdown
+		defer func() {
+			log.Info("shutting down polling manager")
+			if err := pollingManager.Shutdown(); err != nil {
+				log.Error("failed to shutdown polling manager", slog.String("error", err.Error()))
+			}
+		}()
+	} else {
+		log.Info("background polling disabled (requires message storage and BACKGROUND_POLLING_ENABLED=true)")
+	}
+
 	// Initialize model router for automatic provider routing
 	modelRouter := routing.NewModelRouter(config.AppConfig, logger.WithComponent("routing"))
 
@@ -314,6 +339,7 @@ func main() {
 		messageService:         messageService,
 		titleService:           titleService,
 		streamManager:          streamManager,
+		pollingManager:         pollingManager,
 		modelRouter:            modelRouter,
 		toolRegistry:           toolRegistry,
 		oauthHandler:           oauthHandler,
@@ -431,6 +457,7 @@ type restServerInput struct {
 	messageService         *messaging.Service
 	titleService           *title_generation.Service
 	streamManager          *streaming.StreamManager
+	pollingManager         *background.PollingManager
 	modelRouter            *routing.ModelRouter
 	toolRegistry           *tools.Registry
 	oauthHandler           *oauth.Handler
@@ -558,13 +585,13 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger))
 	{
 		// AI service endpoints
-		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
 	}
 
 	return router

@@ -40,8 +40,10 @@ func NewAdapter() *Adapter {
 //
 // Transformations applied:
 //  1. Add "store": true to enable server-side state persistence
-//  2. Add "previous_response_id" if continuing conversation
-//  3. Keep all other parameters (model, messages, temperature, etc.)
+//  2. Add "background": true to enable polling mode (avoids timeout issues)
+//  3. Add "previous_response_id" if continuing conversation
+//  4. Set "reasoning.effort" to "high" (default for GPT-5 Pro)
+//  5. Keep all other parameters (model, messages, temperature, etc.)
 //
 // Example:
 //
@@ -49,11 +51,13 @@ func NewAdapter() *Adapter {
 //	  {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Hello"}]}
 //
 //	Output (Responses API, first message):
-//	  {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Hello"}], "store": true}
+//	  {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Hello"}],
+//	   "store": true, "background": true, "reasoning": {"effort": "high"}}
 //
 //	Output (Responses API, continuation):
 //	  {"model": "gpt-5-pro", "messages": [{"role": "user", "content": "Tell me more"}],
-//	   "store": true, "previous_response_id": "resp_abc123"}
+//	   "store": true, "background": true, "previous_response_id": "resp_abc123",
+//	   "reasoning": {"effort": "high"}}
 func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string) ([]byte, error) {
 	// Parse original request
 	var req map[string]interface{}
@@ -64,9 +68,21 @@ func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string
 	// Enable stateful conversation
 	req["store"] = true
 
+	// Enable background mode (polling instead of streaming)
+	// This avoids timeout issues for long-running GPT-5 Pro requests
+	req["background"] = true
+
 	// Add previous_response_id if continuing conversation
 	if previousResponseID != "" {
 		req["previous_response_id"] = previousResponseID
+	}
+
+	// Set reasoning effort to "high" (default for GPT-5 Pro)
+	// Client can override by providing their own reasoning parameter
+	if _, exists := req["reasoning"]; !exists {
+		req["reasoning"] = map[string]interface{}{
+			"effort": "high",
+		}
 	}
 
 	// Marshal back to JSON

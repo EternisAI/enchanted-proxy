@@ -98,6 +98,13 @@ type Config struct {
 	MessageStorageWorkerPoolSize    int  // Number of worker goroutines processing message queue (higher = more concurrent Firestore writes)
 	MessageStorageBufferSize        int  // Size of message queue channel (higher = handles bigger traffic spikes without dropping messages)
 	MessageStorageTimeoutSeconds    int  // Firestore operation timeout in seconds (prevents workers from hanging on slow/failed operations)
+
+	// Background Polling (for GPT-5 Pro and other long-running models)
+	BackgroundPollingEnabled        bool // Enable background polling mode for GPT-5 Pro (recommended to avoid timeouts)
+	BackgroundPollingInterval       int  // Seconds between OpenAI status polls (default: 2, increases to max after initial phase)
+	BackgroundPollingMaxInterval    int  // Maximum seconds between polls (default: 10, used after initial rapid polling)
+	BackgroundPollingTimeout        int  // Minutes before giving up on polling (default: 30)
+	BackgroundMaxConcurrentPolls    int  // Maximum number of concurrent polling workers (default: 100)
 }
 
 var AppConfig *Config
@@ -224,6 +231,13 @@ func LoadConfig() {
 		MessageStorageWorkerPoolSize:    getEnvAsInt("MESSAGE_STORAGE_WORKER_POOL_SIZE", 5),
 		MessageStorageBufferSize:        getEnvAsInt("MESSAGE_STORAGE_BUFFER_SIZE", 500),
 		MessageStorageTimeoutSeconds:    getEnvAsInt("MESSAGE_STORAGE_TIMEOUT_SECONDS", 30),
+
+		// Background Polling
+		BackgroundPollingEnabled:     getEnvOrDefault("BACKGROUND_POLLING_ENABLED", "true") == "true",
+		BackgroundPollingInterval:    getEnvAsInt("BACKGROUND_POLLING_INTERVAL", 2),
+		BackgroundPollingMaxInterval: getEnvAsInt("BACKGROUND_POLLING_MAX_INTERVAL", 10),
+		BackgroundPollingTimeout:     getEnvAsInt("BACKGROUND_POLLING_TIMEOUT", 30),
+		BackgroundMaxConcurrentPolls: getEnvAsInt("BACKGROUND_MAX_CONCURRENT_POLLS", 100),
 	}
 
 	// Validate required configs

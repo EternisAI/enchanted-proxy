@@ -430,3 +430,49 @@ func (s *Service) UpdateMessageGenerationState(ctx context.Context, userID, chat
 	// Update in Firestore
 	return s.firestoreClient.UpdateMessage(ctx, userID, chatID, messageID, updates)
 }
+
+// UpdateGenerationStateSync updates a message's generation state synchronously.
+//
+// This is used by the background polling worker to update Firestore state as
+// OpenAI's response status changes.
+//
+// Unlike StoreMessageAsync, this method updates Firestore directly without
+// going through the async worker queue. This ensures critical state transitions
+// (thinking → completed/failed) are saved immediately.
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - userID: User ID who owns the message
+//   - chatID: Chat ID
+//   - messageID: AI message ID
+//   - state: New state ("thinking", "completed", "failed")
+//   - errorMsg: Error message (only if state="failed")
+//
+// Returns:
+//   - error: If update failed
+func (s *Service) UpdateGenerationStateSync(ctx context.Context, userID, chatID, messageID, state, errorMsg string) error {
+	now := time.Now()
+	updates := map[string]interface{}{
+		"generationState": state,
+		"updatedAt":       now,
+	}
+
+	// Add completion timestamp for terminal states
+	if state == "completed" || state == "failed" {
+		updates["generationCompletedAt"] = now
+	}
+
+	// Add error message if provided
+	if errorMsg != "" {
+		updates["generationError"] = errorMsg
+	}
+
+	s.logger.Debug("updating generation state synchronously",
+		slog.String("user_id", userID),
+		slog.String("chat_id", chatID),
+		slog.String("message_id", messageID),
+		slog.String("state", state))
+
+	// Update in Firestore synchronously (not through async queue)
+	return s.firestoreClient.UpdateMessage(ctx, userID, chatID, messageID, updates)
+}
