@@ -41,15 +41,16 @@ func NewAdapter() *Adapter {
 // Transformations applied:
 //  1. Filter out internal parameters (chatId, messageId) - not part of OpenAI API
 //  2. Filter out streaming parameters (stream, stream_options) - incompatible with background mode
-//  3. Rename "messages" to "input" (Responses API requirement)
-//  4. Transform "reasoning_effort" to "reasoning.effort" (Responses API requirement)
-//  5. Transform "max_completion_tokens" to "max_output_tokens" (Responses API requirement)
-//  6. Transform "max_tokens" to "max_output_tokens" (legacy parameter support)
-//  7. Add "store": true to enable server-side state persistence
-//  8. Add "background": true to enable polling mode (avoids timeout issues)
-//  9. Add "previous_response_id" if continuing conversation
-// 10. Set "reasoning.effort" to "high" (default for GPT-5 Pro, if not provided)
-// 11. Keep all other parameters (model, temperature, etc.)
+//  3. Filter out sampling parameters (temperature, top_p, frequency_penalty, presence_penalty, n) - not supported by GPT-5 Pro Responses API
+//  4. Rename "messages" to "input" (Responses API requirement)
+//  5. Transform "reasoning_effort" to "reasoning.effort" (Responses API requirement)
+//  6. Transform "max_completion_tokens" to "max_output_tokens" (Responses API requirement)
+//  7. Transform "max_tokens" to "max_output_tokens" (legacy parameter support)
+//  8. Add "store": true to enable server-side state persistence
+//  9. Add "background": true to enable polling mode (avoids timeout issues)
+// 10. Add "previous_response_id" if continuing conversation
+// 11. Set "reasoning.effort" to "high" (default for GPT-5 Pro, if not provided)
+// 12. Keep all other supported parameters (model, etc.)
 //
 // Example:
 //
@@ -81,6 +82,14 @@ func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string
 	// Background mode uses polling instead of SSE streaming
 	delete(req, "stream")
 	delete(req, "stream_options")
+
+	// Remove unsupported Chat Completions parameters
+	// GPT-5 Pro with Responses API doesn't support these sampling parameters
+	delete(req, "temperature")
+	delete(req, "top_p")
+	delete(req, "frequency_penalty")
+	delete(req, "presence_penalty")
+	delete(req, "n")
 
 	// Responses API uses "input" instead of "messages"
 	// Move messages array to input

@@ -39,7 +39,7 @@ func TestAdapter_TransformRequest(t *testing.T) {
 			wantErr:            false,
 		},
 		{
-			name: "preserves and transforms fields",
+			name: "transforms and filters parameters",
 			requestBody: `{
 				"model": "gpt-5-pro",
 				"messages": [{"role": "user", "content": "Hello"}],
@@ -103,10 +103,11 @@ func TestAdapter_TransformRequest(t *testing.T) {
 				}
 			}
 
-			// Verify original fields preserved and transformations applied
-			if tt.name == "preserves and transforms fields" {
-				if temp, ok := result["temperature"].(float64); !ok || temp != 0.7 {
-					t.Errorf("TransformRequest() temperature not preserved")
+			// Verify transformations and filtering applied
+			if tt.name == "transforms and filters parameters" {
+				// temperature should be filtered out (not supported by GPT-5 Pro Responses API)
+				if _, exists := result["temperature"]; exists {
+					t.Errorf("TransformRequest() temperature should be filtered out")
 				}
 				// max_tokens should be transformed to max_output_tokens
 				if maxTokens, ok := result["max_output_tokens"].(float64); !ok || maxTokens != 1000 {
