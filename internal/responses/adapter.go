@@ -41,11 +41,12 @@ func NewAdapter() *Adapter {
 // Transformations applied:
 //  1. Rename "messages" to "input" (Responses API requirement)
 //  2. Transform "reasoning_effort" to "reasoning.effort" (Responses API requirement)
-//  3. Add "store": true to enable server-side state persistence
-//  4. Add "background": true to enable polling mode (avoids timeout issues)
-//  5. Add "previous_response_id" if continuing conversation
-//  6. Set "reasoning.effort" to "high" (default for GPT-5 Pro, if not provided)
-//  7. Keep all other parameters (model, temperature, etc.)
+//  3. Transform "max_completion_tokens" to "max_output_tokens" (Responses API requirement)
+//  4. Add "store": true to enable server-side state persistence
+//  5. Add "background": true to enable polling mode (avoids timeout issues)
+//  6. Add "previous_response_id" if continuing conversation
+//  7. Set "reasoning.effort" to "high" (default for GPT-5 Pro, if not provided)
+//  8. Keep all other parameters (model, temperature, etc.)
 //
 // Example:
 //
@@ -82,6 +83,14 @@ func (a *Adapter) TransformRequest(requestBody []byte, previousResponseID string
 			"effort": reasoningEffort,
 		}
 		delete(req, "reasoning_effort")
+	}
+
+	// Transform "max_completion_tokens" to "max_output_tokens"
+	// Chat Completions API uses max_completion_tokens
+	// Responses API uses max_output_tokens
+	if maxTokens, exists := req["max_completion_tokens"]; exists {
+		req["max_output_tokens"] = maxTokens
+		delete(req, "max_completion_tokens")
 	}
 
 	// Enable stateful conversation
