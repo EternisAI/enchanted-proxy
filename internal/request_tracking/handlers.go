@@ -22,8 +22,18 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 
 		reqLog := log.WithContext(c.Request.Context()).WithComponent("rate_limit_status")
 
+		// Get subscription provider (works regardless of rate limit being enabled)
+		provider, provErr := trackingService.GetSubscriptionProvider(c.Request.Context(), userID)
+		if provErr != nil {
+			reqLog.Error("failed to get subscription provider",
+				slog.String("error", provErr.Error()),
+				slog.String("user_id", userID))
+			// Don't fail the request, just omit the provider field
+			provider = ""
+		}
+
 		if !config.AppConfig.RateLimitEnabled {
-			c.JSON(http.StatusOK, gin.H{
+			response := gin.H{
 				"enabled":       false,
 				"tier":          "unlimited",
 				"limit":         0,
@@ -32,7 +42,11 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 				"resets_at":     nil,
 				"under_limit":   true,
 				"log_only_mode": false,
-			})
+			}
+			if provider != "" {
+				response["subscription_provider"] = provider
+			}
+			c.JSON(http.StatusOK, response)
 			return
 		}
 
@@ -59,7 +73,7 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 			if remaining < 0 {
 				remaining = 0
 			}
-			c.JSON(http.StatusOK, gin.H{
+			response := gin.H{
 				"enabled":       config.AppConfig.RateLimitEnabled,
 				"tier":          "pro",
 				"limit":         limit,
@@ -68,7 +82,11 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 				"resets_at":     dayStart.Add(24 * time.Hour),
 				"under_limit":   used < limit,
 				"log_only_mode": config.AppConfig.RateLimitLogOnly,
-			})
+			}
+			if provider != "" {
+				response["subscription_provider"] = provider
+			}
+			c.JSON(http.StatusOK, response)
 			return
 		}
 
@@ -85,7 +103,7 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 			if remaining < 0 {
 				remaining = 0
 			}
-			c.JSON(http.StatusOK, gin.H{
+			response := gin.H{
 				"enabled":       config.AppConfig.RateLimitEnabled,
 				"tier":          "free",
 				"limit":         limit,
@@ -94,7 +112,11 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 				"resets_at":     nil,
 				"under_limit":   used < limit,
 				"log_only_mode": config.AppConfig.RateLimitLogOnly,
-			})
+			}
+			if provider != "" {
+				response["subscription_provider"] = provider
+			}
+			c.JSON(http.StatusOK, response)
 			return
 		}
 
@@ -109,7 +131,7 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 		if remaining < 0 {
 			remaining = 0
 		}
-		c.JSON(http.StatusOK, gin.H{
+		response := gin.H{
 			"enabled":       config.AppConfig.RateLimitEnabled,
 			"tier":          "drip",
 			"limit":         limit,
@@ -118,6 +140,10 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 			"resets_at":     dayStart.Add(24 * time.Hour),
 			"under_limit":   reqs < limit,
 			"log_only_mode": config.AppConfig.RateLimitLogOnly,
-		})
+		}
+		if provider != "" {
+			response["subscription_provider"] = provider
+		}
+		c.JSON(http.StatusOK, response)
 	}
 }

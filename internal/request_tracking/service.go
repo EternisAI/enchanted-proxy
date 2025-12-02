@@ -237,6 +237,22 @@ func (s *Service) HasActivePro(ctx context.Context, userID string) (bool, *time.
 	return false, nil, nil
 }
 
+// GetSubscriptionProvider returns the subscription provider for a user (e.g., "apple", "stripe").
+// Returns empty string if user has no entitlement record.
+func (s *Service) GetSubscriptionProvider(ctx context.Context, userID string) (string, error) {
+	ent, err := s.queries.GetEntitlement(ctx, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	if ent.SubscriptionProvider.Valid {
+		return ent.SubscriptionProvider.String, nil
+	}
+	return "", nil
+}
+
 // LogRequestWithTokensAsync queues a log request with token data to be processed by the worker pool.
 func (s *Service) LogRequestWithTokensAsync(ctx context.Context, info RequestInfo, tokenData *TokenUsage) error {
 	if tokenData != nil {
