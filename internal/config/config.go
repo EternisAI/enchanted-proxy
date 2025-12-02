@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -195,9 +196,9 @@ func LoadConfig() {
 		AppStoreBundleID: getEnvOrDefault("APPSTORE_BUNDLE_ID", ""),
 		AppStoreIssuerID: getEnvOrDefault("APPSTORE_ISSUER_ID", ""),
 
-		// Stripe
-		StripeSecretKey:          getEnvOrDefault("STRIPE_SECRET_KEY", ""),
-		StripeWebhookSecret:      getEnvOrDefault("STRIPE_WEBHOOK_SECRET", ""),
+		// Stripe (trim whitespace to avoid common config errors)
+		StripeSecretKey:          strings.TrimSpace(getEnvOrDefault("STRIPE_SECRET_KEY", "")),
+		StripeWebhookSecret:      strings.TrimSpace(getEnvOrDefault("STRIPE_WEBHOOK_SECRET", "")),
 		StripeCheckoutSuccessURL: getEnvOrDefault("STRIPE_CHECKOUT_SUCCESS_URL", "https://silo.eternis.ai/?session_id={CHECKOUT_SESSION_ID}"),
 		StripeCheckoutCancelURL:  getEnvOrDefault("STRIPE_CHECKOUT_CANCEL_URL", "https://silo.eternis.ai/pricing?canceled=true"),
 
@@ -299,6 +300,19 @@ func LoadConfig() {
 			sum := sha256.Sum256([]byte(AppConfig.AppStoreAPIKeyP8))
 			log.Printf("App Store IAP private key loaded (sha256=%x, bytes=%d)", sum, len(AppConfig.AppStoreAPIKeyP8))
 		}
+	}
+
+	// Stripe configuration validation
+	if AppConfig.StripeSecretKey == "" || AppConfig.StripeWebhookSecret == "" {
+		log.Println("Warning: Stripe credentials are missing. Please set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET environment variables.")
+	} else {
+		// Show first 12 chars of key for debugging (e.g., "sk_test_xxxx" or "sk_live_xxxx")
+		keyPrefix := AppConfig.StripeSecretKey
+		if len(keyPrefix) > 12 {
+			keyPrefix = keyPrefix[:12] + "..."
+		}
+		log.Printf("Stripe configured: key=%s (length=%d), webhook_secret length=%d",
+			keyPrefix, len(AppConfig.StripeSecretKey), len(AppConfig.StripeWebhookSecret))
 	}
 
 	log.Println("Firebase project ID: ", AppConfig.FirebaseProjectID)

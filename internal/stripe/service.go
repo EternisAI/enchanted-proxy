@@ -36,10 +36,27 @@ type Service struct {
 // Returns:
 //   - *Service: Initialized Stripe service
 func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
-	stripe.Key = config.AppConfig.StripeSecretKey
+	log := logger.WithComponent("stripe_service")
+
+	// Validate and set Stripe API key
+	apiKey := config.AppConfig.StripeSecretKey
+	if apiKey == "" {
+		log.Warn("Stripe secret key is empty - API calls will fail")
+	} else if len(apiKey) < 20 {
+		log.Warn("Stripe secret key appears invalid (too short)", "length", len(apiKey))
+	} else {
+		// Log key prefix for debugging (first 7 chars: "sk_test" or "sk_live")
+		prefix := apiKey
+		if len(apiKey) > 12 {
+			prefix = apiKey[:12] + "..." // Show "sk_test_xxxx..." or "sk_live_xxxx..."
+		}
+		log.Info("Stripe API key configured", "key_prefix", prefix, "key_length", len(apiKey))
+	}
+
+	stripe.Key = apiKey
 	return &Service{
 		queries: queries,
-		logger:  logger.WithComponent("stripe_service"),
+		logger:  log,
 	}
 }
 
