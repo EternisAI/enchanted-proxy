@@ -32,6 +32,16 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 			provider = ""
 		}
 
+		// Check Pro status for all tiers (needed for pro_expires_at field)
+		isPro, proExpiresAt, err := trackingService.HasActivePro(c.Request.Context(), userID)
+		if err != nil {
+			reqLog.Error("failed to check pro status in rate limit status endpoint",
+				slog.String("error", err.Error()),
+				slog.String("user_id", userID))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get active pro"})
+			return
+		}
+
 		if !config.AppConfig.RateLimitEnabled {
 			response := gin.H{
 				"enabled":       false,
@@ -46,6 +56,9 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 			if provider != "" {
 				response["subscription_provider"] = provider
 			}
+			if proExpiresAt != nil {
+				response["pro_expires_at"] = proExpiresAt
+			}
 			c.JSON(http.StatusOK, response)
 			return
 		}
@@ -54,14 +67,6 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
 		// Pro tier.
-		isPro, _, err := trackingService.HasActivePro(c.Request.Context(), userID)
-		if err != nil {
-			reqLog.Error("failed to check pro status in rate limit status endpoint",
-				slog.String("error", err.Error()),
-				slog.String("user_id", userID))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get active pro"})
-			return
-		}
 		if isPro {
 			used, err := trackingService.GetUserTokenUsageToday(c.Request.Context(), userID)
 			if err != nil {
@@ -85,6 +90,9 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 			}
 			if provider != "" {
 				response["subscription_provider"] = provider
+			}
+			if proExpiresAt != nil {
+				response["pro_expires_at"] = proExpiresAt
 			}
 			c.JSON(http.StatusOK, response)
 			return
@@ -116,6 +124,9 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 			if provider != "" {
 				response["subscription_provider"] = provider
 			}
+			if proExpiresAt != nil {
+				response["pro_expires_at"] = proExpiresAt
+			}
 			c.JSON(http.StatusOK, response)
 			return
 		}
@@ -143,6 +154,9 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 		}
 		if provider != "" {
 			response["subscription_provider"] = provider
+		}
+		if proExpiresAt != nil {
+			response["pro_expires_at"] = proExpiresAt
 		}
 		c.JSON(http.StatusOK, response)
 	}
