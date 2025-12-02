@@ -22,10 +22,13 @@ type DeepResearchMessage struct {
 }
 
 type Entitlement struct {
-	UserID               string         `json:"userId"`
-	ProExpiresAt         sql.NullTime   `json:"proExpiresAt"`
-	SubscriptionProvider sql.NullString `json:"subscriptionProvider"`
-	UpdatedAt            time.Time      `json:"updatedAt"`
+	UserID       string       `json:"userId"`
+	ProExpiresAt sql.NullTime `json:"proExpiresAt"`
+	UpdatedAt    time.Time    `json:"updatedAt"`
+	// Subscription source: apple, stripe, or NULL for free tier
+	SubscriptionProvider *string `json:"subscriptionProvider"`
+	// Stripe Customer ID for billing portal access (cus_xxx)
+	StripeCustomerID *string `json:"stripeCustomerId"`
 }
 
 type InviteCode struct {

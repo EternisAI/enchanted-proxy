@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,10 +12,14 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/stripe/stripe-go/v84"
+	portalsession "github.com/stripe/stripe-go/v84/billingportal/session"
 	"github.com/stripe/stripe-go/v84/checkout/session"
 	"github.com/stripe/stripe-go/v84/subscription"
 	"github.com/stripe/stripe-go/v84/webhook"
 )
+
+// ErrNoCustomerID is returned when a user has no Stripe customer ID in the database.
+var ErrNoCustomerID = errors.New("no stripe customer ID found for user")
 
 // Service handles Stripe subscription management and webhook processing.
 // It manages the lifecycle of Pro subscriptions for web app users, including:
@@ -128,6 +133,60 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, userID string, pric
 	return sess.URL, nil
 }
 
+// CreatePortalSession generates a Stripe Billing Portal Session URL for subscription management.
+// The portal allows customers to:
+// - Manage active subscriptions (cancel, reactivate)
+// - Update payment methods
+// - View payment history and invoices
+// - Update billing information
+//
+// Parameters:
+//   - ctx: Context for the operation
+//   - userID: Firebase user ID of the customer
+//   - returnURL: URL to redirect customer after portal session (e.g., "https://silo.freysa.ai/settings")
+//
+// Returns:
+//   - string: Billing Portal Session URL for redirecting the user
+//   - error: Any error encountered during session creation (e.g., customer not found, API error)
+//
+// Example:
+//
+//	url, err := service.CreatePortalSession(ctx, "firebase_uid_123", "https://silo.freysa.ai/settings")
+//	if err != nil {
+//	    return err
+//	}
+//	// Redirect user to url in browser
+func (s *Service) CreatePortalSession(ctx context.Context, userID string, returnURL string) (string, error) {
+	// Get customer ID from entitlements table
+	customerID, err := s.queries.GetStripeCustomerID(ctx, userID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get stripe customer ID: %w", err)
+	}
+
+	if customerID == nil || *customerID == "" {
+		return "", ErrNoCustomerID
+	}
+
+	// Create billing portal session
+	params := &stripe.BillingPortalSessionParams{
+		Customer:  stripe.String(*customerID),
+		ReturnURL: stripe.String(returnURL),
+	}
+
+	sess, err := portalsession.New(params)
+	if err != nil {
+		return "", fmt.Errorf("failed to create billing portal session: %w", err)
+	}
+
+	s.logger.Info("billing portal session created",
+		"user_id", userID,
+		"customer_id", *customerID,
+		"session_id", sess.ID,
+		"return_url", returnURL)
+
+	return sess.URL, nil
+}
+
 // HandleWebhook processes incoming Stripe webhook events with signature verification.
 // This method:
 // 1. Verifies the webhook signature to ensure authenticity
@@ -218,10 +277,15 @@ func (s *Service) handleCheckoutCompleted(ctx context.Context, event stripe.Even
 	}
 	expiresAt := time.Unix(sub.Items.Data[0].CurrentPeriodEnd, 0)
 
+	// Get customer ID from subscription for billing portal access
+	customerID := sub.Customer.ID
+
+	provider := "stripe"
 	if err := s.queries.UpsertEntitlement(ctx, pgdb.UpsertEntitlementParams{
 		UserID:               userID,
 		ProExpiresAt:         sql.NullTime{Time: expiresAt, Valid: true},
-		SubscriptionProvider: sql.NullString{String: "stripe", Valid: true},
+		SubscriptionProvider: &provider,
+		StripeCustomerID:     &customerID,
 	}); err != nil {
 		return fmt.Errorf("failed to upsert entitlement: %w", err)
 	}
@@ -229,6 +293,7 @@ func (s *Service) handleCheckoutCompleted(ctx context.Context, event stripe.Even
 	s.logger.Info("pro access granted",
 		"user_id", userID,
 		"subscription_id", sub.ID,
+		"customer_id", customerID,
 		"expires_at", expiresAt,
 		"provider", "stripe")
 
@@ -268,10 +333,12 @@ func (s *Service) handleSubscriptionDeleted(ctx context.Context, event stripe.Ev
 	}
 
 	// Set pro_expires_at to NULL to revoke access
+	provider := "stripe"
 	if err := s.queries.UpsertEntitlement(ctx, pgdb.UpsertEntitlementParams{
 		UserID:               userID,
 		ProExpiresAt:         sql.NullTime{Valid: false},
-		SubscriptionProvider: sql.NullString{String: "stripe", Valid: true},
+		SubscriptionProvider: &provider,
+		StripeCustomerID:     nil, // Don't overwrite existing customer ID
 	}); err != nil {
 		return fmt.Errorf("failed to revoke entitlement: %w", err)
 	}
@@ -355,10 +422,12 @@ func (s *Service) handleSubscriptionUpdated(ctx context.Context, event stripe.Ev
 			"status", sub.Status)
 	}
 
+	provider := "stripe"
 	if err := s.queries.UpsertEntitlement(ctx, pgdb.UpsertEntitlementParams{
 		UserID:               userID,
 		ProExpiresAt:         proExpiresAt,
-		SubscriptionProvider: sql.NullString{String: "stripe", Valid: true},
+		SubscriptionProvider: &provider,
+		StripeCustomerID:     nil, // Don't overwrite existing customer ID
 	}); err != nil {
 		return fmt.Errorf("failed to update entitlement: %w", err)
 	}

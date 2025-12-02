@@ -22,11 +22,12 @@ type Querier interface {
 	DeleteTelegramChat(ctx context.Context, chatID int64) error
 	GetAllActiveTasks(ctx context.Context) ([]Task, error)
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
-	GetEntitlement(ctx context.Context, userID string) (Entitlement, error)
+	GetEntitlement(ctx context.Context, userID string) (GetEntitlementRow, error)
 	GetInviteCodeByCodeHash(ctx context.Context, codeHash string) (InviteCode, error)
 	GetInviteCodeByID(ctx context.Context, id int64) (InviteCode, error)
 	GetSessionMessageCount(ctx context.Context, sessionID string) (int64, error)
 	GetSessionMessages(ctx context.Context, sessionID string) ([]DeepResearchMessage, error)
+	GetStripeCustomerID(ctx context.Context, userID string) (*string, error)
 	GetTaskByID(ctx context.Context, taskID string) (Task, error)
 	GetTasksByChatID(ctx context.Context, chatID string) ([]Task, error)
 	GetTasksByUserID(ctx context.Context, userID string) ([]Task, error)

@@ -61,10 +61,12 @@ func (s *Service) AttachAppStoreSubscription(ctx context.Context, userID string,
 		return nil, time.Time{}, fmt.Errorf("missing expiresDate")
 	}
 
+	provider := "apple"
 	if err := s.queries.UpsertEntitlement(ctx, pgdb.UpsertEntitlementParams{
 		UserID:               userID,
 		ProExpiresAt:         expiresAt,
-		SubscriptionProvider: sql.NullString{String: "apple", Valid: true},
+		SubscriptionProvider: &provider,
+		StripeCustomerID:     nil, // Don't set for Apple subscriptions
 	}); err != nil {
 		return nil, time.Time{}, err
 	}

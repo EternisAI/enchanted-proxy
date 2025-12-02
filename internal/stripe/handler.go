@@ -1,6 +1,7 @@
 package stripe
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -126,6 +127,106 @@ func (h *Handler) CreateCheckoutSession(c *gin.Context) {
 		slog.String("session_url", sessionURL))
 
 	c.JSON(http.StatusOK, gin.H{"url": sessionURL})
+}
+
+// CreatePortalSession generates a Stripe Billing Portal Session URL for subscription management.
+//
+// Endpoint: POST /api/v1/stripe/create-portal-session
+// Authentication: Required (Firebase token)
+// Content-Type: application/json
+//
+// Request Body: (empty - no body required)
+//
+// Response (200 OK):
+//
+//	{
+//	  "url": "https://billing.stripe.com/session/bps_..."
+//	}
+//
+// Response (400 Bad Request):
+//
+//	{
+//	  "error": "no stripe customer found"
+//	}
+//
+// Response (401 Unauthorized):
+//
+//	{
+//	  "error": "unauthorized"
+//	}
+//
+// Response (500 Internal Server Error):
+//
+//	{
+//	  "error": "failed to create portal session"
+//	}
+//
+// Flow:
+// 1. Extract authenticated user ID from JWT token
+// 2. Retrieve Stripe customer ID from database
+// 3. Determine return URL from request origin (e.g., https://silo.freysa.ai/settings)
+// 4. Call Stripe API to create Billing Portal Session
+// 5. Return portal URL for client-side redirect
+//
+// Security:
+//   - Requires valid Firebase authentication token
+//   - User ID is extracted from verified JWT (cannot be spoofed)
+//   - Customer ID is retrieved from database (trusted source)
+//
+// Example Usage:
+//
+//	// From web app
+//	fetch('/api/v1/stripe/create-portal-session', {
+//	  method: 'POST',
+//	  headers: { 'Authorization': 'Bearer <token>' }
+//	})
+//	.then(res => res.json())
+//	.then(data => window.location.href = data.url)
+func (h *Handler) CreatePortalSession(c *gin.Context) {
+	log := h.logger.WithContext(c.Request.Context())
+
+	// Extract user ID from auth token
+	userID, ok := auth.GetUserID(c)
+	if !ok || userID == "" {
+		log.Error("unauthorized request - missing user ID")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	// Determine return URL from request origin
+	origin := c.GetHeader("Origin")
+	if origin == "" {
+		origin = c.GetHeader("Referer")
+	}
+	// Default to production domain if no origin/referer
+	if origin == "" {
+		origin = "https://silo.freysa.ai"
+	}
+	returnURL := origin + "/settings"
+
+	// Create portal session
+	portalURL, err := h.service.CreatePortalSession(c.Request.Context(), userID, returnURL)
+	if err != nil {
+		log.Error("failed to create portal session",
+			slog.String("user_id", userID),
+			slog.String("error", err.Error()))
+
+		// Check if error is due to missing customer ID
+		if errors.Is(err, ErrNoCustomerID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "no stripe customer found"})
+			return
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create portal session"})
+		return
+	}
+
+	log.Info("portal session created",
+		slog.String("user_id", userID),
+		slog.String("portal_url", portalURL),
+		slog.String("return_url", returnURL))
+
+	c.JSON(http.StatusOK, gin.H{"url": portalURL})
 }
 
 // HandleWebhook processes incoming Stripe webhook events.

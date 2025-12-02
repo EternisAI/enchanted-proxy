@@ -552,6 +552,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		stripe := api.Group("/stripe")
 		{
 			stripe.POST("/create-checkout-session", input.stripeHandler.CreateCheckoutSession)
+			stripe.POST("/create-portal-session", input.stripeHandler.CreatePortalSession)
 		}
 
 		// Search API routes (protected)

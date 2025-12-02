@@ -247,8 +247,8 @@ func (s *Service) GetSubscriptionProvider(ctx context.Context, userID string) (s
 		}
 		return "", err
 	}
-	if ent.SubscriptionProvider.Valid {
-		return ent.SubscriptionProvider.String, nil
+	if ent.SubscriptionProvider != nil {
+		return *ent.SubscriptionProvider, nil
 	}
 	return "", nil
 }
