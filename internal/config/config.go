@@ -58,10 +58,8 @@ type Config struct {
 	AppStoreIssuerID string
 
 	// Stripe Configuration
-	StripeSecretKey          string
-	StripeWebhookSecret      string
-	StripeCheckoutSuccessURL string // Checkout success redirect URL
-	StripeCheckoutCancelURL  string // Checkout cancel redirect URL
+	StripeSecretKey     string
+	StripeWebhookSecret string
 
 	// Telegram
 	EnableTelegramServer bool
@@ -197,10 +195,8 @@ func LoadConfig() {
 		AppStoreIssuerID: getEnvOrDefault("APPSTORE_ISSUER_ID", ""),
 
 		// Stripe (trim whitespace to avoid common config errors)
-		StripeSecretKey:          strings.TrimSpace(getEnvOrDefault("STRIPE_SECRET_KEY", "")),
-		StripeWebhookSecret:      strings.TrimSpace(getEnvOrDefault("STRIPE_WEBHOOK_SECRET", "")),
-		StripeCheckoutSuccessURL: getEnvOrDefault("STRIPE_CHECKOUT_SUCCESS_URL", "https://silo.eternis.ai/?session_id={CHECKOUT_SESSION_ID}"),
-		StripeCheckoutCancelURL:  getEnvOrDefault("STRIPE_CHECKOUT_CANCEL_URL", "https://silo.eternis.ai/pricing?canceled=true"),
+		StripeSecretKey:     strings.TrimSpace(getEnvOrDefault("STRIPE_SECRET_KEY", "")),
+		StripeWebhookSecret: strings.TrimSpace(getEnvOrDefault("STRIPE_WEBHOOK_SECRET", "")),
 
 		// Telegram
 		EnableTelegramServer: getEnvOrDefault("ENABLE_TELEGRAM_SERVER", "true") == "true",

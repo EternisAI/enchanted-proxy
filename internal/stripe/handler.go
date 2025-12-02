@@ -100,7 +100,17 @@ func (h *Handler) CreateCheckoutSession(c *gin.Context) {
 		return
 	}
 
-	sessionURL, err := h.service.CreateCheckoutSession(c.Request.Context(), userID, body.PriceID)
+	// Determine redirect URLs from request origin
+	origin := c.GetHeader("Origin")
+	if origin == "" {
+		origin = c.GetHeader("Referer")
+	}
+	// Default to production domain if no origin/referer
+	if origin == "" {
+		origin = "https://silo.freysa.ai"
+	}
+
+	sessionURL, err := h.service.CreateCheckoutSession(c.Request.Context(), userID, body.PriceID, origin)
 	if err != nil {
 		log.Error("failed to create checkout session",
 			slog.String("user_id", userID),

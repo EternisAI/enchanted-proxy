@@ -65,11 +65,13 @@ func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
 // - 3-day free trial with payment method required upfront
 // - Automatic subscription creation after trial
 // - Firebase user ID stored in subscription metadata for webhook processing
+// - Dynamic success/cancel URLs based on the request origin
 //
 // Parameters:
 //   - ctx: Context for the operation
 //   - userID: Firebase user ID of the purchaser
 //   - priceID: Stripe Price ID (e.g., price_1SZsJOBX38twNhdvGLmXmvm7)
+//   - origin: Origin URL from the request (e.g., "https://silo.freysa.ai")
 //
 // Returns:
 //   - string: Checkout Session URL for redirecting the user
@@ -77,12 +79,16 @@ func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
 //
 // Example:
 //
-//	url, err := service.CreateCheckoutSession(ctx, "firebase_uid_123", "price_xxx")
+//	url, err := service.CreateCheckoutSession(ctx, "firebase_uid_123", "price_xxx", "https://silo.freysa.ai")
 //	if err != nil {
 //	    return err
 //	}
 //	// Redirect user to url in browser
-func (s *Service) CreateCheckoutSession(ctx context.Context, userID string, priceID string) (string, error) {
+func (s *Service) CreateCheckoutSession(ctx context.Context, userID string, priceID string, origin string) (string, error) {
+	// Build success and cancel URLs dynamically from origin
+	successURL := origin + "/?session_id={CHECKOUT_SESSION_ID}"
+	cancelURL := origin + "/pricing?canceled=true"
+
 	params := &stripe.CheckoutSessionParams{
 		Mode: stripe.String(string(stripe.CheckoutSessionModeSubscription)),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
@@ -91,8 +97,8 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, userID string, pric
 				Quantity: stripe.Int64(1),
 			},
 		},
-		SuccessURL: stripe.String(config.AppConfig.StripeCheckoutSuccessURL),
-		CancelURL:  stripe.String(config.AppConfig.StripeCheckoutCancelURL),
+		SuccessURL: stripe.String(successURL),
+		CancelURL:  stripe.String(cancelURL),
 		SubscriptionData: &stripe.CheckoutSessionSubscriptionDataParams{
 			TrialPeriodDays: stripe.Int64(3), // 3-day free trial
 			TrialSettings: &stripe.CheckoutSessionSubscriptionDataTrialSettingsParams{
@@ -114,7 +120,10 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, userID string, pric
 	s.logger.Info("checkout session created",
 		"user_id", userID,
 		"price_id", priceID,
-		"session_id", sess.ID)
+		"session_id", sess.ID,
+		"origin", origin,
+		"success_url", successURL,
+		"cancel_url", cancelURL)
 
 	return sess.URL, nil
 }
