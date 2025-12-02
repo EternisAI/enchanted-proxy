@@ -35,6 +35,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/search"
 	"github.com/eternisai/enchanted-proxy/internal/storage/pg"
 	"github.com/eternisai/enchanted-proxy/internal/streaming"
+	"github.com/eternisai/enchanted-proxy/internal/stripe"
 	"github.com/eternisai/enchanted-proxy/internal/task"
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
@@ -136,6 +137,7 @@ func main() {
 	inviteCodeService := invitecode.NewService(db.Queries)
 	requestTrackingService := request_tracking.NewService(db.Queries, logger.WithComponent("request_tracking"))
 	iapService := iap.NewService(db.Queries)
+	stripeService := stripe.NewService(db.Queries, logger.WithComponent("stripe"))
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
 
@@ -284,6 +286,7 @@ func main() {
 	composioHandler := composio.NewHandler(composioService, logger.WithComponent("composio"))
 	inviteCodeHandler := invitecode.NewHandler(inviteCodeService)
 	iapHandler := iap.NewHandler(iapService, logger.WithComponent("iap"))
+	stripeHandler := stripe.NewHandler(stripeService, logger.WithComponent("stripe"))
 	mcpHandler := mcp.NewHandler(mcpService)
 	searchHandler := search.NewHandler(searchService, logger.WithComponent("search"))
 	taskHandler := task.NewHandler(taskService, logger.WithComponent("task"))
@@ -346,6 +349,7 @@ func main() {
 		composioHandler:        composioHandler,
 		inviteCodeHandler:      inviteCodeHandler,
 		iapHandler:             iapHandler,
+		stripeHandler:          stripeHandler,
 		mcpHandler:             mcpHandler,
 		searchHandler:          searchHandler,
 		taskHandler:            taskHandler,
@@ -464,6 +468,7 @@ type restServerInput struct {
 	composioHandler        *composio.Handler
 	inviteCodeHandler      *invitecode.Handler
 	iapHandler             *iap.Handler
+	stripeHandler          *stripe.Handler
 	mcpHandler             *mcp.Handler
 	searchHandler          *search.Handler
 	taskHandler            *task.Handler
@@ -496,6 +501,9 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 
 	// Debug/test endpoint (no auth required)
 	router.POST("/wa", waHandler(input.logger))
+
+	// Stripe webhook endpoint (no auth, signature verified)
+	router.POST("/stripe/webhook", input.stripeHandler.HandleWebhook)
 
 	// All routes use Firebase/JWT auth
 	router.Use(input.firebaseAuth.RequireAuth())
@@ -538,6 +546,12 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		sub := api.Group("/subscription")
 		{
 			sub.POST("/appstore/attach", input.iapHandler.AttachAppStoreSubscription)
+		}
+
+		// Stripe (protected)
+		stripe := api.Group("/stripe")
+		{
+			stripe.POST("/create-checkout-session", input.stripeHandler.CreateCheckoutSession)
 		}
 
 		// Search API routes (protected)

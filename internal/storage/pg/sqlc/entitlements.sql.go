@@ -11,7 +11,7 @@ import (
 )
 
 const getEntitlement = `-- name: GetEntitlement :one
-SELECT user_id, pro_expires_at, updated_at
+SELECT user_id, pro_expires_at, subscription_provider, updated_at
 FROM entitlements
 WHERE user_id = $1
 `
@@ -19,24 +19,26 @@ WHERE user_id = $1
 func (q *Queries) GetEntitlement(ctx context.Context, userID string) (Entitlement, error) {
 	row := q.db.QueryRowContext(ctx, getEntitlement, userID)
 	var i Entitlement
-	err := row.Scan(&i.UserID, &i.ProExpiresAt, &i.UpdatedAt)
+	err := row.Scan(&i.UserID, &i.ProExpiresAt, &i.SubscriptionProvider, &i.UpdatedAt)
 	return i, err
 }
 
 const upsertEntitlement = `-- name: UpsertEntitlement :exec
-INSERT INTO entitlements (user_id, pro_expires_at, updated_at)
-VALUES ($1, $2, NOW())
+INSERT INTO entitlements (user_id, pro_expires_at, subscription_provider, updated_at)
+VALUES ($1, $2, $3, NOW())
 ON CONFLICT (user_id) DO UPDATE SET
   pro_expires_at = EXCLUDED.pro_expires_at,
+  subscription_provider = EXCLUDED.subscription_provider,
   updated_at     = NOW()
 `
 
 type UpsertEntitlementParams struct {
-	UserID       string       `json:"userId"`
-	ProExpiresAt sql.NullTime `json:"proExpiresAt"`
+	UserID               string         `json:"userId"`
+	ProExpiresAt         sql.NullTime   `json:"proExpiresAt"`
+	SubscriptionProvider sql.NullString `json:"subscriptionProvider"`
 }
 
 func (q *Queries) UpsertEntitlement(ctx context.Context, arg UpsertEntitlementParams) error {
-	_, err := q.db.ExecContext(ctx, upsertEntitlement, arg.UserID, arg.ProExpiresAt)
+	_, err := q.db.ExecContext(ctx, upsertEntitlement, arg.UserID, arg.ProExpiresAt, arg.SubscriptionProvider)
 	return err
 }

@@ -62,8 +62,9 @@ func (s *Service) AttachAppStoreSubscription(ctx context.Context, userID string,
 	}
 
 	if err := s.queries.UpsertEntitlement(ctx, pgdb.UpsertEntitlementParams{
-		UserID:       userID,
-		ProExpiresAt: expiresAt,
+		UserID:               userID,
+		ProExpiresAt:         expiresAt,
+		SubscriptionProvider: sql.NullString{String: "apple", Valid: true},
 	}); err != nil {
 		return nil, time.Time{}, err
 	}

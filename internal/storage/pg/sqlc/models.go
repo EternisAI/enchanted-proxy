@@ -22,9 +22,10 @@ type DeepResearchMessage struct {
 }
 
 type Entitlement struct {
-	UserID       string       `json:"userId"`
-	ProExpiresAt sql.NullTime `json:"proExpiresAt"`
-	UpdatedAt    time.Time    `json:"updatedAt"`
+	UserID               string         `json:"userId"`
+	ProExpiresAt         sql.NullTime   `json:"proExpiresAt"`
+	SubscriptionProvider sql.NullString `json:"subscriptionProvider"`
+	UpdatedAt            time.Time      `json:"updatedAt"`
 }
 
 type InviteCode struct {

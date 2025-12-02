@@ -56,6 +56,12 @@ type Config struct {
 	AppStoreBundleID string
 	AppStoreIssuerID string
 
+	// Stripe Configuration
+	StripeSecretKey          string
+	StripeWebhookSecret      string
+	StripeCheckoutSuccessURL string // Checkout success redirect URL
+	StripeCheckoutCancelURL  string // Checkout cancel redirect URL
+
 	// Telegram
 	EnableTelegramServer bool
 	TelegramToken        string
@@ -100,11 +106,11 @@ type Config struct {
 	MessageStorageTimeoutSeconds    int  // Firestore operation timeout in seconds (prevents workers from hanging on slow/failed operations)
 
 	// Background Polling (for GPT-5 Pro and other long-running models)
-	BackgroundPollingEnabled        bool // Enable background polling mode for GPT-5 Pro (recommended to avoid timeouts)
-	BackgroundPollingInterval       int  // Seconds between OpenAI status polls (default: 2, increases to max after initial phase)
-	BackgroundPollingMaxInterval    int  // Maximum seconds between polls (default: 10, used after initial rapid polling)
-	BackgroundPollingTimeout        int  // Minutes before giving up on polling (default: 30)
-	BackgroundMaxConcurrentPolls    int  // Maximum number of concurrent polling workers (default: 100)
+	BackgroundPollingEnabled     bool // Enable background polling mode for GPT-5 Pro (recommended to avoid timeouts)
+	BackgroundPollingInterval    int  // Seconds between OpenAI status polls (default: 2, increases to max after initial phase)
+	BackgroundPollingMaxInterval int  // Maximum seconds between polls (default: 10, used after initial rapid polling)
+	BackgroundPollingTimeout     int  // Minutes before giving up on polling (default: 30)
+	BackgroundMaxConcurrentPolls int  // Maximum number of concurrent polling workers (default: 100)
 }
 
 var AppConfig *Config
@@ -188,6 +194,12 @@ func LoadConfig() {
 		AppStoreAPIKeyID: getEnvOrDefault("APPSTORE_API_KEY_ID", ""),
 		AppStoreBundleID: getEnvOrDefault("APPSTORE_BUNDLE_ID", ""),
 		AppStoreIssuerID: getEnvOrDefault("APPSTORE_ISSUER_ID", ""),
+
+		// Stripe
+		StripeSecretKey:          getEnvOrDefault("STRIPE_SECRET_KEY", ""),
+		StripeWebhookSecret:      getEnvOrDefault("STRIPE_WEBHOOK_SECRET", ""),
+		StripeCheckoutSuccessURL: getEnvOrDefault("STRIPE_CHECKOUT_SUCCESS_URL", "https://silo.eternis.ai/?session_id={CHECKOUT_SESSION_ID}"),
+		StripeCheckoutCancelURL:  getEnvOrDefault("STRIPE_CHECKOUT_CANCEL_URL", "https://silo.eternis.ai/pricing?canceled=true"),
 
 		// Telegram
 		EnableTelegramServer: getEnvOrDefault("ENABLE_TELEGRAM_SERVER", "true") == "true",
