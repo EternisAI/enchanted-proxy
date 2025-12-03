@@ -1,4 +1,4 @@
-package proxy
+package tools
 
 // modelsWithoutToolSupport lists models that don't support native tool calling.
 // Matches iOS implementation in ChatsLib/Sources/ChatsLib/Models/AIChatModels.swift

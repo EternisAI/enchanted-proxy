@@ -343,7 +343,7 @@ func ProxyHandler(
 
 						// Inject tool definitions if not already present and model supports them
 						if _, hasTools := reqBody["tools"]; !hasTools {
-							if SupportsTools(modelID) {
+							if tools.SupportsTools(modelID) {
 								toolDefs := toolRegistry.GetDefinitions()
 								if len(toolDefs) > 0 {
 									reqBody["tools"] = toolDefs

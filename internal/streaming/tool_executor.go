@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/logger"
-	"github.com/eternisai/enchanted-proxy/internal/proxy"
 	"github.com/eternisai/enchanted-proxy/internal/tools"
 )
 
@@ -221,7 +220,7 @@ func (te *ToolExecutor) CreateContinuationRequest(
 	// Include tool definitions in continuation requests if model supports them
 	// This is necessary because the assistant message contains tool_calls,
 	// and the AI provider needs the tool definitions to understand the context
-	if proxy.SupportsTools(modelID) {
+	if tools.SupportsTools(modelID) {
 		toolDefs := te.registry.GetDefinitions()
 		if len(toolDefs) > 0 {
 			payload["tools"] = toolDefs
