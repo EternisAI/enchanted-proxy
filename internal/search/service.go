@@ -386,7 +386,7 @@ func (s *Service) buildExaAPIPayload(req ExaSearchRequest) ([]byte, error) {
 
 	payload := map[string]interface{}{
 		"query": req.Queries[0], // Use first query since this is called per query
-		"type":  "keyword",      // use keyword search type
+		"type":  "deep",         // use deep search type (faster and similar quality to keyword)
 	}
 
 	// Set number of results (default 10, max 10)
@@ -399,13 +399,10 @@ func (s *Service) buildExaAPIPayload(req ExaSearchRequest) ([]byte, error) {
 	}
 	payload["numResults"] = numResults
 
-	// Configure content options - hardcoded values
+	// Configure content options - use Exa's built-in summary instead of custom prompt
 	contents := map[string]interface{}{
-		"summary": map[string]interface{}{
-			"query": "Summarize the entire content of the page without omitting any details, numbers, names, examples, or specific language. Include all sections, subheadings, and important bullet points. Preserve the original structure of the content as much as possible. Do not generalize—be as thorough and precise as if you were creating a comprehensive executive briefing based on the page.",
-		},
+		"summary": true, // Use Exa's default summary generation
 	}
-	// Note: text is always excluded (include_text = false by default)
 
 	payload["contents"] = contents
 
