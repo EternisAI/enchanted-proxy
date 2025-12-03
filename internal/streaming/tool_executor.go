@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/logger"
+	"github.com/eternisai/enchanted-proxy/internal/proxy"
 	"github.com/eternisai/enchanted-proxy/internal/tools"
 )
 
@@ -211,14 +212,26 @@ func (te *ToolExecutor) CreateContinuationRequest(
 	payload["messages"] = messages
 	payload["stream"] = true
 
-	// CRITICAL: Always include tool definitions in continuation requests
+	// Extract model from request for capability check
+	modelID := ""
+	if modelField, ok := payload["model"].(string); ok {
+		modelID = modelField
+	}
+
+	// Include tool definitions in continuation requests if model supports them
 	// This is necessary because the assistant message contains tool_calls,
 	// and the AI provider needs the tool definitions to understand the context
-	toolDefs := te.registry.GetDefinitions()
-	if len(toolDefs) > 0 {
-		payload["tools"] = toolDefs
-		te.logger.Debug("included tool definitions in continuation",
-			slog.Int("tool_count", len(toolDefs)))
+	if proxy.SupportsTools(modelID) {
+		toolDefs := te.registry.GetDefinitions()
+		if len(toolDefs) > 0 {
+			payload["tools"] = toolDefs
+			te.logger.Debug("included tool definitions in continuation",
+				slog.Int("tool_count", len(toolDefs)),
+				slog.String("model", modelID))
+		}
+	} else {
+		te.logger.Debug("skipped tool definitions in continuation for model without support",
+			slog.String("model", modelID))
 	}
 
 	payloadBytes, err := json.Marshal(payload)

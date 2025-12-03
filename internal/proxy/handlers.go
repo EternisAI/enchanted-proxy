@@ -335,13 +335,25 @@ func ProxyHandler(
 					// Parse request body
 					var reqBody map[string]interface{}
 					if err := json.Unmarshal(bodyBytes, &reqBody); err == nil {
-						// Inject tool definitions if not already present
+						// Extract model ID from request
+						modelID := ""
+						if modelField, ok := reqBody["model"].(string); ok {
+							modelID = modelField
+						}
+
+						// Inject tool definitions if not already present and model supports them
 						if _, hasTools := reqBody["tools"]; !hasTools {
-							toolDefs := toolRegistry.GetDefinitions()
-							if len(toolDefs) > 0 {
-								reqBody["tools"] = toolDefs
-								log.Debug("injected tool definitions",
-									slog.Int("tool_count", len(toolDefs)))
+							if SupportsTools(modelID) {
+								toolDefs := toolRegistry.GetDefinitions()
+								if len(toolDefs) > 0 {
+									reqBody["tools"] = toolDefs
+									log.Debug("injected tool definitions",
+										slog.Int("tool_count", len(toolDefs)),
+										slog.String("model", modelID))
+								}
+							} else {
+								log.Debug("skipped tool injection for model without tool support",
+									slog.String("model", modelID))
 							}
 						}
 
