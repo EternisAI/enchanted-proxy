@@ -94,7 +94,7 @@ func ProxyHandler(
 			}
 			c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
 
-			model = extractModelFromRequestBody(c.Request.URL.Path, requestBody)
+			model = ExtractModelFromRequestBody(c.Request.URL.Path, requestBody)
 
 			// Extract chatId and messageId from request body for session tracking
 			// Store in context so handlers can access them as fallback if headers are missing
@@ -314,12 +314,12 @@ func ProxyHandler(
 			if isStreaming {
 				// Use broadcast streaming if StreamManager available, otherwise legacy
 				if streamManager != nil {
-					return handleStreamingWithBroadcast(c, resp, log, model, upstreamLatency, trackingService, messageService, streamManager, cfg)
+					return handleStreamingWithBroadcast(c, resp, log, model, upstreamLatency, trackingService, messageService, streamManager, cfg, provider)
 				} else {
-					return handleStreamingLegacy(resp, log, model, upstreamLatency, c, trackingService, messageService)
+					return handleStreamingLegacy(resp, log, model, upstreamLatency, c, trackingService, messageService, provider)
 				}
 			} else {
-				return handleNonStreamingResponse(resp, log, model, upstreamLatency, c, trackingService, messageService)
+				return handleNonStreamingResponse(resp, log, model, upstreamLatency, c, trackingService, messageService, provider)
 			}
 		}
 
@@ -403,7 +403,7 @@ func ProxyHandler(
 }
 
 // handleStreamingResponse extracts token usage from streaming responses.
-func handleStreamingResponse(resp *http.Response, log *logger.Logger, model string, upstreamLatency time.Duration, c *gin.Context, trackingService *request_tracking.Service, messageService *messaging.Service) error {
+func handleStreamingResponse(resp *http.Response, log *logger.Logger, model string, upstreamLatency time.Duration, c *gin.Context, trackingService *request_tracking.Service, messageService *messaging.Service, provider *routing.ProviderConfig) error {
 	pr, pw := io.Pipe()
 	originalBody := resp.Body
 	resp.Body = pr
@@ -464,7 +464,12 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 
 		logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, nil, c.Request.Context())
 
-		logRequestToDatabase(c, trackingService, model, tokenUsage)
+		// Log with multiplier if provider is available
+		if provider != nil {
+			logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
+		} else {
+			logRequestToDatabase(c, trackingService, model, tokenUsage)
+		}
 
 		// Save message to Firestore asynchronously
 		isError := resp.StatusCode >= 400
@@ -477,7 +482,7 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 }
 
 // handleNonStreamingResponse extracts token usage from non-streaming responses.
-func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model string, upstreamLatency time.Duration, c *gin.Context, trackingService *request_tracking.Service, messageService *messaging.Service) error {
+func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model string, upstreamLatency time.Duration, c *gin.Context, trackingService *request_tracking.Service, messageService *messaging.Service, provider *routing.ProviderConfig) error {
 	var responseBody []byte
 	if resp.Body != nil {
 		responseBody, _ = io.ReadAll(resp.Body)
@@ -501,7 +506,12 @@ func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model s
 
 	logProxyResponse(log, resp, false, upstreamLatency, model, tokenUsage, responseBody, c.Request.Context())
 
-	logRequestToDatabase(c, trackingService, model, tokenUsage)
+	// Log with multiplier if provider is available
+	if provider != nil {
+		logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
+	} else {
+		logRequestToDatabase(c, trackingService, model, tokenUsage)
+	}
 
 	// Save message to Firestore asynchronously
 	isError := resp.StatusCode >= 400
@@ -538,10 +548,10 @@ func logProxyResponse(log *logger.Logger, resp *http.Response, isStreaming bool,
 
 // logRequestToDatabase logs a request to the database with token usage data.
 func logRequestToDatabase(c *gin.Context, trackingService *request_tracking.Service, model string, tokenUsage *Usage) {
-	logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, "")
+	logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, "", 1.0)
 }
 
-func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_tracking.Service, model string, tokenUsage *Usage, providerName string) {
+func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_tracking.Service, model string, tokenUsage *Usage, providerName string, multiplier float64) {
 	userID, exists := auth.GetUserID(c)
 	if !exists {
 		return
@@ -563,22 +573,43 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 		Provider: provider,
 	}
 
-	var tokenData *request_tracking.TokenUsage
-	if tokenUsage != nil {
-		tokenData = &request_tracking.TokenUsage{
+	// Use plan token tracking if multiplier is provided and we have token data
+	if tokenUsage != nil && multiplier > 0 {
+		planTokens := int(float64(tokenUsage.TotalTokens) * multiplier)
+		tokenData := &request_tracking.TokenUsageWithMultiplier{
+			PromptTokens:     tokenUsage.PromptTokens,
+			CompletionTokens: tokenUsage.CompletionTokens,
+			TotalTokens:      tokenUsage.TotalTokens,
+			Multiplier:       multiplier,
+			PlanTokens:       planTokens,
+		}
+		if err := trackingService.LogRequestWithPlanTokensAsync(c.Request.Context(), info, tokenData); err != nil {
+			if loggerValue := c.Value("logger"); loggerValue != nil {
+				if log, ok := loggerValue.(*logger.Logger); ok {
+					log.Error("failed to log request with plan tokens to database",
+						slog.String("user_id", userID),
+						slog.String("endpoint", endpoint),
+						slog.Float64("multiplier", multiplier),
+						slog.Int("plan_tokens", planTokens),
+						slog.String("error", err.Error()))
+				}
+			}
+		}
+	} else if tokenUsage != nil {
+		// Fallback to old method without multiplier
+		tokenData := &request_tracking.TokenUsage{
 			PromptTokens:     tokenUsage.PromptTokens,
 			CompletionTokens: tokenUsage.CompletionTokens,
 			TotalTokens:      tokenUsage.TotalTokens,
 		}
-	}
-
-	if err := trackingService.LogRequestWithTokensAsync(c.Request.Context(), info, tokenData); err != nil {
-		if loggerValue := c.Value("logger"); loggerValue != nil {
-			if log, ok := loggerValue.(*logger.Logger); ok {
-				log.Error("failed to log request to database",
-					slog.String("user_id", userID),
-					slog.String("endpoint", endpoint),
-					slog.String("error", err.Error()))
+		if err := trackingService.LogRequestWithTokensAsync(c.Request.Context(), info, tokenData); err != nil {
+			if loggerValue := c.Value("logger"); loggerValue != nil {
+				if log, ok := loggerValue.(*logger.Logger); ok {
+					log.Error("failed to log request to database",
+						slog.String("user_id", userID),
+						slog.String("endpoint", endpoint),
+						slog.String("error", err.Error()))
+				}
 			}
 		}
 	}

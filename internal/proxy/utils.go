@@ -4,28 +4,14 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/eternisai/enchanted-proxy/internal/common"
 	"github.com/eternisai/enchanted-proxy/internal/config"
 )
 
-// extractModelFromRequestBody extracts the model field from request body bytes.
-func extractModelFromRequestBody(path string, body []byte) string {
-	if path != "/chat/completions" {
-		return ""
-	}
-
-	if len(body) == 0 {
-		return ""
-	}
-
-	var requestData struct {
-		Model string `json:"model"`
-	}
-
-	if err := json.Unmarshal(body, &requestData); err != nil {
-		return ""
-	}
-
-	return requestData.Model
+// ExtractModelFromRequestBody extracts the model field from request body bytes.
+// Delegates to common package to avoid duplication.
+func ExtractModelFromRequestBody(path string, body []byte) string {
+	return common.ExtractModelFromRequestBody(path, body)
 }
 
 // logRequestBody safely logs relevant parts of the request body for debugging.

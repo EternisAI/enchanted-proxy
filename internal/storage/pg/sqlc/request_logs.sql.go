@@ -39,6 +39,41 @@ func (q *Queries) CreateRequestLog(ctx context.Context, arg CreateRequestLogPara
 	return err
 }
 
+const createRequestLogWithPlanTokens = `-- name: CreateRequestLogWithPlanTokens :exec
+INSERT INTO request_logs (
+    user_id, endpoint, model, provider,
+    prompt_tokens, completion_tokens, total_tokens,
+    plan_tokens, token_multiplier
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+`
+
+type CreateRequestLogWithPlanTokensParams struct {
+	UserID           string         `json:"userId"`
+	Endpoint         string         `json:"endpoint"`
+	Model            *string        `json:"model"`
+	Provider         string         `json:"provider"`
+	PromptTokens     sql.NullInt32  `json:"promptTokens"`
+	CompletionTokens sql.NullInt32  `json:"completionTokens"`
+	TotalTokens      sql.NullInt32  `json:"totalTokens"`
+	PlanTokens       sql.NullInt32  `json:"planTokens"`
+	TokenMultiplier  sql.NullString `json:"tokenMultiplier"`
+}
+
+func (q *Queries) CreateRequestLogWithPlanTokens(ctx context.Context, arg CreateRequestLogWithPlanTokensParams) error {
+	_, err := q.db.ExecContext(ctx, createRequestLogWithPlanTokens,
+		arg.UserID,
+		arg.Endpoint,
+		arg.Model,
+		arg.Provider,
+		arg.PromptTokens,
+		arg.CompletionTokens,
+		arg.TotalTokens,
+		arg.PlanTokens,
+		arg.TokenMultiplier,
+	)
+	return err
+}
+
 const getUserLifetimeTokenUsage = `-- name: GetUserLifetimeTokenUsage :one
 SELECT COALESCE(SUM(total_tokens), 0)::BIGINT as total_tokens
 FROM request_logs
@@ -50,6 +85,56 @@ func (q *Queries) GetUserLifetimeTokenUsage(ctx context.Context, userID string) 
 	var total_tokens int64
 	err := row.Scan(&total_tokens)
 	return total_tokens, err
+}
+
+const getUserPlanTokensThisMonth = `-- name: GetUserPlanTokensThisMonth :one
+SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
+FROM request_logs
+WHERE user_id = $1
+  AND created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')
+  AND plan_tokens IS NOT NULL
+`
+
+// Note: Queries request_logs directly (not materialized view) because monthly buckets aren't pre-aggregated.
+// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
+// Month starts on 1st at 00:00 UTC per PostgreSQL DATE_TRUNC('month') behavior.
+func (q *Queries) GetUserPlanTokensThisMonth(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserPlanTokensThisMonth, userID)
+	var plan_tokens int64
+	err := row.Scan(&plan_tokens)
+	return plan_tokens, err
+}
+
+const getUserPlanTokensThisWeek = `-- name: GetUserPlanTokensThisWeek :one
+SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
+FROM request_logs
+WHERE user_id = $1
+  AND created_at >= DATE_TRUNC('week', NOW() AT TIME ZONE 'UTC')
+  AND plan_tokens IS NOT NULL
+`
+
+// Note: Queries request_logs directly (not materialized view) because weekly buckets aren't pre-aggregated.
+// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
+// Week starts Monday at 00:00 UTC per PostgreSQL DATE_TRUNC('week') behavior.
+func (q *Queries) GetUserPlanTokensThisWeek(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserPlanTokensThisWeek, userID)
+	var plan_tokens int64
+	err := row.Scan(&plan_tokens)
+	return plan_tokens, err
+}
+
+const getUserPlanTokensToday = `-- name: GetUserPlanTokensToday :one
+SELECT COALESCE(SUM(total_plan_tokens), 0)::BIGINT as plan_tokens
+FROM user_token_usage_daily
+WHERE user_id = $1
+  AND day_bucket = DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
+`
+
+func (q *Queries) GetUserPlanTokensToday(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserPlanTokensToday, userID)
+	var plan_tokens int64
+	err := row.Scan(&plan_tokens)
+	return plan_tokens, err
 }
 
 const getUserRequestCountInLastDay = `-- name: GetUserRequestCountInLastDay :one
@@ -80,20 +165,6 @@ type GetUserRequestCountInTimeWindowParams struct {
 
 func (q *Queries) GetUserRequestCountInTimeWindow(ctx context.Context, arg GetUserRequestCountInTimeWindowParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getUserRequestCountInTimeWindow, arg.UserID, arg.DayBucket)
-	var total_requests int64
-	err := row.Scan(&total_requests)
-	return total_requests, err
-}
-
-const getUserRequestCountToday = `-- name: GetUserRequestCountToday :one
-SELECT COALESCE(SUM(request_count), 0)::BIGINT as total_requests
-FROM user_request_counts_daily
-WHERE user_id = $1
-  AND day_bucket = DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
-`
-
-func (q *Queries) GetUserRequestCountToday(ctx context.Context, userID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserRequestCountToday, userID)
 	var total_requests int64
 	err := row.Scan(&total_requests)
 	return total_requests, err

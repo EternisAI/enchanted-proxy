@@ -10,6 +10,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
+	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"log/slog"
 )
 
@@ -23,28 +24,31 @@ import (
 //
 // Thread-safety: All methods are thread-safe.
 type PollingManager struct {
-	workers        map[string]context.CancelFunc // response_id → cancel function
-	workersMu      sync.RWMutex
-	messageService *messaging.Service
-	logger         *logger.Logger
-	cfg            *config.Config
-	shutdown       chan struct{}
-	wg             sync.WaitGroup
-	activeCount    atomic.Int32
+	workers         map[string]context.CancelFunc // response_id → cancel function
+	workersMu       sync.RWMutex
+	messageService  *messaging.Service
+	trackingService *request_tracking.Service
+	logger          *logger.Logger
+	cfg             *config.Config
+	shutdown        chan struct{}
+	wg              sync.WaitGroup
+	activeCount     atomic.Int32
 }
 
 // NewPollingManager creates a new polling manager.
 func NewPollingManager(
 	messageService *messaging.Service,
+	trackingService *request_tracking.Service,
 	logger *logger.Logger,
 	cfg *config.Config,
 ) *PollingManager {
 	return &PollingManager{
-		workers:        make(map[string]context.CancelFunc),
-		messageService: messageService,
-		logger:         logger.WithComponent("polling_manager"),
-		cfg:            cfg,
-		shutdown:       make(chan struct{}),
+		workers:         make(map[string]context.CancelFunc),
+		messageService:  messageService,
+		trackingService: trackingService,
+		logger:          logger.WithComponent("polling_manager"),
+		cfg:             cfg,
+		shutdown:        make(chan struct{}),
 	}
 }
 
@@ -58,10 +62,11 @@ func NewPollingManager(
 //   - job: Polling job details
 //   - apiKey: OpenAI API key for this request
 //   - baseURL: OpenAI base URL
+//   - tokenMultiplier: Cost multiplier for this model (e.g., 50× for GPT-5 Pro)
 //
 // Returns:
 //   - error: If starting worker failed (e.g., too many workers)
-func (pm *PollingManager) StartPolling(ctx context.Context, job PollingJob, apiKey, baseURL string) error {
+func (pm *PollingManager) StartPolling(ctx context.Context, job PollingJob, apiKey, baseURL string, tokenMultiplier float64) error {
 	// Check if already polling this response
 	pm.workersMu.RLock()
 	if _, exists := pm.workers[job.ResponseID]; exists {
@@ -93,7 +98,7 @@ func (pm *PollingManager) StartPolling(ctx context.Context, job PollingJob, apiK
 
 	// Spawn worker goroutine
 	pm.wg.Add(1)
-	go pm.runWorker(workerCtx, job, apiKey, baseURL, cancel)
+	go pm.runWorker(workerCtx, job, apiKey, baseURL, tokenMultiplier, cancel)
 
 	pm.logger.Info("started background polling worker",
 		slog.String("response_id", job.ResponseID),
@@ -103,7 +108,7 @@ func (pm *PollingManager) StartPolling(ctx context.Context, job PollingJob, apiK
 }
 
 // runWorker runs a polling worker in a goroutine.
-func (pm *PollingManager) runWorker(ctx context.Context, job PollingJob, apiKey, baseURL string, cancel context.CancelFunc) {
+func (pm *PollingManager) runWorker(ctx context.Context, job PollingJob, apiKey, baseURL string, tokenMultiplier float64, cancel context.CancelFunc) {
 	defer pm.wg.Done()
 	defer cancel()
 	defer pm.activeCount.Add(-1)
@@ -118,8 +123,8 @@ func (pm *PollingManager) runWorker(ctx context.Context, job PollingJob, apiKey,
 	// Create OpenAI client for this worker
 	openAIClient := NewOpenAIClient(apiKey, baseURL, pm.logger)
 
-	// Create worker
-	worker := NewPollingWorker(job, openAIClient, pm.messageService, pm.logger, pm.cfg)
+	// Create worker with tracking service and multiplier
+	worker := NewPollingWorker(job, openAIClient, pm.messageService, pm.trackingService, pm.logger, pm.cfg, tokenMultiplier)
 
 	// Run worker (blocks until done)
 	if err := worker.Run(ctx); err != nil {

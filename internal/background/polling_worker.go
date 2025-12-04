@@ -8,6 +8,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
+	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"log/slog"
 )
 
@@ -16,18 +17,20 @@ import (
 // Lifecycle:
 //  1. Start polling every N seconds
 //  2. Update Firestore generationState as status changes
-//  3. When completed: fetch full response, save to Firestore
+//  3. When completed: fetch full response, save to Firestore, log token usage
 //  4. When failed: save error to Firestore
 //  5. Cleanup and exit
 //
 // Thread-safety: Each worker runs in its own goroutine.
 type PollingWorker struct {
-	job            PollingJob
-	openAIClient   *OpenAIClient
-	messageService *messaging.Service
-	logger         *logger.Logger
-	pollCount      int
-	cfg            *config.Config
+	job             PollingJob
+	openAIClient    *OpenAIClient
+	messageService  *messaging.Service
+	trackingService *request_tracking.Service
+	logger          *logger.Logger
+	pollCount       int
+	cfg             *config.Config
+	tokenMultiplier float64 // Cost multiplier for this model (e.g., 50× for GPT-5 Pro)
 }
 
 // NewPollingWorker creates a new polling worker.
@@ -35,15 +38,19 @@ func NewPollingWorker(
 	job PollingJob,
 	openAIClient *OpenAIClient,
 	messageService *messaging.Service,
+	trackingService *request_tracking.Service,
 	logger *logger.Logger,
 	cfg *config.Config,
+	tokenMultiplier float64,
 ) *PollingWorker {
 	return &PollingWorker{
-		job:            job,
-		openAIClient:   openAIClient,
-		messageService: messageService,
-		logger:         logger.WithComponent("polling_worker"),
-		cfg:            cfg,
+		job:             job,
+		openAIClient:    openAIClient,
+		messageService:  messageService,
+		trackingService: trackingService,
+		logger:          logger.WithComponent("polling_worker"),
+		cfg:             cfg,
+		tokenMultiplier: tokenMultiplier,
 	}
 }
 
@@ -279,6 +286,65 @@ func (w *PollingWorker) fetchAndSaveResponse(ctx context.Context) error {
 
 	w.logger.Info("successfully saved completed response to Firestore",
 		slog.String("response_id", w.job.ResponseID))
+
+	// Log token usage to database for GPT-5 Pro requests
+	if content.Usage == nil {
+		w.logger.Warn("no token usage data in completed response",
+			slog.String("response_id", w.job.ResponseID))
+	} else if w.trackingService == nil {
+		// CRITICAL: Tracking service unavailable - cannot log GPT-5 Pro tokens
+		// This causes revenue loss and rate limiting bypass
+		w.logger.Error("tracking service unavailable - cannot log GPT-5 Pro tokens",
+			slog.String("response_id", w.job.ResponseID),
+			slog.Int("total_tokens", content.Usage.TotalTokens),
+			slog.String("model", w.job.Model),
+			slog.String("user_id", w.job.UserID))
+		// Note: Consider failing the request or alerting in production
+	} else {
+		// Calculate plan tokens using multiplier (e.g., 50× for GPT-5 Pro)
+		planTokens := int(float64(content.Usage.TotalTokens) * w.tokenMultiplier)
+
+		tokenData := &request_tracking.TokenUsageWithMultiplier{
+			PromptTokens:     content.Usage.PromptTokens,
+			CompletionTokens: content.Usage.CompletionTokens,
+			TotalTokens:      content.Usage.TotalTokens,
+			Multiplier:       w.tokenMultiplier,
+			PlanTokens:       planTokens,
+		}
+
+		requestInfo := request_tracking.RequestInfo{
+			UserID:           w.job.UserID,
+			Endpoint:         "/v1/responses",
+			Model:            w.job.Model,
+			Provider:         "GPT 5 Pro",
+			PromptTokens:     &content.Usage.PromptTokens,
+			CompletionTokens: &content.Usage.CompletionTokens,
+			TotalTokens:      &content.Usage.TotalTokens,
+			PlanTokens:       &planTokens,
+			Multiplier:       &w.tokenMultiplier,
+		}
+
+		// Use background context to ensure log completes even if request context cancelled
+		logCtx, logCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer logCancel()
+
+		if err := w.trackingService.LogRequestWithPlanTokensAsync(logCtx, requestInfo, tokenData); err != nil {
+			w.logger.Error("failed to log token usage for GPT-5 Pro response",
+				slog.String("response_id", w.job.ResponseID),
+				slog.Int("total_tokens", content.Usage.TotalTokens),
+				slog.Int("plan_tokens", planTokens),
+				slog.Float64("multiplier", w.tokenMultiplier),
+				slog.String("error", err.Error()))
+		} else {
+			w.logger.Info("logged token usage for GPT-5 Pro response",
+				slog.String("response_id", w.job.ResponseID),
+				slog.Int("prompt_tokens", content.Usage.PromptTokens),
+				slog.Int("completion_tokens", content.Usage.CompletionTokens),
+				slog.Int("total_tokens", content.Usage.TotalTokens),
+				slog.Int("plan_tokens", planTokens),
+				slog.Float64("multiplier", w.tokenMultiplier))
+		}
+	}
 
 	return nil
 }

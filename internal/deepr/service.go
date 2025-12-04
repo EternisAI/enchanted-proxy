@@ -7,12 +7,15 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
+	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
+	"github.com/eternisai/enchanted-proxy/internal/tiers"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -27,6 +30,7 @@ type Service struct {
 	encryptionService            *messaging.EncryptionService
 	firestoreClient              *messaging.FirestoreClient
 	deepResearchRateLimitEnabled bool
+	queries                      pgdb.Querier // For tier-based quota enforcement
 }
 
 // mapEventTypeToState maps event types from deep research server to session states.
@@ -82,10 +86,141 @@ func (s *Service) canForwardMessage(ctx context.Context, userID, chatID string) 
 	return true, sessionState.State, nil
 }
 
-// validateFreemiumAccess checks if a user can start or continue a deep research session
-// Premium users (HasActivePro = true): Can have UNLIMITED parallel deep research sessions with no restrictions
-// Freemium users: Limited to 1 active session at a time and 1 total completed session lifetime
-// Returns nil if user is allowed to proceed, error otherwise.
+// checkDeepResearchQuota validates run limits and enforces per-run caps using tier-based system.
+// This replaces the old Firestore-based freemium validation with PostgreSQL tier system.
+func (s *Service) checkDeepResearchQuota(ctx context.Context, userID string, tierConfig tiers.Config) error {
+	log := s.logger.WithContext(ctx).WithComponent("deepr")
+
+	if !s.deepResearchRateLimitEnabled {
+		log.Info("deep research rate limiting disabled, skipping quota check",
+			slog.String("user_id", userID))
+		return nil
+	}
+
+	// Check active jobs (applies to free tier with max 1 active session)
+	if tierConfig.DeepResearchMaxActiveSessions == 1 {
+		hasActive, err := s.queries.HasActiveDeepResearchRun(ctx, userID)
+		if err != nil {
+			log.Error("failed to check active runs",
+				slog.String("user_id", userID),
+				slog.String("error", err.Error()))
+			return fmt.Errorf("failed to check active runs: %w", err)
+		}
+		if hasActive {
+			log.Warn("user blocked - already has active deep research run",
+				slog.String("user_id", userID),
+				slog.Int("max_active", tierConfig.DeepResearchMaxActiveSessions))
+			return fmt.Errorf("You have an active deep research session. Please complete or cancel it before starting a new one. (Tier: %s, Max Active: %d)",
+				tierConfig.DisplayName, tierConfig.DeepResearchMaxActiveSessions)
+		}
+	}
+
+	// Check daily runs (Pro tier: 10 runs/day)
+	if tierConfig.DeepResearchDailyRuns > 0 {
+		count, err := s.queries.GetUserDeepResearchRunsToday(ctx, userID)
+		if err != nil {
+			log.Error("failed to check daily runs",
+				slog.String("user_id", userID),
+				slog.String("error", err.Error()))
+			return fmt.Errorf("failed to check daily runs: %w", err)
+		}
+		if int(count) >= tierConfig.DeepResearchDailyRuns {
+			log.Warn("daily deep research limit exceeded",
+				slog.String("user_id", userID),
+				slog.Int64("runs_today", count),
+				slog.Int("daily_limit", tierConfig.DeepResearchDailyRuns))
+			now := time.Now().UTC()
+			nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+			return fmt.Errorf("You've used %d/%d deep research runs today. Resets at %s UTC. (Tier: %s)",
+				count, tierConfig.DeepResearchDailyRuns, nextMidnight.Format("2006-01-02 15:04:05"), tierConfig.DisplayName)
+		}
+	}
+
+	// Check lifetime runs (Free tier: 1 run total)
+	if tierConfig.DeepResearchLifetimeRuns > 0 {
+		count, err := s.queries.GetUserDeepResearchRunsLifetime(ctx, userID)
+		if err != nil {
+			log.Error("failed to check lifetime runs",
+				slog.String("user_id", userID),
+				slog.String("error", err.Error()))
+			return fmt.Errorf("failed to check lifetime runs: %w", err)
+		}
+		if int(count) >= tierConfig.DeepResearchLifetimeRuns {
+			log.Warn("lifetime deep research limit reached",
+				slog.String("user_id", userID),
+				slog.Int64("lifetime_runs", count),
+				slog.Int("lifetime_limit", tierConfig.DeepResearchLifetimeRuns))
+			return fmt.Errorf("You've used %d/%d lifetime deep research runs. Upgrade to Pro for unlimited access. (Tier: %s)",
+				count, tierConfig.DeepResearchLifetimeRuns, tierConfig.DisplayName)
+		}
+	}
+
+	log.Info("deep research quota check passed",
+		slog.String("user_id", userID),
+		slog.String("tier", tierConfig.Name))
+	return nil
+}
+
+// trackDeepResearchTokens updates run token usage and enforces per-run cap.
+func (s *Service) trackDeepResearchTokens(
+	ctx context.Context,
+	runID int64,
+	tokensUsed int,
+	tierConfig tiers.Config,
+) error {
+	log := s.logger.WithContext(ctx).WithComponent("deepr")
+
+	// Calculate plan tokens (GLM-4.6 multiplier = 3×)
+	planTokens := tokensUsed * 3
+
+	// Check per-run cap (cap is in raw GLM-4.6 tokens: 8k for free, 10k for pro)
+	cap := tierConfig.DeepResearchTokenCap
+
+	if tokensUsed > cap {
+		log.Warn("deep research run exceeded token cap",
+			slog.Int64("run_id", runID),
+			slog.Int("tokens_used", tokensUsed),
+			slog.Int("plan_tokens", planTokens),
+			slog.Int("cap", cap))
+
+		// Terminate run
+		if err := s.queries.CompleteDeepResearchRun(ctx, pgdb.CompleteDeepResearchRunParams{
+			ID:     runID,
+			Status: "failed",
+		}); err != nil {
+			log.Error("failed to terminate run after cap exceeded",
+				slog.Int64("run_id", runID),
+				slog.String("error", err.Error()))
+			return fmt.Errorf("failed to terminate run: %w", err)
+		}
+
+		return fmt.Errorf("per-run token limit exceeded (%d/%d raw tokens)", tokensUsed, cap)
+	}
+
+	// Update token usage
+	if err := s.queries.UpdateDeepResearchRunTokens(ctx, pgdb.UpdateDeepResearchRunTokensParams{
+		ID:              runID,
+		ModelTokensUsed: int32(tokensUsed),
+		PlanTokensUsed:  int32(planTokens),
+	}); err != nil {
+		log.Error("failed to update run tokens",
+			slog.Int64("run_id", runID),
+			slog.Int("tokens", tokensUsed),
+			slog.String("error", err.Error()))
+		return fmt.Errorf("failed to update tokens: %w", err)
+	}
+
+	log.Debug("updated deep research run tokens",
+		slog.Int64("run_id", runID),
+		slog.Int("tokens_used", tokensUsed),
+		slog.Int("plan_tokens", planTokens),
+		slog.Int("cap", cap))
+
+	return nil
+}
+
+// validateFreemiumAccess is DEPRECATED - kept for backwards compatibility during migration.
+// Use checkDeepResearchQuota instead.
 func (s *Service) validateFreemiumAccess(ctx context.Context, userID, chatID string, isReconnection bool) error {
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 
@@ -97,128 +232,21 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, userID, chatID str
 		return nil
 	}
 
-	// Check if user has active pro subscription
-	hasActivePro, proExpiresAt, err := s.trackingService.HasActivePro(ctx, userID)
+	// Get user's tier configuration
+	tierConfig, _, err := s.trackingService.GetUserTierConfig(ctx, userID)
 	if err != nil {
-		log.Error("failed to check subscription status",
+		log.Error("failed to get user tier",
 			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
 			slog.String("error", err.Error()))
 		return fmt.Errorf("failed to verify subscription status")
 	}
 
-	// Premium users can have UNLIMITED parallel sessions - bypass all restrictions
-	if hasActivePro {
-		expiryInfo := "unlimited"
-		if proExpiresAt != nil {
-			expiryInfo = proExpiresAt.Format("2006-01-02 15:04:05 MST")
-		}
-		log.Info("PREMIUM user detected - allowing parallel deep research sessions (no limits)",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.String("pro_expires_at", expiryInfo),
-			slog.Bool("is_reconnection", isReconnection))
-		// Immediately return success - premium users bypass ALL freemium restrictions
-		return nil
-	}
-
-	// Freemium user - check restrictions
-	log.Info("freemium user detected, checking access restrictions",
-		slog.String("user_id", userID),
-		slog.String("chat_id", chatID),
-		slog.Bool("is_reconnection", isReconnection))
-
-	// Get current session state
-	sessionState, err := s.firebaseClient.GetSessionState(ctx, userID, chatID)
-	if err != nil {
-		log.Error("failed to get session state",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.String("error", err.Error()))
-		return fmt.Errorf("failed to verify session state")
-	}
-
-	// If this is a reconnection or existing session
-	if sessionState != nil {
-		log.Info("existing session found",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.String("session_state", sessionState.State))
-
-		// Allow reconnection/continuation if state is 'clarify' or 'in_progress'
-		if sessionState.State == "clarify" || sessionState.State == "in_progress" {
-			log.Info("freemium user allowed to continue existing session",
-				slog.String("user_id", userID),
-				slog.String("chat_id", chatID),
-				slog.String("session_state", sessionState.State))
-			return nil
-		}
-
-		// If state is 'complete' or 'error', check if user has other completed sessions
-		if sessionState.State == "complete" || sessionState.State == "error" {
-			completedCount, err := s.firebaseClient.GetCompletedSessionCountForUser(ctx, userID)
-			if err != nil {
-				log.Error("failed to get completed session count",
-					slog.String("user_id", userID),
-					slog.String("error", err.Error()))
-				return fmt.Errorf("failed to verify usage status")
-			}
-
-			if completedCount >= 1 {
-				log.Warn("freemium quota exhausted - user has completed session",
-					slog.String("user_id", userID),
-					slog.String("chat_id", chatID),
-					slog.Int("completed_count", completedCount))
-				return fmt.Errorf("you have already used your free deep research. Please upgrade to Pro for unlimited access")
-			}
-		}
-
-		return nil
-	}
-
-	// New session - check if user already has completed research
-	completedCount, err := s.firebaseClient.GetCompletedSessionCountForUser(ctx, userID)
-	if err != nil {
-		log.Error("failed to get completed session count",
-			slog.String("user_id", userID),
-			slog.String("error", err.Error()))
-		return fmt.Errorf("failed to verify usage status")
-	}
-
-	if completedCount >= 1 {
-		log.Warn("freemium quota exhausted - user already has completed research",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.Int("completed_count", completedCount))
-		return fmt.Errorf("you have already used your free deep research. Please upgrade to Pro for unlimited access")
-	}
-
-	// Check if user has any active (in_progress or clarify) sessions
-	activeSessions, err := s.firebaseClient.GetActiveSessionsForUser(ctx, userID)
-	if err != nil {
-		log.Error("failed to get active sessions",
-			slog.String("user_id", userID),
-			slog.String("error", err.Error()))
-		return fmt.Errorf("failed to verify active sessions")
-	}
-
-	if len(activeSessions) > 0 {
-		log.Warn("FREEMIUM user blocked - already has an active session (premium users would have bypassed this check)",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.Int("active_sessions_count", len(activeSessions)),
-			slog.Bool("has_active_pro", false)) // This should always be false here
-		return fmt.Errorf("you already have an active deep research session. Please complete or cancel it before starting a new one. Upgrade to Pro for unlimited parallel sessions")
-	}
-
-	log.Info("freemium user allowed to start new session",
-		slog.String("user_id", userID),
-		slog.String("chat_id", chatID))
-	return nil
+	// Delegate to new tier-based quota check
+	return s.checkDeepResearchQuota(ctx, userID, tierConfig)
 }
 
 // NewService creates a new deep research service with database storage.
-func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, deepResearchRateLimitEnabled bool) *Service {
+func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool) *Service {
 	var encryptionService *messaging.EncryptionService
 	var firestoreClient *messaging.FirestoreClient
 
@@ -232,6 +260,7 @@ func NewService(logger *logger.Logger, trackingService *request_tracking.Service
 		trackingService:              trackingService,
 		firebaseClient:               firebaseClient,
 		storage:                      storage,
+		queries:                      queries,
 		sessionManager:               sessionManager,
 		encryptionService:            encryptionService,
 		firestoreClient:              firestoreClient,
@@ -399,6 +428,42 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 			if err := json.Unmarshal(message, &msg); err == nil {
 				if msg.Type != "" {
 					messageType = msg.Type
+				}
+
+				// Track token usage if reported by backend
+				if msg.TokensUsed > 0 && session.RunID > 0 {
+					// Get user's tier config for token cap enforcement
+					tierConfig, _, err := s.trackingService.GetUserTierConfig(ctx, userID)
+					if err != nil {
+						log.Error("failed to get user tier for token tracking",
+							slog.String("user_id", userID),
+							slog.Int64("run_id", session.RunID),
+							slog.String("error", err.Error()))
+					} else {
+						// Track tokens with multiplier and cap enforcement
+						if err := s.trackDeepResearchTokens(ctx, session.RunID, msg.TokensUsed, tierConfig); err != nil {
+							log.Error("token tracking failed",
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.Int64("run_id", session.RunID),
+								slog.Int("tokens_used", msg.TokensUsed),
+								slog.String("error", err.Error()))
+
+							// If token cap exceeded, this is a terminal error - close session
+							if strings.Contains(err.Error(), "token limit exceeded") {
+								log.Warn("closing session due to token cap",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.Int64("run_id", session.RunID))
+								return
+							}
+						} else {
+							log.Debug("tracked deep research tokens",
+								slog.String("user_id", userID),
+								slog.Int64("run_id", session.RunID),
+								slog.Int("tokens_used", msg.TokensUsed))
+						}
+					}
 				}
 			}
 
@@ -969,8 +1034,22 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 	sessionCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create and register session
-	_ = s.sessionManager.CreateSession(userID, chatID, serverConn, sessionCtx, cancel)
+	// Create run record for token tracking
+	runID, err := s.queries.CreateDeepResearchRun(ctx, pgdb.CreateDeepResearchRunParams{
+		UserID: userID,
+		ChatID: chatID,
+	})
+	if err != nil {
+		log.Error("failed to create run record",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID),
+			slog.String("error", err.Error()))
+		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to initialize session"}`))
+		return
+	}
+
+	// Create and register session with runID for token tracking
+	_ = s.sessionManager.CreateSession(userID, chatID, runID, serverConn, sessionCtx, cancel)
 	defer s.sessionManager.RemoveSession(userID, chatID)
 
 	// Check if user has premium to log parallel session creation

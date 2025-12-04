@@ -326,7 +326,7 @@ func handleResponsesAPI(
 	// CRITICAL: Use context.Background() instead of c.Request.Context()
 	// The polling worker MUST continue even if the client disconnects
 	// Otherwise long-running GPT-5 Pro requests will be killed when client app closes
-	if err := pollingManager.StartPolling(context.Background(), pollingJob, provider.APIKey, provider.BaseURL); err != nil {
+	if err := pollingManager.StartPolling(context.Background(), pollingJob, provider.APIKey, provider.BaseURL, provider.TokenMultiplier); err != nil {
 		log.Error("failed to start polling worker",
 			slog.String("response_id", bgResponse.ID),
 			slog.String("error", err.Error()))
@@ -348,8 +348,8 @@ func handleResponsesAPI(
 		"message":     "Request submitted successfully. Listen to Firestore for updates.",
 	})
 
-	// Log request to database
-	logRequestToDatabaseWithProvider(c, trackingService, model, nil, provider.Name)
+	// Log request to database (with multiplier for cost tracking)
+	logRequestToDatabaseWithProvider(c, trackingService, model, nil, provider.Name, provider.TokenMultiplier)
 
 	return nil
 }

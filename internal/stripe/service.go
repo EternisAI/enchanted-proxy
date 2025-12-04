@@ -281,11 +281,13 @@ func (s *Service) handleCheckoutCompleted(ctx context.Context, event stripe.Even
 	customerID := sub.Customer.ID
 
 	provider := "stripe"
-	if err := s.queries.UpsertEntitlement(ctx, pgdb.UpsertEntitlementParams{
-		UserID:               userID,
-		ProExpiresAt:         sql.NullTime{Time: expiresAt, Valid: true},
-		SubscriptionProvider: &provider,
-		StripeCustomerID:     &customerID,
+	tier := "pro" // Activating subscription
+	if err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
+		UserID:                 userID,
+		SubscriptionTier:       tier,
+		SubscriptionExpiresAt:  sql.NullTime{Time: expiresAt, Valid: true},
+		SubscriptionProvider:   provider,
+		StripeCustomerID:       &customerID,
 	}); err != nil {
 		return fmt.Errorf("failed to upsert entitlement: %w", err)
 	}
@@ -332,13 +334,15 @@ func (s *Service) handleSubscriptionDeleted(ctx context.Context, event stripe.Ev
 		return fmt.Errorf("missing firebase_user_id in subscription metadata")
 	}
 
-	// Set pro_expires_at to NULL to revoke access
+	// Set subscription_expires_at to NULL to revoke access
 	provider := "stripe"
-	if err := s.queries.UpsertEntitlement(ctx, pgdb.UpsertEntitlementParams{
-		UserID:               userID,
-		ProExpiresAt:         sql.NullTime{Valid: false},
-		SubscriptionProvider: &provider,
-		StripeCustomerID:     nil, // Don't overwrite existing customer ID
+	tier := "free" // Revoking subscription
+	if err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
+		UserID:                 userID,
+		SubscriptionTier:       tier,
+		SubscriptionExpiresAt:  sql.NullTime{Valid: false},
+		SubscriptionProvider:   provider,
+		StripeCustomerID:       nil, // Don't overwrite existing customer ID
 	}); err != nil {
 		return fmt.Errorf("failed to revoke entitlement: %w", err)
 	}
@@ -423,11 +427,17 @@ func (s *Service) handleSubscriptionUpdated(ctx context.Context, event stripe.Ev
 	}
 
 	provider := "stripe"
-	if err := s.queries.UpsertEntitlement(ctx, pgdb.UpsertEntitlementParams{
-		UserID:               userID,
-		ProExpiresAt:         proExpiresAt,
-		SubscriptionProvider: &provider,
-		StripeCustomerID:     nil, // Don't overwrite existing customer ID
+	// Determine tier based on subscription status
+	tier := "free"
+	if proExpiresAt.Valid {
+		tier = "pro"
+	}
+	if err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
+		UserID:                 userID,
+		SubscriptionTier:       tier,
+		SubscriptionExpiresAt:  proExpiresAt,
+		SubscriptionProvider:   provider,
+		StripeCustomerID:       nil, // Don't overwrite existing customer ID
 	}); err != nil {
 		return fmt.Errorf("failed to update entitlement: %w", err)
 	}

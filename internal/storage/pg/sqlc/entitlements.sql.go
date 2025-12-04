@@ -12,17 +12,18 @@ import (
 )
 
 const getEntitlement = `-- name: GetEntitlement :one
-SELECT user_id, pro_expires_at, subscription_provider, stripe_customer_id, updated_at
+SELECT user_id, subscription_expires_at, subscription_provider, stripe_customer_id, subscription_tier, updated_at
 FROM entitlements
 WHERE user_id = $1
 `
 
 type GetEntitlementRow struct {
-	UserID               string       `json:"userId"`
-	ProExpiresAt         sql.NullTime `json:"proExpiresAt"`
-	SubscriptionProvider *string      `json:"subscriptionProvider"`
-	StripeCustomerID     *string      `json:"stripeCustomerId"`
-	UpdatedAt            time.Time    `json:"updatedAt"`
+	UserID                string       `json:"userId"`
+	SubscriptionExpiresAt sql.NullTime `json:"subscriptionExpiresAt"`
+	SubscriptionProvider  string       `json:"subscriptionProvider"`
+	StripeCustomerID      *string      `json:"stripeCustomerId"`
+	SubscriptionTier      string       `json:"subscriptionTier"`
+	UpdatedAt             time.Time    `json:"updatedAt"`
 }
 
 func (q *Queries) GetEntitlement(ctx context.Context, userID string) (GetEntitlementRow, error) {
@@ -30,9 +31,10 @@ func (q *Queries) GetEntitlement(ctx context.Context, userID string) (GetEntitle
 	var i GetEntitlementRow
 	err := row.Scan(
 		&i.UserID,
-		&i.ProExpiresAt,
+		&i.SubscriptionExpiresAt,
 		&i.SubscriptionProvider,
 		&i.StripeCustomerID,
+		&i.SubscriptionTier,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -52,27 +54,75 @@ func (q *Queries) GetStripeCustomerID(ctx context.Context, userID string) (*stri
 	return stripe_customer_id, err
 }
 
+const getUserTier = `-- name: GetUserTier :one
+SELECT subscription_tier, subscription_expires_at
+FROM entitlements
+WHERE user_id = $1
+`
+
+type GetUserTierRow struct {
+	SubscriptionTier      string       `json:"subscriptionTier"`
+	SubscriptionExpiresAt sql.NullTime `json:"subscriptionExpiresAt"`
+}
+
+func (q *Queries) GetUserTier(ctx context.Context, userID string) (GetUserTierRow, error) {
+	row := q.db.QueryRowContext(ctx, getUserTier, userID)
+	var i GetUserTierRow
+	err := row.Scan(&i.SubscriptionTier, &i.SubscriptionExpiresAt)
+	return i, err
+}
+
 const upsertEntitlement = `-- name: UpsertEntitlement :exec
-INSERT INTO entitlements (user_id, pro_expires_at, subscription_provider, stripe_customer_id, updated_at)
+INSERT INTO entitlements (user_id, subscription_expires_at, subscription_provider, stripe_customer_id, updated_at)
 VALUES ($1, $2, $3, $4, NOW())
 ON CONFLICT (user_id) DO UPDATE SET
-  pro_expires_at = EXCLUDED.pro_expires_at,
+  subscription_expires_at = EXCLUDED.subscription_expires_at,
   subscription_provider = EXCLUDED.subscription_provider,
   stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, entitlements.stripe_customer_id),
   updated_at     = NOW()
 `
 
 type UpsertEntitlementParams struct {
-	UserID               string       `json:"userId"`
-	ProExpiresAt         sql.NullTime `json:"proExpiresAt"`
-	SubscriptionProvider *string      `json:"subscriptionProvider"`
-	StripeCustomerID     *string      `json:"stripeCustomerId"`
+	UserID                string       `json:"userId"`
+	SubscriptionExpiresAt sql.NullTime `json:"subscriptionExpiresAt"`
+	SubscriptionProvider  string       `json:"subscriptionProvider"`
+	StripeCustomerID      *string      `json:"stripeCustomerId"`
 }
 
 func (q *Queries) UpsertEntitlement(ctx context.Context, arg UpsertEntitlementParams) error {
 	_, err := q.db.ExecContext(ctx, upsertEntitlement,
 		arg.UserID,
-		arg.ProExpiresAt,
+		arg.SubscriptionExpiresAt,
+		arg.SubscriptionProvider,
+		arg.StripeCustomerID,
+	)
+	return err
+}
+
+const upsertEntitlementWithTier = `-- name: UpsertEntitlementWithTier :exec
+INSERT INTO entitlements (user_id, subscription_tier, subscription_expires_at, subscription_provider, stripe_customer_id, updated_at)
+VALUES ($1, $2, $3, $4, $5, NOW())
+ON CONFLICT (user_id) DO UPDATE SET
+  subscription_tier = EXCLUDED.subscription_tier,
+  subscription_expires_at = EXCLUDED.subscription_expires_at,
+  subscription_provider = EXCLUDED.subscription_provider,
+  stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, entitlements.stripe_customer_id),
+  updated_at = NOW()
+`
+
+type UpsertEntitlementWithTierParams struct {
+	UserID                string       `json:"userId"`
+	SubscriptionTier      string       `json:"subscriptionTier"`
+	SubscriptionExpiresAt sql.NullTime `json:"subscriptionExpiresAt"`
+	SubscriptionProvider  string       `json:"subscriptionProvider"`
+	StripeCustomerID      *string      `json:"stripeCustomerId"`
+}
+
+func (q *Queries) UpsertEntitlementWithTier(ctx context.Context, arg UpsertEntitlementWithTierParams) error {
+	_, err := q.db.ExecContext(ctx, upsertEntitlementWithTier,
+		arg.UserID,
+		arg.SubscriptionTier,
+		arg.SubscriptionExpiresAt,
 		arg.SubscriptionProvider,
 		arg.StripeCustomerID,
 	)

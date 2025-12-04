@@ -11,6 +11,7 @@ type Message struct {
 	Data        string `json:"data,omitempty"`
 	FinalReport string `json:"final_report,omitempty"`
 	Error       string `json:"error,omitempty"`
+	TokensUsed  int    `json:"tokens_used,omitempty"` // Token usage for this message (if reported by backend)
 }
 
 // Request represents a request to the deep research service.
