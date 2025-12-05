@@ -441,21 +441,54 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 		var tokenUsage *Usage
 		var fullContent strings.Builder // Accumulate full response content
 
-		ctx := c.Request.Context()
+		// CRITICAL FIX: Use defer to ALWAYS log, even if client disconnects early
+		// Without this, streaming requests were not logged when client disconnected before [DONE]
+		defer func() {
+			// Debug: Log why we might have NULL tokens
+			if tokenUsage == nil {
+				log.Warn("no token usage captured from streaming response",
+					slog.String("model", model),
+					slog.String("provider", provider.Name),
+					slog.Int("content_length", fullContent.Len()),
+					slog.String("reason", "client_disconnect_or_missing_usage_chunk"))
+			}
+
+			logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, nil, c.Request.Context())
+
+			// Log with multiplier if provider is available
+			if provider != nil {
+				logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
+			} else {
+				logRequestToDatabase(c, trackingService, model, tokenUsage)
+			}
+
+			// Save message to Firestore asynchronously
+			isError := resp.StatusCode >= 400
+			saveMessageAsync(c, messageService, fullContent.String(), isError)
+		}()
+
+		clientCtx := c.Request.Context()
+		clientDisconnected := false
+
 		for scanner.Scan() {
+			line := scanner.Text()
+
+			// Check if client disconnected
 			select {
-			case <-ctx.Done():
-				log.Debug("client disconnected, stopping stream processing")
-				return
+			case <-clientCtx.Done():
+				if !clientDisconnected {
+					log.Debug("client disconnected, continuing to read for token usage")
+					clientDisconnected = true
+				}
 			default:
 			}
 
-			line := scanner.Text()
-
-			// Pipe the line to the client immediately.
-			if _, err := pw.Write(append([]byte(line), '\n')); err != nil {
-				log.Error("failed to write to pipe", slog.String("error", err.Error()))
-				return
+			// Only pipe to client if still connected
+			if !clientDisconnected {
+				if _, err := pw.Write(append([]byte(line), '\n')); err != nil {
+					log.Debug("failed to write to pipe (client likely disconnected)", slog.String("error", err.Error()))
+					clientDisconnected = true
+				}
 			}
 
 			// Extract and accumulate content for message storage
@@ -474,18 +507,7 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 			log.Error("scanner error while processing SSE stream", slog.String("error", err.Error()))
 		}
 
-		logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, nil, c.Request.Context())
-
-		// Log with multiplier if provider is available
-		if provider != nil {
-			logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
-		} else {
-			logRequestToDatabase(c, trackingService, model, tokenUsage)
-		}
-
-		// Save message to Firestore asynchronously
-		isError := resp.StatusCode >= 400
-		saveMessageAsync(c, messageService, fullContent.String(), isError)
+		// Note: Logging now happens in defer above, so it runs whether we reach here or return early
 	}()
 
 	// Remove Content-Length for chunked encoding.

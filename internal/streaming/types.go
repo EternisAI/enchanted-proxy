@@ -4,6 +4,25 @@ import (
 	"time"
 )
 
+// TokenUsage represents token consumption data from the AI provider.
+// This is extracted from the streaming response's usage chunk.
+//
+// Provider format (OpenAI/OpenRouter):
+//
+//	data: {"choices":[],"usage":{"prompt_tokens":50,"completion_tokens":100,"total_tokens":150}}
+//
+// Thread-safety: Instances are read-only after creation.
+type TokenUsage struct {
+	// PromptTokens is the number of tokens in the prompt/request
+	PromptTokens int `json:"prompt_tokens"`
+
+	// CompletionTokens is the number of tokens in the AI's response
+	CompletionTokens int `json:"completion_tokens"`
+
+	// TotalTokens is the sum of prompt and completion tokens
+	TotalTokens int `json:"total_tokens"`
+}
+
 // StreamChunk represents a single SSE line from the AI provider.
 // We store raw SSE lines rather than parsed JSON for several reasons:
 //   - Provider-agnostic: Works with OpenAI, Anthropic, OpenRouter without changes

@@ -94,6 +94,10 @@ type StreamSession struct {
 	chunks   []StreamChunk
 	chunksMu sync.RWMutex
 
+	// Token usage (extracted from upstream response)
+	tokenUsage   *TokenUsage
+	tokenUsageMu sync.RWMutex
+
 	// Subscriber management
 	subscribers   map[string]*StreamSubscriber
 	subscribersMu sync.RWMutex
@@ -296,6 +300,18 @@ func (s *StreamSession) readUpstream() {
 		// Skip empty lines (common in SSE streams)
 		if strings.TrimSpace(line) == "" {
 			continue
+		}
+
+		// Extract token usage if present in this chunk
+		if usage := extractTokenUsageFromLine(line); usage != nil {
+			s.tokenUsageMu.Lock()
+			s.tokenUsage = usage
+			s.tokenUsageMu.Unlock()
+
+			s.logger.Debug("extracted token usage from stream",
+				slog.Int("prompt_tokens", usage.PromptTokens),
+				slog.Int("completion_tokens", usage.CompletionTokens),
+				slog.Int("total_tokens", usage.TotalTokens))
 		}
 
 		// Detect tool calls if executor is available
@@ -1093,4 +1109,83 @@ func (s *StreamSession) GetResponseID() string {
 	s.responseIDMu.RLock()
 	defer s.responseIDMu.RUnlock()
 	return s.responseID
+}
+
+// GetTokenUsage returns the token usage data extracted from the stream.
+//
+// Returns:
+//   - *TokenUsage: Token usage data if available, nil if not yet extracted or unavailable
+//
+// Thread-safe: Can be called concurrently.
+//
+// Note: Token usage is typically sent in one of the last chunks before [DONE].
+// If the stream is still active, this may return nil until the usage chunk arrives.
+func (s *StreamSession) GetTokenUsage() *TokenUsage {
+	s.tokenUsageMu.RLock()
+	defer s.tokenUsageMu.RUnlock()
+	return s.tokenUsage
+}
+
+// extractTokenUsageFromLine attempts to extract token usage from an SSE line.
+//
+// Expected format from OpenAI/OpenRouter:
+//
+//	data: {"choices":[],"usage":{"prompt_tokens":50,"completion_tokens":100,"total_tokens":150}}
+//
+// Parameters:
+//   - line: Raw SSE line from the stream
+//
+// Returns:
+//   - *TokenUsage: Extracted usage data, or nil if line doesn't contain usage
+//
+// This function is defensive - it returns nil on any parsing error rather than
+// failing, since token usage is optional and shouldn't break streaming.
+func extractTokenUsageFromLine(line string) *TokenUsage {
+	// Must be SSE data line
+	if !strings.HasPrefix(line, "data: ") {
+		return nil
+	}
+
+	// Extract JSON data
+	data := strings.TrimPrefix(line, "data: ")
+
+	// Skip [DONE] marker
+	if data == "[DONE]" {
+		return nil
+	}
+
+	// Parse JSON chunk
+	var chunk map[string]interface{}
+	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+		// Not JSON or malformed - that's ok, might be a different format
+		return nil
+	}
+
+	// Check for usage field
+	usageField, exists := chunk["usage"]
+	if !exists || usageField == nil {
+		return nil
+	}
+
+	// Parse usage object
+	usageMap, ok := usageField.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	// Extract token counts (JSON numbers are float64)
+	promptTokens, ok1 := usageMap["prompt_tokens"].(float64)
+	completionTokens, ok2 := usageMap["completion_tokens"].(float64)
+	totalTokens, ok3 := usageMap["total_tokens"].(float64)
+
+	// All three fields must be present for valid usage data
+	if !ok1 || !ok2 || !ok3 {
+		return nil
+	}
+
+	return &TokenUsage{
+		PromptTokens:     int(promptTokens),
+		CompletionTokens: int(completionTokens),
+		TotalTokens:      int(totalTokens),
+	}
 }

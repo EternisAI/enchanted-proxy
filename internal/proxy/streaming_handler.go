@@ -211,12 +211,30 @@ func handleStreamingWithBroadcast(
 		}
 	}
 
-	// Log request to database (token usage)
-	// Log request to database with multiplier if provider is available
-	if provider != nil {
-		logRequestToDatabaseWithProvider(c, trackingService, model, nil, provider.Name, provider.TokenMultiplier)
+	// Log request to database with token usage
+	// Retrieve token usage from completed session
+	var tokenUsage *Usage
+	if sessionUsage := session.GetTokenUsage(); sessionUsage != nil {
+		tokenUsage = &Usage{
+			PromptTokens:     sessionUsage.PromptTokens,
+			CompletionTokens: sessionUsage.CompletionTokens,
+			TotalTokens:      sessionUsage.TotalTokens,
+		}
+		log.Debug("logging request with token usage from session",
+			slog.Int("prompt_tokens", tokenUsage.PromptTokens),
+			slog.Int("completion_tokens", tokenUsage.CompletionTokens),
+			slog.Int("total_tokens", tokenUsage.TotalTokens))
 	} else {
-		logRequestToDatabase(c, trackingService, model, nil) // TODO: Extract token usage from session
+		log.Warn("no token usage available from session",
+			slog.String("chat_id", chatID),
+			slog.String("message_id", messageID))
+	}
+
+	// Log with multiplier if provider is available
+	if provider != nil {
+		logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
+	} else {
+		logRequestToDatabase(c, trackingService, model, tokenUsage)
 	}
 
 	return nil
