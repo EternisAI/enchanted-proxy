@@ -216,8 +216,8 @@ func LoadConfig() {
 		ProxyIdleConnTimeout:     getEnvAsInt("PROXY_IDLE_CONN_TIMEOUT_SECONDS", 90),
 
 		// Worker Pool
-		RequestTrackingWorkerPoolSize: getEnvAsInt("REQUEST_TRACKING_WORKER_POOL_SIZE", 10),
-		RequestTrackingBufferSize:     getEnvAsInt("REQUEST_TRACKING_BUFFER_SIZE", 1000),
+		RequestTrackingWorkerPoolSize: getEnvAsInt("REQUEST_TRACKING_WORKER_POOL_SIZE", 20),
+		RequestTrackingBufferSize:     getEnvAsInt("REQUEST_TRACKING_BUFFER_SIZE", 5000),
 		RequestTrackingTimeoutSeconds: getEnvAsInt("REQUEST_TRACKING_TIMEOUT_SECONDS", 30),
 
 		// Server

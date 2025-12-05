@@ -18,12 +18,13 @@ import (
 )
 
 type Service struct {
-	queries    pgdb.Querier
-	logChan    chan logRequest
-	workerPool sync.WaitGroup
-	shutdown   chan struct{}
-	closed     atomic.Bool
-	logger     *logger.Logger
+	queries              pgdb.Querier
+	logChan              chan logRequest
+	workerPool           sync.WaitGroup
+	shutdown             chan struct{}
+	closed               atomic.Bool
+	logger               *logger.Logger
+	droppedRequestsTotal atomic.Int64 // NEW: Track dropped requests due to queue overflow
 }
 
 type logRequest struct {
@@ -154,9 +155,15 @@ func (s *Service) LogRequestAsync(ctx context.Context, info RequestInfo) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		s.logger.Warn("Request log queue is full, dropping request",
+		// Queue is full - increment counter and log error
+		dropped := s.droppedRequestsTotal.Add(1)
+		s.logger.Error("Request log queue FULL - request DROPPED",
 			slog.String("user_id", info.UserID),
-			slog.String("endpoint", info.Endpoint))
+			slog.String("endpoint", info.Endpoint),
+			slog.String("model", info.Model),
+			slog.String("provider", info.Provider),
+			slog.Int64("total_dropped", dropped),
+			slog.Int("queue_size", config.AppConfig.RequestTrackingBufferSize))
 		return fmt.Errorf("log queue is full, dropping request")
 	}
 }
@@ -427,4 +434,13 @@ func (s *Service) GetUserDeepResearchRunsLifetime(ctx context.Context, userID st
 		return 0, fmt.Errorf("failed to get lifetime deep research runs: %w", err)
 	}
 	return result, nil
+}
+
+// GetMetrics returns diagnostic metrics for request tracking.
+func (s *Service) GetMetrics() map[string]int64 {
+	return map[string]int64{
+		"dropped_requests_total": s.droppedRequestsTotal.Load(),
+		"queue_size":             int64(len(s.logChan)),
+		"queue_capacity":         int64(config.AppConfig.RequestTrackingBufferSize),
+	}
 }

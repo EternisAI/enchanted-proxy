@@ -180,3 +180,24 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 		c.JSON(http.StatusOK, response)
 	}
 }
+
+// MetricsHandler exposes request tracking metrics for monitoring.
+func MetricsHandler(trackingService *Service, log *logger.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Only authenticated users can view metrics
+		userID, exists := auth.GetUserID(c)
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+			return
+		}
+
+		reqLog := log.WithContext(c.Request.Context()).WithComponent("metrics")
+		reqLog.Debug("fetching request tracking metrics", slog.String("user_id", userID))
+
+		metrics := trackingService.GetMetrics()
+
+		c.JSON(http.StatusOK, gin.H{
+			"request_tracking": metrics,
+		})
+	}
+}
