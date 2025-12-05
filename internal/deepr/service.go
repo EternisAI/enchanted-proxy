@@ -1286,25 +1286,25 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 								slog.String("user_id", userID),
 								slog.String("chat_id", chatID))
 						}
+					}
 
-						// Mark run as completed in database
-						if s.queries != nil && runID > 0 {
-							status := "completed"
-							if err := s.queries.CompleteDeepResearchRun(ctx, pgdb.CompleteDeepResearchRunParams{
-								ID:     runID,
-								Status: status,
-							}); err != nil {
-								log.Error("failed to mark run as completed",
-									slog.Int64("run_id", runID),
-									slog.String("user_id", userID),
-									slog.String("chat_id", chatID),
-									slog.String("error", err.Error()))
-							} else {
-								log.Info("deep research run marked as completed",
-									slog.Int64("run_id", runID),
-									slog.String("user_id", userID),
-									slog.String("chat_id", chatID))
-							}
+					// Mark run as completed in database (outside subscription check so it always runs)
+					if s.queries != nil && runID > 0 {
+						status := "completed"
+						if err := s.queries.CompleteDeepResearchRun(ctx, pgdb.CompleteDeepResearchRunParams{
+							ID:     runID,
+							Status: status,
+						}); err != nil {
+							log.Error("failed to mark run as completed",
+								slog.Int64("run_id", runID),
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID),
+								slog.String("error", err.Error()))
+						} else {
+							log.Info("deep research run marked as completed",
+								slog.Int64("run_id", runID),
+								slog.String("user_id", userID),
+								slog.String("chat_id", chatID))
 						}
 					}
 				}
