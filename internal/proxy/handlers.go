@@ -585,8 +585,10 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 		Provider: provider,
 	}
 
-	// Use plan token tracking if multiplier is provided and we have token data
+	// Always log the request, even without token usage
+	// This ensures errors, audio, images, and other endpoints are tracked
 	if tokenUsage != nil && multiplier > 0 {
+		// Best case: Log with plan tokens
 		planTokens := int(float64(tokenUsage.TotalTokens) * multiplier)
 		tokenData := &request_tracking.TokenUsageWithMultiplier{
 			PromptTokens:     tokenUsage.PromptTokens,
@@ -608,7 +610,7 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 			}
 		}
 	} else if tokenUsage != nil {
-		// Fallback to old method without multiplier
+		// Fallback: Log with tokens but no multiplier
 		tokenData := &request_tracking.TokenUsage{
 			PromptTokens:     tokenUsage.PromptTokens,
 			CompletionTokens: tokenUsage.CompletionTokens,
@@ -618,6 +620,19 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 			if loggerValue := c.Value("logger"); loggerValue != nil {
 				if log, ok := loggerValue.(*logger.Logger); ok {
 					log.Error("failed to log request to database",
+						slog.String("user_id", userID),
+						slog.String("endpoint", endpoint),
+						slog.String("error", err.Error()))
+				}
+			}
+		}
+	} else {
+		// Critical fix: Log request even without token usage
+		// This captures errors, audio, images, and requests where provider didn't return usage
+		if err := trackingService.LogRequestAsync(c.Request.Context(), info); err != nil {
+			if loggerValue := c.Value("logger"); loggerValue != nil {
+				if log, ok := loggerValue.(*logger.Logger); ok {
+					log.Error("failed to log request to database (no token data)",
 						slog.String("user_id", userID),
 						slog.String("endpoint", endpoint),
 						slog.String("error", err.Error()))
