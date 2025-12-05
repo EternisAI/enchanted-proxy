@@ -12,14 +12,18 @@ import (
 type Querier interface {
 	AddDeepResearchMessage(ctx context.Context, arg AddDeepResearchMessageParams) error
 	AtomicUseInviteCode(ctx context.Context, arg AtomicUseInviteCodeParams) error
+	CompleteDeepResearchRun(ctx context.Context, arg CompleteDeepResearchRunParams) error
 	CountInviteCodesByRedeemedBy(ctx context.Context, redeemedBy *string) (int64, error)
+	CreateDeepResearchRun(ctx context.Context, arg CreateDeepResearchRunParams) (int64, error)
 	CreateInviteCode(ctx context.Context, arg CreateInviteCodeParams) (InviteCode, error)
 	CreateRequestLog(ctx context.Context, arg CreateRequestLogParams) error
+	CreateRequestLogWithPlanTokens(ctx context.Context, arg CreateRequestLogWithPlanTokensParams) error
 	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
 	CreateTelegramChat(ctx context.Context, arg CreateTelegramChatParams) (TelegramChat, error)
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	DeleteTask(ctx context.Context, arg DeleteTaskParams) (sql.Result, error)
 	DeleteTelegramChat(ctx context.Context, chatID int64) error
+	GetActiveDeepResearchRun(ctx context.Context, arg GetActiveDeepResearchRunParams) (GetActiveDeepResearchRunRow, error)
 	GetAllActiveTasks(ctx context.Context) ([]Task, error)
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
 	GetEntitlement(ctx context.Context, userID string) (GetEntitlementRow, error)
@@ -35,13 +39,25 @@ type Querier interface {
 	GetTelegramChatByChatUUID(ctx context.Context, chatUuid string) (TelegramChat, error)
 	GetUnsentMessageCount(ctx context.Context, sessionID string) (int64, error)
 	GetUnsentMessages(ctx context.Context, sessionID string) ([]DeepResearchMessage, error)
+	GetUserDeepResearchRunsLifetime(ctx context.Context, userID string) (int64, error)
+	GetUserDeepResearchRunsToday(ctx context.Context, userID string) (int64, error)
 	GetUserLifetimeTokenUsage(ctx context.Context, userID string) (int64, error)
+	// Note: Queries request_logs directly (not materialized view) because monthly buckets aren't pre-aggregated.
+	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
+	// Month starts on 1st at 00:00 UTC per PostgreSQL DATE_TRUNC('month') behavior.
+	GetUserPlanTokensThisMonth(ctx context.Context, userID string) (int64, error)
+	// Note: Queries request_logs directly (not materialized view) because weekly buckets aren't pre-aggregated.
+	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
+	// Week starts Monday at 00:00 UTC per PostgreSQL DATE_TRUNC('week') behavior.
+	GetUserPlanTokensThisWeek(ctx context.Context, userID string) (int64, error)
+	GetUserPlanTokensToday(ctx context.Context, userID string) (int64, error)
 	GetUserRequestCountInLastDay(ctx context.Context, userID string) (int64, error)
 	GetUserRequestCountInTimeWindow(ctx context.Context, arg GetUserRequestCountInTimeWindowParams) (int64, error)
-	GetUserRequestCountToday(ctx context.Context, userID string) (int64, error)
+	GetUserTier(ctx context.Context, userID string) (GetUserTierRow, error)
 	GetUserTokenUsageInLastDay(ctx context.Context, userID string) (int64, error)
 	GetUserTokenUsageInTimeWindow(ctx context.Context, arg GetUserTokenUsageInTimeWindowParams) (int64, error)
 	GetUserTokenUsageToday(ctx context.Context, userID string) (int64, error)
+	HasActiveDeepResearchRun(ctx context.Context, userID string) (bool, error)
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
 	MarkAllMessagesAsSent(ctx context.Context, sessionID string) error
 	MarkMessageAsSent(ctx context.Context, id string) error
@@ -49,10 +65,12 @@ type Querier interface {
 	RefreshUserTokenUsageView(ctx context.Context) error
 	ResetInviteCode(ctx context.Context, codeHash string) error
 	SoftDeleteInviteCode(ctx context.Context, id int64) error
+	UpdateDeepResearchRunTokens(ctx context.Context, arg UpdateDeepResearchRunTokensParams) error
 	UpdateInviteCodeActive(ctx context.Context, arg UpdateInviteCodeActiveParams) error
 	UpdateInviteCodeUsage(ctx context.Context, arg UpdateInviteCodeUsageParams) error
 	UpdateTaskStatus(ctx context.Context, arg UpdateTaskStatusParams) error
 	UpsertEntitlement(ctx context.Context, arg UpsertEntitlementParams) error
+	UpsertEntitlementWithTier(ctx context.Context, arg UpsertEntitlementWithTierParams) error
 }
 
 var _ Querier = (*Queries)(nil)

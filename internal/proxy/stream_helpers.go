@@ -200,7 +200,7 @@ func extractRequestInfo(c *gin.Context, requestBody []byte) (chatID, messageID, 
 	messageID = c.GetHeader("X-Message-ID")
 
 	// Extract model from body
-	model = extractModelFromRequestBody(c.Request.URL.Path, requestBody)
+	model = ExtractModelFromRequestBody(c.Request.URL.Path, requestBody)
 
 	// Extract user ID from auth
 	userID, exists := auth.GetUserID(c)

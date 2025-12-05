@@ -15,6 +15,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
+	"github.com/eternisai/enchanted-proxy/internal/routing"
 	"github.com/eternisai/enchanted-proxy/internal/streaming"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -51,6 +52,7 @@ func handleStreamingWithBroadcast(
 	messageService *messaging.Service,
 	streamManager *streaming.StreamManager,
 	cfg *config.Config,
+	provider *routing.ProviderConfig,
 ) error {
 	// Extract chat ID and message ID from headers
 	chatID := c.GetHeader("X-Chat-ID")
@@ -210,7 +212,12 @@ func handleStreamingWithBroadcast(
 	}
 
 	// Log request to database (token usage)
-	logRequestToDatabase(c, trackingService, model, nil) // TODO: Extract token usage from session
+	// Log request to database with multiplier if provider is available
+	if provider != nil {
+		logRequestToDatabaseWithProvider(c, trackingService, model, nil, provider.Name, provider.TokenMultiplier)
+	} else {
+		logRequestToDatabase(c, trackingService, model, nil) // TODO: Extract token usage from session
+	}
 
 	return nil
 }
@@ -231,6 +238,7 @@ func handleStreamingLegacy(
 	c *gin.Context,
 	trackingService *request_tracking.Service,
 	messageService *messaging.Service,
+	provider *routing.ProviderConfig,
 ) error {
 	pr, pw := io.Pipe()
 	originalBody := resp.Body
@@ -297,7 +305,12 @@ func handleStreamingLegacy(
 
 		logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, []byte(firstChunk), c.Request.Context())
 
-		logRequestToDatabase(c, trackingService, model, tokenUsage)
+		// Log request to database with multiplier if provider is available
+		if provider != nil {
+			logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
+		} else {
+			logRequestToDatabase(c, trackingService, model, tokenUsage)
+		}
 
 		// Save message to Firestore asynchronously
 		isError := resp.StatusCode >= 400

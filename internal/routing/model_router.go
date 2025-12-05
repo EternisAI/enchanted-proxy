@@ -63,6 +63,9 @@ type ProviderConfig struct {
 
 	// APIType determines which API format to use (chat_completions or responses)
 	APIType APIType
+
+	// TokenMultiplier is the cost multiplier for this model (1× to 50×)
+	TokenMultiplier float64
 }
 
 // NewModelRouter creates a new model router from configuration.
@@ -79,58 +82,133 @@ type ProviderConfig struct {
 func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 	routes := make(map[string]ProviderConfig)
 
-	// OpenAI models - Chat Completions API
+	// DeepSeek R1 - Free & Pro - via Tinfoil (1× multiplier)
+	if cfg.TinfoilAPIKey != "" {
+		routes["deepseek-r1-0528"] = ProviderConfig{
+			BaseURL:         "https://inference.tinfoil.sh/v1",
+			APIKey:          cfg.TinfoilAPIKey,
+			Name:            "DeepSeek R1",
+			APIType:         APITypeChatCompletions,
+			TokenMultiplier: 1.0,
+		}
+		routes["deepseek-r1"] = routes["deepseek-r1-0528"] // Alias
+	}
+
+	// Llama 3.3 70B - Free & Pro - via Tinfoil (1× multiplier)
+	if cfg.TinfoilAPIKey != "" {
+		routes["llama3-3-70b"] = ProviderConfig{
+			BaseURL:         "https://inference.tinfoil.sh/v1",
+			APIKey:          cfg.TinfoilAPIKey,
+			Name:            "Llama 3.3",
+			APIType:         APITypeChatCompletions,
+			TokenMultiplier: 1.0,
+		}
+		routes["llama-3.3-70b"] = routes["llama3-3-70b"] // Alias
+	}
+
+	// GLM-4.6 - Free & Pro - via local/our IPs (3× multiplier)
+	if cfg.EternisInferenceAPIKey != "" {
+		routes["zai-org/GLM-4.6"] = ProviderConfig{
+			BaseURL:         "http://127.0.0.1:20001/v1",
+			APIKey:          cfg.EternisInferenceAPIKey,
+			Name:            "GLM 4.6",
+			APIType:         APITypeChatCompletions,
+			TokenMultiplier: 3.0,
+		}
+		routes["glm-4.6"] = routes["zai-org/GLM-4.6"] // Alias
+	}
+
+	// Dolphin Mistral - Free & Pro - via local/our IPs (3× multiplier)
+	if cfg.EternisInferenceAPIKey != "" {
+		routes["dolphin-mistral-eternis"] = ProviderConfig{
+			BaseURL:         "http://127.0.0.1:20002/v1",
+			APIKey:          cfg.EternisInferenceAPIKey,
+			Name:            "Venice Uncensored",
+			APIType:         APITypeChatCompletions,
+			TokenMultiplier: 3.0,
+		}
+		routes["dolphin-mistral"] = routes["dolphin-mistral-eternis"] // Alias
+	}
+
+	// GPT-4.1 - Pro only - via OpenRouter (4× multiplier)
+	if cfg.OpenRouterMobileAPIKey != "" || cfg.OpenRouterDesktopAPIKey != "" {
+		routes["openai/gpt-4.1"] = ProviderConfig{
+			BaseURL:         "https://openrouter.ai/api/v1",
+			APIKey:          "", // Resolved at route time (mobile/desktop)
+			Name:            "GPT 4.1",
+			APIType:         APITypeChatCompletions,
+			TokenMultiplier: 4.0,
+		}
+		routes["gpt-4.1"] = routes["openai/gpt-4.1"] // Alias
+	}
+
+	// GPT-5 - Pro only - via OpenRouter (6× multiplier)
+	if cfg.OpenRouterMobileAPIKey != "" || cfg.OpenRouterDesktopAPIKey != "" {
+		routes["openai/gpt-5"] = ProviderConfig{
+			BaseURL:         "https://openrouter.ai/api/v1",
+			APIKey:          "", // Resolved at route time
+			Name:            "GPT 5",
+			APIType:         APITypeChatCompletions,
+			TokenMultiplier: 6.0,
+		}
+		routes["gpt-5"] = routes["openai/gpt-5"] // Alias
+	}
+
+	// GPT-5 Pro - Pro only - via OpenAI directly (50× multiplier)
+	if cfg.OpenAIAPIKey != "" {
+		routes["gpt-5-pro"] = ProviderConfig{
+			BaseURL:         "https://api.openai.com/v1",
+			APIKey:          cfg.OpenAIAPIKey,
+			Name:            "GPT 5 Pro",
+			APIType:         APITypeResponses,
+			TokenMultiplier: 50.0,
+		}
+		routes["openai/gpt-5-pro"] = routes["gpt-5-pro"] // Alias
+	}
+
+	// Legacy OpenAI models - maintain backward compatibility with existing multipliers
 	if cfg.OpenAIAPIKey != "" {
 		routes["gpt-4"] = ProviderConfig{
-			BaseURL: "https://api.openai.com/v1",
-			APIKey:  cfg.OpenAIAPIKey,
-			Name:    "OpenAI",
-			APIType: APITypeChatCompletions,
+			BaseURL:         "https://api.openai.com/v1",
+			APIKey:          cfg.OpenAIAPIKey,
+			Name:            "OpenAI",
+			APIType:         APITypeChatCompletions,
+			TokenMultiplier: 1.0, // Default multiplier for legacy models
 		}
 		routes["gpt-4-turbo"] = ProviderConfig{
-			BaseURL: "https://api.openai.com/v1",
-			APIKey:  cfg.OpenAIAPIKey,
-			Name:    "OpenAI",
-			APIType: APITypeChatCompletions,
+			BaseURL:         "https://api.openai.com/v1",
+			APIKey:          cfg.OpenAIAPIKey,
+			Name:            "OpenAI",
+			APIType:         APITypeChatCompletions,
+			TokenMultiplier: 1.0,
 		}
 		routes["gpt-3.5-turbo"] = ProviderConfig{
-			BaseURL: "https://api.openai.com/v1",
-			APIKey:  cfg.OpenAIAPIKey,
-			Name:    "OpenAI",
-			APIType: APITypeChatCompletions,
+			BaseURL:         "https://api.openai.com/v1",
+			APIKey:          cfg.OpenAIAPIKey,
+			Name:            "OpenAI",
+			APIType:         APITypeChatCompletions,
+			TokenMultiplier: 1.0,
 		}
 		routes["o1-preview"] = ProviderConfig{
-			BaseURL: "https://api.openai.com/v1",
-			APIKey:  cfg.OpenAIAPIKey,
-			Name:    "OpenAI",
-			APIType: APITypeChatCompletions,
+			BaseURL:         "https://api.openai.com/v1",
+			APIKey:          cfg.OpenAIAPIKey,
+			Name:            "OpenAI",
+			APIType:         APITypeChatCompletions,
+			TokenMultiplier: 1.0,
 		}
 		routes["o1-mini"] = ProviderConfig{
-			BaseURL: "https://api.openai.com/v1",
-			APIKey:  cfg.OpenAIAPIKey,
-			Name:    "OpenAI",
-			APIType: APITypeChatCompletions,
+			BaseURL:         "https://api.openai.com/v1",
+			APIKey:          cfg.OpenAIAPIKey,
+			Name:            "OpenAI",
+			APIType:         APITypeChatCompletions,
+			TokenMultiplier: 1.0,
 		}
 		routes["o3-mini"] = ProviderConfig{
-			BaseURL: "https://api.openai.com/v1",
-			APIKey:  cfg.OpenAIAPIKey,
-			Name:    "OpenAI",
-			APIType: APITypeChatCompletions,
-		}
-
-		// OpenAI models - Responses API (stateful)
-		// Support both "gpt-5-pro" and "openai/gpt-5-pro" for client compatibility
-		routes["gpt-5-pro"] = ProviderConfig{
-			BaseURL: "https://api.openai.com/v1",
-			APIKey:  cfg.OpenAIAPIKey,
-			Name:    "OpenAI",
-			APIType: APITypeResponses,
-		}
-		routes["openai/gpt-5-pro"] = ProviderConfig{
-			BaseURL: "https://api.openai.com/v1",
-			APIKey:  cfg.OpenAIAPIKey,
-			Name:    "OpenAI",
-			APIType: APITypeResponses,
+			BaseURL:         "https://api.openai.com/v1",
+			APIKey:          cfg.OpenAIAPIKey,
+			Name:            "OpenAI",
+			APIType:         APITypeChatCompletions,
+			TokenMultiplier: 1.0,
 		}
 	}
 
@@ -138,10 +216,11 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 	// API key is resolved at route time based on platform (mobile/desktop)
 	if cfg.OpenRouterMobileAPIKey != "" || cfg.OpenRouterDesktopAPIKey != "" {
 		routes["*"] = ProviderConfig{
-			BaseURL: "https://openrouter.ai/api/v1",
-			APIKey:  "", // Resolved at route time based on platform
-			Name:    "OpenRouter",
-			APIType: APITypeChatCompletions, // OpenRouter uses Chat Completions format
+			BaseURL:         "https://openrouter.ai/api/v1",
+			APIKey:          "", // Resolved at route time based on platform
+			Name:            "OpenRouter",
+			APIType:         APITypeChatCompletions,
+			TokenMultiplier: 1.0, // Default multiplier for fallback
 		}
 	}
 

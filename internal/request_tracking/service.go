@@ -14,6 +14,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
+	"github.com/eternisai/enchanted-proxy/internal/tiers"
 )
 
 type Service struct {
@@ -87,22 +88,49 @@ func (s *Service) processLogRequest(ctx context.Context, info RequestInfo) {
 		totalTokens = sql.NullInt32{Int32: int32(*info.TotalTokens), Valid: true}
 	}
 
-	params := pgdb.CreateRequestLogParams{
-		UserID:           info.UserID,
-		Endpoint:         info.Endpoint,
-		Model:            model,
-		Provider:         info.Provider,
-		PromptTokens:     promptTokens,
-		CompletionTokens: completionTokens,
-		TotalTokens:      totalTokens,
-	}
+	// Use new query with plan tokens if available, otherwise use old query
+	if info.PlanTokens != nil && info.Multiplier != nil {
+		params := pgdb.CreateRequestLogWithPlanTokensParams{
+			UserID:           info.UserID,
+			Endpoint:         info.Endpoint,
+			Model:            model,
+			Provider:         info.Provider,
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      totalTokens,
+			PlanTokens:       sql.NullInt32{Int32: int32(*info.PlanTokens), Valid: true},
+			// Note: TokenMultiplier uses string formatting because sqlc generates sql.NullString
+		// for NUMERIC(8,2) columns. PostgreSQL converts strings to NUMERIC on insert.
+		// This is standard sqlc behavior for NUMERIC types.
+		TokenMultiplier: sql.NullString{String: fmt.Sprintf("%.2f", *info.Multiplier), Valid: true},
+		}
 
-	if err := s.queries.CreateRequestLog(ctx, params); err != nil {
-		s.logger.Error("failed to insert request log",
-			slog.String("user_id", info.UserID),
-			slog.String("endpoint", info.Endpoint),
-			slog.String("provider", info.Provider),
-			slog.String("error", err.Error()))
+		if err := s.queries.CreateRequestLogWithPlanTokens(ctx, params); err != nil {
+			s.logger.Error("failed to insert request log with plan tokens",
+				slog.String("user_id", info.UserID),
+				slog.String("endpoint", info.Endpoint),
+				slog.String("provider", info.Provider),
+				slog.String("error", err.Error()))
+		}
+	} else {
+		// Fallback to old query for backward compatibility
+		params := pgdb.CreateRequestLogParams{
+			UserID:           info.UserID,
+			Endpoint:         info.Endpoint,
+			Model:            model,
+			Provider:         info.Provider,
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      totalTokens,
+		}
+
+		if err := s.queries.CreateRequestLog(ctx, params); err != nil {
+			s.logger.Error("failed to insert request log",
+				slog.String("user_id", info.UserID),
+				slog.String("endpoint", info.Endpoint),
+				slog.String("provider", info.Provider),
+				slog.String("error", err.Error()))
+		}
 	}
 }
 
@@ -165,7 +193,9 @@ type RequestInfo struct {
 	Provider         string
 	PromptTokens     *int
 	CompletionTokens *int
-	TotalTokens      *int
+	TotalTokens      *int     // Raw tokens from API (existing field)
+	PlanTokens       *int     // NEW: Weighted tokens (TotalTokens × Multiplier)
+	Multiplier       *float64 // NEW: Cost multiplier
 }
 
 func (s *Service) CheckRateLimit(ctx context.Context, userID string, maxTokensPerDay int64) (bool, error) {
@@ -185,11 +215,6 @@ func (s *Service) GetUserLifetimeTokenUsage(ctx context.Context, userID string) 
 // GetUserTokenUsageToday returns tokens used today.
 func (s *Service) GetUserTokenUsageToday(ctx context.Context, userID string) (int64, error) {
 	return s.queries.GetUserTokenUsageToday(ctx, userID)
-}
-
-// GetUserRequestCountToday returns requests made today.
-func (s *Service) GetUserRequestCountToday(ctx context.Context, userID string) (int64, error) {
-	return s.queries.GetUserRequestCountToday(ctx, userID)
 }
 
 func (s *Service) GetUserRequestCountSince(ctx context.Context, userID string, since time.Time) (int64, error) {
@@ -230,8 +255,8 @@ func (s *Service) HasActivePro(ctx context.Context, userID string) (bool, *time.
 		return false, nil, err
 	}
 	now := time.Now().UTC()
-	if ent.ProExpiresAt.Valid && ent.ProExpiresAt.Time.After(now) {
-		t := ent.ProExpiresAt.Time
+	if ent.SubscriptionExpiresAt.Valid && ent.SubscriptionExpiresAt.Time.After(now) {
+		t := ent.SubscriptionExpiresAt.Time
 		return true, &t, nil
 	}
 	return false, nil, nil
@@ -247,8 +272,8 @@ func (s *Service) GetSubscriptionProvider(ctx context.Context, userID string) (s
 		}
 		return "", err
 	}
-	if ent.SubscriptionProvider != nil {
-		return *ent.SubscriptionProvider, nil
+	if ent.SubscriptionProvider != "" {
+		return ent.SubscriptionProvider, nil
 	}
 	return "", nil
 }
@@ -271,6 +296,15 @@ type TokenUsage struct {
 	TotalTokens      int
 }
 
+// TokenUsageWithMultiplier represents token usage with cost weighting.
+type TokenUsageWithMultiplier struct {
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int     // Raw model tokens
+	Multiplier       float64 // Cost multiplier
+	PlanTokens       int     // TotalTokens × Multiplier
+}
+
 // GetProviderFromBaseURL maps base URLs to provider names.
 func GetProviderFromBaseURL(baseURL string) string {
 	baseURL = strings.TrimRight(baseURL, "/")
@@ -285,4 +319,112 @@ func GetProviderFromBaseURL(baseURL string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// GetUserTier returns the user's current subscription tier.
+func (s *Service) GetUserTier(ctx context.Context, userID string) (tiers.Tier, *time.Time, error) {
+	result, err := s.queries.GetUserTier(ctx, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// User has no entitlement record, default to free
+			return tiers.TierFree, nil, nil
+		}
+		return "", nil, fmt.Errorf("failed to get user tier: %w", err)
+	}
+
+	tier := tiers.Tier(result.SubscriptionTier)
+
+	// Check if tier has expired
+	var expiresAt *time.Time
+	if result.SubscriptionExpiresAt.Valid {
+		expiresAt = &result.SubscriptionExpiresAt.Time
+		if expiresAt.Before(time.Now().UTC()) {
+			// Tier expired, downgrade to free
+			s.logger.Info("user tier expired, downgrading to free",
+				slog.String("user_id", userID),
+				slog.String("expired_tier", string(tier)),
+				slog.Time("expired_at", *expiresAt))
+			return tiers.TierFree, nil, nil
+		}
+	}
+
+	return tier, expiresAt, nil
+}
+
+// GetUserTierConfig returns the full tier configuration for a user.
+func (s *Service) GetUserTierConfig(ctx context.Context, userID string) (tiers.Config, *time.Time, error) {
+	tier, expiresAt, err := s.GetUserTier(ctx, userID)
+	if err != nil {
+		return tiers.Config{}, nil, err
+	}
+
+	config, err := tiers.Get(tier)
+	if err != nil {
+		// Fallback to free if tier not found
+		config = tiers.Configs[tiers.TierFree]
+	}
+
+	return config, expiresAt, nil
+}
+
+// LogRequestWithPlanTokensAsync queues a request with plan token calculation.
+func (s *Service) LogRequestWithPlanTokensAsync(
+	ctx context.Context,
+	info RequestInfo,
+	tokenData *TokenUsageWithMultiplier,
+) error {
+	if tokenData != nil {
+		info.PromptTokens = &tokenData.PromptTokens
+		info.CompletionTokens = &tokenData.CompletionTokens
+		info.TotalTokens = &tokenData.TotalTokens
+		info.PlanTokens = &tokenData.PlanTokens
+		info.Multiplier = &tokenData.Multiplier
+	}
+
+	return s.LogRequestAsync(ctx, info)
+}
+
+// GetUserPlanTokensThisWeek returns plan tokens used this week.
+func (s *Service) GetUserPlanTokensThisWeek(ctx context.Context, userID string) (int64, error) {
+	result, err := s.queries.GetUserPlanTokensThisWeek(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get weekly plan tokens: %w", err)
+	}
+	return result, nil
+}
+
+// GetUserPlanTokensThisMonth returns plan tokens used this month.
+func (s *Service) GetUserPlanTokensThisMonth(ctx context.Context, userID string) (int64, error) {
+	result, err := s.queries.GetUserPlanTokensThisMonth(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get monthly plan tokens: %w", err)
+	}
+	return result, nil
+}
+
+// GetUserPlanTokensToday returns plan tokens used today.
+func (s *Service) GetUserPlanTokensToday(ctx context.Context, userID string) (int64, error) {
+	result, err := s.queries.GetUserPlanTokensToday(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get daily plan tokens: %w", err)
+	}
+	return result, nil
+}
+
+// GetUserDeepResearchRunsToday returns deep research runs today.
+func (s *Service) GetUserDeepResearchRunsToday(ctx context.Context, userID string) (int64, error) {
+	result, err := s.queries.GetUserDeepResearchRunsToday(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get daily deep research runs: %w", err)
+	}
+	return result, nil
+}
+
+// GetUserDeepResearchRunsLifetime returns deep research runs lifetime.
+func (s *Service) GetUserDeepResearchRunsLifetime(ctx context.Context, userID string) (int64, error) {
+	result, err := s.queries.GetUserDeepResearchRunsLifetime(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get lifetime deep research runs: %w", err)
+	}
+	return result, nil
 }

@@ -21,14 +21,27 @@ type DeepResearchMessage struct {
 	SentAt      sql.NullTime `json:"sentAt"`
 }
 
+type DeepResearchRun struct {
+	ID              int64        `json:"id"`
+	UserID          string       `json:"userId"`
+	ChatID          string       `json:"chatId"`
+	RunDate         time.Time    `json:"runDate"`
+	ModelTokensUsed int32        `json:"modelTokensUsed"`
+	PlanTokensUsed  int32        `json:"planTokensUsed"`
+	Status          string       `json:"status"`
+	StartedAt       time.Time    `json:"startedAt"`
+	CompletedAt     sql.NullTime `json:"completedAt"`
+}
+
 type Entitlement struct {
-	UserID       string       `json:"userId"`
-	ProExpiresAt sql.NullTime `json:"proExpiresAt"`
-	UpdatedAt    time.Time    `json:"updatedAt"`
-	// Subscription source: apple, stripe, or NULL for free tier
-	SubscriptionProvider *string `json:"subscriptionProvider"`
+	UserID                string       `json:"userId"`
+	SubscriptionExpiresAt sql.NullTime `json:"subscriptionExpiresAt"`
+	UpdatedAt             time.Time    `json:"updatedAt"`
+	// Subscription source: apple, stripe
+	SubscriptionProvider string `json:"subscriptionProvider"`
 	// Stripe Customer ID for billing portal access (cus_xxx)
 	StripeCustomerID *string `json:"stripeCustomerId"`
+	SubscriptionTier string  `json:"subscriptionTier"`
 }
 
 type InviteCode struct {
@@ -48,15 +61,17 @@ type InviteCode struct {
 }
 
 type RequestLog struct {
-	ID               int64         `json:"id"`
-	UserID           string        `json:"userId"`
-	Endpoint         string        `json:"endpoint"`
-	Model            *string       `json:"model"`
-	Provider         string        `json:"provider"`
-	CreatedAt        time.Time     `json:"createdAt"`
-	PromptTokens     sql.NullInt32 `json:"promptTokens"`
-	CompletionTokens sql.NullInt32 `json:"completionTokens"`
-	TotalTokens      sql.NullInt32 `json:"totalTokens"`
+	ID               int64          `json:"id"`
+	UserID           string         `json:"userId"`
+	Endpoint         string         `json:"endpoint"`
+	Model            *string        `json:"model"`
+	Provider         string         `json:"provider"`
+	CreatedAt        time.Time      `json:"createdAt"`
+	PromptTokens     sql.NullInt32  `json:"promptTokens"`
+	CompletionTokens sql.NullInt32  `json:"completionTokens"`
+	TotalTokens      sql.NullInt32  `json:"totalTokens"`
+	PlanTokens       sql.NullInt32  `json:"planTokens"`
+	TokenMultiplier  sql.NullString `json:"tokenMultiplier"`
 }
 
 type Task struct {
@@ -93,4 +108,5 @@ type UserTokenUsageDaily struct {
 	TotalPromptTokens     int64     `json:"totalPromptTokens"`
 	TotalCompletionTokens int64     `json:"totalCompletionTokens"`
 	TotalTokensUsed       int64     `json:"totalTokensUsed"`
+	TotalPlanTokens       int64     `json:"totalPlanTokens"`
 }

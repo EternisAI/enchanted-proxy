@@ -37,18 +37,19 @@ func TestRouteModelExactMatch(t *testing.T) {
 	router := NewModelRouter(cfg, log)
 
 	tests := []struct {
-		model           string
-		expectedBaseURL string
-		expectedKey     string
-		expectedAPIType APIType
+		model            string
+		expectedBaseURL  string
+		expectedKey      string
+		expectedAPIType  APIType
+		expectedProvider string
 	}{
-		{"gpt-4", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions},
-		{"gpt-4-turbo", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions},
-		{"gpt-3.5-turbo", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions},
-		{"o1-preview", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions},
-		{"o1-mini", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions},
-		{"o3-mini", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions},
-		{"gpt-5-pro", "https://api.openai.com/v1", "test-openai-key", APITypeResponses},
+		{"gpt-4", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
+		{"gpt-4-turbo", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
+		{"gpt-3.5-turbo", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
+		{"o1-preview", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
+		{"o1-mini", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
+		{"o3-mini", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
+		{"gpt-5-pro", "https://api.openai.com/v1", "test-openai-key", APITypeResponses, "GPT 5 Pro"},
 	}
 
 	for _, tt := range tests {
@@ -63,8 +64,8 @@ func TestRouteModelExactMatch(t *testing.T) {
 			if provider.APIKey != tt.expectedKey {
 				t.Errorf("expected API key %s, got %s", tt.expectedKey, provider.APIKey)
 			}
-			if provider.Name != "OpenAI" {
-				t.Errorf("expected provider name 'OpenAI', got %s", provider.Name)
+			if provider.Name != tt.expectedProvider {
+				t.Errorf("expected provider name '%s', got %s", tt.expectedProvider, provider.Name)
 			}
 			if provider.APIType != tt.expectedAPIType {
 				t.Errorf("expected APIType %s, got %s", tt.expectedAPIType, provider.APIType)

@@ -64,6 +64,8 @@ sql:
             go_type: "int64"
           - column: "user_token_usage_daily.total_tokens_used"
             go_type: "int64"
+          - column: "user_token_usage_daily.total_plan_tokens"
+            go_type: "int64"
           - db_type: "text"
             nullable: true
             go_type:

@@ -1,14 +1,29 @@
 package request_tracking
 
 import (
+	"bytes"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/common"
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 )
+
+// newReaderCloser creates an io.ReadCloser from a byte slice.
+func newReaderCloser(b []byte) io.ReadCloser {
+	return io.NopCloser(bytes.NewReader(b))
+}
+
+// extractModelFromRequestBody extracts the model field from request body bytes.
+// Delegates to common package for consistent implementation across codebase.
+func extractModelFromRequestBody(path string, body []byte) string {
+	return common.ExtractModelFromRequestBody(path, body)
+}
 
 // RequestTrackingMiddleware logs requests for authenticated users and checks rate limits.
 func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger) gin.HandlerFunc {
@@ -22,77 +37,148 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger) 
 		log := logger.WithContext(c.Request.Context()).WithComponent("request_tracking")
 
 		if config.AppConfig.RateLimitEnabled {
-			// Check pro status with explicit error handling
-			isPro, _, err := trackingService.HasActivePro(c.Request.Context(), userID)
+			// Get user's tier and config
+			tierConfig, expiresAt, err := trackingService.GetUserTierConfig(c.Request.Context(), userID)
 			if err != nil {
-				// CRITICAL: If we can't check pro status (DB error, network issue, etc.),
-				// fail open and allow the request rather than incorrectly applying free tier limits.
-				// This prevents pro subscribers from being rate limited due to transient errors.
-				log.Error("failed to check pro status - allowing request to proceed",
+				log.Error("failed to get tier config",
 					slog.String("error", err.Error()),
 					slog.String("user_id", userID))
+
+				// Fail closed if configured (prevents rate limit bypass during DB outage)
+				if config.AppConfig.RateLimitFailClosed {
+					c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+						"error": "Rate limit service temporarily unavailable",
+					})
+					return
+				}
+
+				// Otherwise fail open (allow request)
+				log.Warn("allowing request despite tier config error (fail open mode)")
 				c.Next()
 				return
 			}
 
-			// Pro: enforce ProDailyTokens by today's token usage.
-			if isPro {
-				log.Debug("checking pro daily tokens limit", slog.String("user_id", userID))
-				used, uerr := trackingService.GetUserTokenUsageToday(c.Request.Context(), userID)
-				if uerr != nil {
-					log.Error("failed to get today's token usage",
-						slog.String("error", uerr.Error()),
-						slog.String("user_id", userID))
-				} else if used >= config.AppConfig.ProDailyTokens {
-					log.Warn("rate limit exceeded - returning 429",
+			log.Debug("checking rate limits for user",
+				slog.String("user_id", userID),
+				slog.String("tier", tierConfig.Name),
+				slog.Int64("monthly_limit", tierConfig.MonthlyPlanTokens),
+				slog.Int64("daily_limit", tierConfig.DailyPlanTokens))
+
+			// Read request body once for model extraction
+			var requestBody []byte
+			if c.Request.Body != nil {
+				var err error
+				requestBody, err = io.ReadAll(c.Request.Body)
+				if err == nil {
+					// Restore body for downstream handlers
+					c.Request.Body = newReaderCloser(requestBody)
+				}
+			}
+
+			// Model access control
+			model := extractModelFromRequestBody(c.Request.URL.Path, requestBody)
+			if model != "" {
+				if !tierConfig.IsModelAllowed(model) {
+					log.Warn("model access denied",
 						slog.String("user_id", userID),
-						slog.String("tier", "pro"),
-						slog.Int64("limit", config.AppConfig.ProDailyTokens),
-						slog.Int64("used", used),
-						slog.Bool("log_only", config.AppConfig.RateLimitLogOnly))
-					if !config.AppConfig.RateLimitLogOnly {
-						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-							"error": "Pro daily token limit exceeded.",
-							"tier":  "pro",
-							"limit": config.AppConfig.ProDailyTokens,
-						})
-						return
+						slog.String("model", model),
+						slog.String("tier", tierConfig.Name))
+
+					// Build helpful error message with allowed models
+					var errorMsg string
+					if len(tierConfig.AllowedModels) == 0 {
+						errorMsg = fmt.Sprintf("Model '%s' not available for %s tier", model, tierConfig.DisplayName)
+					} else {
+						errorMsg = fmt.Sprintf("Model '%s' not allowed. Allowed models for %s tier: %v",
+							model, tierConfig.DisplayName, tierConfig.AllowedModels)
 					}
+
+					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+						"error":          errorMsg,
+						"tier":           tierConfig.Name,
+						"model":          model,
+						"allowed_models": tierConfig.AllowedModels,
+					})
+					return
 				}
-			} else {
-				// Free tier: allow until FreeLifetimeTokens lifetime tokens.
-				log.Debug("checking free lifetime tokens limit", slog.String("user_id", userID))
-				lifetime, lerr := trackingService.GetUserLifetimeTokenUsage(c.Request.Context(), userID)
-				if lerr != nil {
-					log.Error("failed to get lifetime token usage",
-						slog.String("error", lerr.Error()),
+			}
+
+			// Check monthly quota (if configured)
+			if tierConfig.MonthlyPlanTokens > 0 {
+				used, err := trackingService.GetUserPlanTokensThisMonth(c.Request.Context(), userID)
+				if err != nil {
+					log.Error("failed to get monthly plan token usage",
+						slog.String("error", err.Error()),
 						slog.String("user_id", userID))
-				} else if lifetime >= config.AppConfig.FreeLifetimeTokens {
-					// Drip tier: enforce daily messages after free lifetime is exhausted.
-					log.Debug("checking drip daily messages limit", slog.String("user_id", userID))
-					reqs, derr := trackingService.GetUserRequestCountToday(c.Request.Context(), userID)
-					if derr != nil {
-						log.Error("failed to get request count today",
-							slog.String("error", derr.Error()),
-							slog.String("user_id", userID))
-					} else if reqs >= config.AppConfig.DripDailyMessages {
-						log.Warn("rate limit exceeded - returning 429",
-							slog.String("user_id", userID),
-							slog.String("tier", "drip"),
-							slog.Int64("limit", config.AppConfig.DripDailyMessages),
-							slog.Int64("used", reqs),
-							slog.Int64("lifetime_tokens", lifetime),
-							slog.Bool("log_only", config.AppConfig.RateLimitLogOnly))
-						if !config.AppConfig.RateLimitLogOnly {
-							c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-								"error": "Daily limit exceeded. Please try again tomorrow or upgrade.",
-								"tier":  "drip",
-								"limit": config.AppConfig.DripDailyMessages,
-							})
-							return
-						}
-					}
+				} else if used >= tierConfig.MonthlyPlanTokens {
+					log.Warn("monthly rate limit exceeded",
+						slog.String("user_id", userID),
+						slog.String("tier", tierConfig.Name),
+						slog.Int64("limit", tierConfig.MonthlyPlanTokens),
+						slog.Int64("used", used))
+					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+						"error":     fmt.Sprintf("%s monthly plan token limit exceeded", tierConfig.DisplayName),
+						"tier":      tierConfig.Name,
+						"limit":     tierConfig.MonthlyPlanTokens,
+						"used":      used,
+						"resets_at": tierConfig.GetMonthlyResetTime(),
+					})
+					return
 				}
+			}
+
+			// Check weekly quota (if configured)
+			if tierConfig.WeeklyPlanTokens > 0 {
+				used, err := trackingService.GetUserPlanTokensThisWeek(c.Request.Context(), userID)
+				if err != nil {
+					log.Error("failed to get weekly plan token usage",
+						slog.String("error", err.Error()),
+						slog.String("user_id", userID))
+				} else if used >= tierConfig.WeeklyPlanTokens {
+					log.Warn("weekly rate limit exceeded",
+						slog.String("user_id", userID),
+						slog.String("tier", tierConfig.Name),
+						slog.Int64("limit", tierConfig.WeeklyPlanTokens),
+						slog.Int64("used", used))
+					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+						"error":     fmt.Sprintf("%s weekly plan token limit exceeded", tierConfig.DisplayName),
+						"tier":      tierConfig.Name,
+						"limit":     tierConfig.WeeklyPlanTokens,
+						"used":      used,
+						"resets_at": tierConfig.GetWeeklyResetTime(),
+					})
+					return
+				}
+			}
+
+			// Check daily quota (if configured)
+			if tierConfig.DailyPlanTokens > 0 {
+				used, err := trackingService.GetUserPlanTokensToday(c.Request.Context(), userID)
+				if err != nil {
+					log.Error("failed to get daily plan token usage",
+						slog.String("error", err.Error()),
+						slog.String("user_id", userID))
+				} else if used >= tierConfig.DailyPlanTokens {
+					log.Warn("daily rate limit exceeded",
+						slog.String("user_id", userID),
+						slog.String("tier", tierConfig.Name),
+						slog.Int64("limit", tierConfig.DailyPlanTokens),
+						slog.Int64("used", used))
+					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+						"error":     fmt.Sprintf("%s daily plan token limit exceeded", tierConfig.DisplayName),
+						"tier":      tierConfig.Name,
+						"limit":     tierConfig.DailyPlanTokens,
+						"used":      used,
+						"resets_at": tierConfig.GetDailyResetTime(),
+					})
+					return
+				}
+			}
+
+			// Store tier config in context for later use
+			c.Set("tierConfig", tierConfig)
+			if expiresAt != nil {
+				c.Set("tierExpiresAt", *expiresAt)
 			}
 		}
 

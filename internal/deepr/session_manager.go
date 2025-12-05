@@ -13,6 +13,7 @@ import (
 type ActiveSession struct {
 	UserID         string
 	ChatID         string
+	RunID          int64                      // Database run ID for token tracking
 	BackendConn    *websocket.Conn
 	Context        context.Context
 	CancelFunc     context.CancelFunc
@@ -52,7 +53,7 @@ func (sm *SessionManager) GetSession(userID, chatID string) (*ActiveSession, boo
 }
 
 // CreateSession creates a new active session.
-func (sm *SessionManager) CreateSession(userID, chatID string, backendConn *websocket.Conn, ctx context.Context, cancel context.CancelFunc) *ActiveSession {
+func (sm *SessionManager) CreateSession(userID, chatID string, runID int64, backendConn *websocket.Conn, ctx context.Context, cancel context.CancelFunc) *ActiveSession {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -89,6 +90,7 @@ func (sm *SessionManager) CreateSession(userID, chatID string, backendConn *webs
 	session := &ActiveSession{
 		UserID:      userID,
 		ChatID:      chatID,
+		RunID:       runID,
 		BackendConn: backendConn,
 		Context:     ctx,
 		CancelFunc:  cancel,
@@ -100,6 +102,7 @@ func (sm *SessionManager) CreateSession(userID, chatID string, backendConn *webs
 	sm.logger.WithComponent("deepr-session").Info("session created",
 		slog.String("user_id", userID),
 		slog.String("chat_id", chatID),
+		slog.Int64("run_id", runID),
 		slog.String("session_key", key),
 		slog.Int("total_active_sessions", len(sm.sessions)))
 
