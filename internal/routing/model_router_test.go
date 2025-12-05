@@ -49,7 +49,7 @@ func TestRouteModelExactMatch(t *testing.T) {
 		{"o1-preview", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
 		{"o1-mini", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
 		{"o3-mini", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
-		{"gpt-5-pro", "https://api.openai.com/v1", "test-openai-key", APITypeResponses, "GPT 5 Pro"},
+		{"gpt-5-pro", "https://api.openai.com/v1", "test-openai-key", APITypeResponses, "OpenAI"},
 	}
 
 	for _, tt := range tests {

@@ -130,14 +130,44 @@ func ProxyHandler(
 				c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized base URL"})
 				return
 			}
-			log.Info("using legacy X-BASE-URL routing (Chat Completions / streaming)",
-				slog.String("base_url", baseURL),
-				slog.String("model", model))
-			provider = &routing.ProviderConfig{
-				BaseURL: baseURL,
-				APIKey:  apiKey,
-				Name:    "Legacy",
-				APIType: routing.APITypeChatCompletions,
+
+			// Try to get provider config from model router (for correct name and multiplier)
+			if model != "" && modelRouter != nil {
+				if providerCfg, err := modelRouter.RouteModel(model, platform); err == nil {
+					// Use model router's config (has correct provider name and multiplier)
+					provider = providerCfg
+					// But override with legacy base URL and API key (for backward compatibility)
+					provider.BaseURL = baseURL
+					provider.APIKey = apiKey
+					log.Info("using legacy X-BASE-URL routing with model config",
+						slog.String("base_url", baseURL),
+						slog.String("model", model),
+						slog.String("provider", provider.Name),
+						slog.Float64("multiplier", provider.TokenMultiplier))
+				} else {
+					// Model not found in router - use legacy fallback
+					log.Info("using legacy X-BASE-URL routing (model not in router)",
+						slog.String("base_url", baseURL),
+						slog.String("model", model))
+					provider = &routing.ProviderConfig{
+						BaseURL:         baseURL,
+						APIKey:          apiKey,
+						Name:            "Legacy",
+						APIType:         routing.APITypeChatCompletions,
+						TokenMultiplier: 1.0, // Default to 1× for unknown models
+					}
+				}
+			} else {
+				// No model provided - use legacy fallback
+				log.Info("using legacy X-BASE-URL routing (no model provided)",
+					slog.String("base_url", baseURL))
+				provider = &routing.ProviderConfig{
+					BaseURL:         baseURL,
+					APIKey:          apiKey,
+					Name:            "Legacy",
+					APIType:         routing.APITypeChatCompletions,
+					TokenMultiplier: 1.0, // Default to 1× for legacy routing
+				}
 			}
 		} else if model != "" && modelRouter != nil {
 			// Auto-route based on model ID

@@ -87,7 +87,7 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 		routes["deepseek-r1-0528"] = ProviderConfig{
 			BaseURL:         "https://inference.tinfoil.sh/v1",
 			APIKey:          cfg.TinfoilAPIKey,
-			Name:            "DeepSeek R1",
+			Name:            "Tinfoil",
 			APIType:         APITypeChatCompletions,
 			TokenMultiplier: 1.0,
 		}
@@ -99,7 +99,7 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 		routes["llama3-3-70b"] = ProviderConfig{
 			BaseURL:         "https://inference.tinfoil.sh/v1",
 			APIKey:          cfg.TinfoilAPIKey,
-			Name:            "Llama 3.3",
+			Name:            "Tinfoil",
 			APIType:         APITypeChatCompletions,
 			TokenMultiplier: 1.0,
 		}
@@ -111,7 +111,7 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 		routes["zai-org/GLM-4.6"] = ProviderConfig{
 			BaseURL:         "http://127.0.0.1:20001/v1",
 			APIKey:          cfg.EternisInferenceAPIKey,
-			Name:            "GLM 4.6",
+			Name:            "Eternis",
 			APIType:         APITypeChatCompletions,
 			TokenMultiplier: 3.0,
 		}
@@ -123,7 +123,7 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 		routes["dolphin-mistral-eternis"] = ProviderConfig{
 			BaseURL:         "http://127.0.0.1:20002/v1",
 			APIKey:          cfg.EternisInferenceAPIKey,
-			Name:            "Venice Uncensored",
+			Name:            "Eternis",
 			APIType:         APITypeChatCompletions,
 			TokenMultiplier: 3.0,
 		}
@@ -135,7 +135,7 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 		routes["openai/gpt-4.1"] = ProviderConfig{
 			BaseURL:         "https://openrouter.ai/api/v1",
 			APIKey:          "", // Resolved at route time (mobile/desktop)
-			Name:            "GPT 4.1",
+			Name:            "OpenRouter",
 			APIType:         APITypeChatCompletions,
 			TokenMultiplier: 4.0,
 		}
@@ -147,7 +147,7 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 		routes["openai/gpt-5"] = ProviderConfig{
 			BaseURL:         "https://openrouter.ai/api/v1",
 			APIKey:          "", // Resolved at route time
-			Name:            "GPT 5",
+			Name:            "OpenRouter",
 			APIType:         APITypeChatCompletions,
 			TokenMultiplier: 6.0,
 		}
@@ -159,7 +159,7 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 		routes["gpt-5-pro"] = ProviderConfig{
 			BaseURL:         "https://api.openai.com/v1",
 			APIKey:          cfg.OpenAIAPIKey,
-			Name:            "GPT 5 Pro",
+			Name:            "OpenAI",
 			APIType:         APITypeResponses,
 			TokenMultiplier: 50.0,
 		}
