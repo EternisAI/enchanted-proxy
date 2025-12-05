@@ -115,84 +115,48 @@ func ProxyHandler(
 			platform = "mobile" // Default to mobile
 		}
 
-		// Determine provider: X-BASE-URL (legacy) or model-based routing (new)
-		var baseURL string
-		var apiKey string
-		var provider *routing.ProviderConfig
-
-		legacyBaseURL := c.GetHeader("X-BASE-URL")
-		if legacyBaseURL != "" {
-			// Backward compatibility: Use X-BASE-URL if provided
-			baseURL = legacyBaseURL
-			apiKey = GetAPIKey(baseURL, platform, cfg)
-			if apiKey == "" {
-				log.Warn("unauthorized base url", slog.String("base_url", baseURL))
-				c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized base URL"})
-				return
-			}
-
-			// Try to get provider config from model router (for correct name and multiplier)
-			if model != "" && modelRouter != nil {
-				if providerCfg, err := modelRouter.RouteModel(model, platform); err == nil {
-					// Use model router's config (has correct provider name and multiplier)
-					provider = providerCfg
-					// But override with legacy base URL and API key (for backward compatibility)
-					provider.BaseURL = baseURL
-					provider.APIKey = apiKey
-					log.Info("using legacy X-BASE-URL routing with model config",
-						slog.String("base_url", baseURL),
-						slog.String("model", model),
-						slog.String("provider", provider.Name),
-						slog.Float64("multiplier", provider.TokenMultiplier))
-				} else {
-					// Model not found in router - use legacy fallback
-					log.Info("using legacy X-BASE-URL routing (model not in router)",
-						slog.String("base_url", baseURL),
-						slog.String("model", model))
-					provider = &routing.ProviderConfig{
-						BaseURL:         baseURL,
-						APIKey:          apiKey,
-						Name:            "Legacy",
-						APIType:         routing.APITypeChatCompletions,
-						TokenMultiplier: 1.0, // Default to 1× for unknown models
-					}
-				}
-			} else {
-				// No model provided - use legacy fallback
-				log.Info("using legacy X-BASE-URL routing (no model provided)",
-					slog.String("base_url", baseURL))
-				provider = &routing.ProviderConfig{
-					BaseURL:         baseURL,
-					APIKey:          apiKey,
-					Name:            "Legacy",
-					APIType:         routing.APITypeChatCompletions,
-					TokenMultiplier: 1.0, // Default to 1× for legacy routing
-				}
-			}
-		} else if model != "" && modelRouter != nil {
-			// Auto-route based on model ID
-			providerCfg, err := modelRouter.RouteModel(model, platform)
-			if err != nil {
-				log.Error("failed to route model",
-					slog.String("error", err.Error()),
-					slog.String("model", model))
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("No provider configured for model: %s", model)})
-				return
-			}
-			provider = providerCfg
-			baseURL = provider.BaseURL
-			apiKey = provider.APIKey
-			log.Info("auto-routed model to provider",
-				slog.String("model", model),
-				slog.String("provider", provider.Name),
-				slog.String("base_url", baseURL),
-				slog.String("api_type", string(provider.APIType)))
-		} else {
-			// Neither X-BASE-URL nor model provided
-			log.Warn("missing routing information: need X-BASE-URL or model ID")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "X-BASE-URL header or model field is required"})
+		// Route based on model ID (X-BASE-URL header is ignored for security)
+		// Model field is required - proxy controls all routing
+		if model == "" {
+			log.Warn("missing model field in request body")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Model field is required"})
 			return
 		}
+
+		if modelRouter == nil {
+			log.Error("model router not initialized")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Routing service unavailable"})
+			return
+		}
+
+		// Route model to provider
+		provider, err := modelRouter.RouteModel(model, platform)
+		if err != nil {
+			log.Error("failed to route model",
+				slog.String("error", err.Error()),
+				slog.String("model", model))
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("No provider configured for model: %s", model)})
+			return
+		}
+
+		baseURL := provider.BaseURL
+		apiKey := provider.APIKey
+
+		// Warn if client sent X-BASE-URL (deprecated, ignored)
+		if legacyBaseURL := c.GetHeader("X-BASE-URL"); legacyBaseURL != "" {
+			log.Warn("X-BASE-URL header is deprecated and ignored - routing based on model",
+				slog.String("x_base_url", legacyBaseURL),
+				slog.String("model", model),
+				slog.String("actual_provider", provider.Name),
+				slog.String("actual_base_url", baseURL))
+		}
+
+		log.Info("routed model to provider",
+			slog.String("model", model),
+			slog.String("provider", provider.Name),
+			slog.String("base_url", baseURL),
+			slog.String("api_type", string(provider.APIType)),
+			slog.Float64("multiplier", provider.TokenMultiplier))
 
 		// Route based on API type
 		if provider.APIType == routing.APITypeResponses {

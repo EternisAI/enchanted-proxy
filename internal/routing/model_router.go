@@ -108,14 +108,14 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 
 	// GLM-4.6 - Free & Pro - via local/our IPs (3× multiplier)
 	if cfg.EternisInferenceAPIKey != "" {
-		routes["zai-org/GLM-4.6"] = ProviderConfig{
+		routes["zai-org/glm-4.6"] = ProviderConfig{
 			BaseURL:         "http://127.0.0.1:20001/v1",
 			APIKey:          cfg.EternisInferenceAPIKey,
 			Name:            "Eternis",
 			APIType:         APITypeChatCompletions,
 			TokenMultiplier: 3.0,
 		}
-		routes["glm-4.6"] = routes["zai-org/GLM-4.6"] // Alias
+		routes["glm-4.6"] = routes["zai-org/glm-4.6"] // Alias
 	}
 
 	// Dolphin Mistral - Free & Pro - via local/our IPs (3× multiplier)
