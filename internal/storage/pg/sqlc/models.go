@@ -102,11 +102,11 @@ type UserRequestCountsDaily struct {
 }
 
 type UserTokenUsageDaily struct {
-	UserID                string      `json:"userId"`
-	DayBucket             time.Time   `json:"dayBucket"`
-	RequestCount          int64       `json:"requestCount"`
-	TotalPromptTokens     int64       `json:"totalPromptTokens"`
-	TotalCompletionTokens int64       `json:"totalCompletionTokens"`
-	TotalTokensUsed       int64       `json:"totalTokensUsed"`
-	TotalPlanTokens       interface{} `json:"totalPlanTokens"`
+	UserID                string    `json:"userId"`
+	DayBucket             time.Time `json:"dayBucket"`
+	RequestCount          int64     `json:"requestCount"`
+	TotalPromptTokens     int64     `json:"totalPromptTokens"`
+	TotalCompletionTokens int64     `json:"totalCompletionTokens"`
+	TotalTokensUsed       int64     `json:"totalTokensUsed"`
+	TotalPlanTokens       int64     `json:"totalPlanTokens"`
 }

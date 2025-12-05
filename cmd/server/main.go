@@ -571,7 +571,9 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		}
 
 		// Deep Research endpoints (protected)
-		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled)) // POST API to start deep research
+		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled))    // POST API to start deep research
+		api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled)) // POST API to submit clarification response
+		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled))              // WebSocket proxy for deep research
 
 		// Stream Control API routes (protected)
 		chats := api.Group("/chats")
@@ -588,8 +590,6 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 			{
 				keyShare := encryption.Group("/key-share")
 				{
-					api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled)) // POST API to submit clarification response
-					api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled))              // WebSocket proxy for deep research
 					keyShare.POST("/session", input.keyshareHandler.CreateSession)                                                                                                                                                                  // POST /api/v1/encryption/key-share/session
 					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)                                                                                                                                                           // POST /api/v1/encryption/key-share/session/:sessionId
 					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen)                                                                                                                                               // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
