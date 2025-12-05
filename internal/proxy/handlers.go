@@ -158,6 +158,29 @@ func ProxyHandler(
 			slog.String("api_type", string(provider.APIType)),
 			slog.Float64("multiplier", provider.TokenMultiplier))
 
+		// For Eternis models (GLM, Dolphin): Add stream_options to enable usage reporting
+		// vLLM and similar servers need explicit flag to include usage in streaming responses
+		if provider.Name == "Eternis" && len(requestBody) > 0 {
+			var reqBody map[string]interface{}
+			if err := json.Unmarshal(requestBody, &reqBody); err == nil {
+				// Only add for streaming requests
+				if stream, ok := reqBody["stream"].(bool); ok && stream {
+					reqBody["stream_options"] = map[string]interface{}{
+						"include_usage": true,
+					}
+					// Re-serialize request body
+					if modifiedBody, err := json.Marshal(reqBody); err == nil {
+						requestBody = modifiedBody
+						c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
+						c.Request.ContentLength = int64(len(requestBody))
+						log.Debug("added stream_options for usage reporting",
+							slog.String("provider", provider.Name),
+							slog.String("model", model))
+					}
+				}
+			}
+		}
+
 		// Route based on API type
 		if provider.APIType == routing.APITypeResponses {
 			// Handle Responses API (GPT-5 Pro, GPT-4.5+)
