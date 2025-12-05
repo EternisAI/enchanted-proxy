@@ -118,17 +118,16 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 		routes["glm-4.6"] = routes["zai-org/glm-4.6"] // Alias
 	}
 
-	// Dolphin Mistral - Free & Pro - via local/our IPs (3× multiplier)
-	if cfg.EternisInferenceAPIKey != "" {
-		routes["dolphin-mistral-eternis"] = ProviderConfig{
-			BaseURL:         "http://127.0.0.1:20002/v1",
-			APIKey:          cfg.EternisInferenceAPIKey,
-			Name:            "Eternis",
-			APIType:         APITypeChatCompletions,
-			TokenMultiplier: 3.0,
-		}
-		routes["dolphin-mistral"] = routes["dolphin-mistral-eternis"] // Alias
+	// Dolphin Mistral (Venice) - Free & Pro - via GCP self-hosted (3× multiplier)
+	// Note: This service doesn't require authentication
+	routes["dolphin-mistral-eternis"] = ProviderConfig{
+		BaseURL:         "http://34.30.193.13:8000/v1",
+		APIKey:          "no-auth-required",
+		Name:            "Eternis",
+		APIType:         APITypeChatCompletions,
+		TokenMultiplier: 3.0,
 	}
+	routes["dolphin-mistral"] = routes["dolphin-mistral-eternis"] // Alias
 
 	// GPT-4.1 - Pro only - via OpenRouter (4× multiplier)
 	if cfg.OpenRouterMobileAPIKey != "" || cfg.OpenRouterDesktopAPIKey != "" {
