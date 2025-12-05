@@ -374,8 +374,40 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 	startTime := time.Now()
 	messageCount := 0
+	completedSuccessfully := false
 
+	// Ensure run is marked as completed when function exits
 	defer func() {
+		if s.queries != nil && session.RunID > 0 {
+			// Determine final status
+			status := "failed"
+			if completedSuccessfully {
+				status = "completed"
+			}
+
+			// Use fresh context with timeout to ensure DB write succeeds
+			completionCtx, cancelCompletion := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancelCompletion()
+
+			if err := s.queries.CompleteDeepResearchRun(completionCtx, pgdb.CompleteDeepResearchRunParams{
+				ID:     session.RunID,
+				Status: status,
+			}); err != nil {
+				log.Error("failed to mark deep research run as completed in defer (POST /start path)",
+					slog.Int64("run_id", session.RunID),
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("status", status),
+					slog.String("error", err.Error()))
+			} else {
+				log.Info("deep research run marked as completed in defer (POST /start path)",
+					slog.Int64("run_id", session.RunID),
+					slog.String("user_id", userID),
+					slog.String("chat_id", chatID),
+					slog.String("status", status))
+			}
+		}
+
 		s.sessionManager.RemoveSession(userID, chatID)
 		if s.storage != nil {
 			if err := s.storage.UpdateBackendConnectionStatus(userID, chatID, false); err != nil {
@@ -546,6 +578,12 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 					slog.String("user_id", userID),
 					slog.String("chat_id", chatID),
 					slog.String("message_type", messageType))
+
+				// Mark as successful if research completed without error
+				if msg.Type == "research_complete" {
+					completedSuccessfully = true
+				}
+
 				return
 			}
 		}
@@ -1048,6 +1086,43 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 		return
 	}
 
+	// Ensure run is marked as completed when function exits (regardless of how it exits)
+	// Use background context to avoid cancellation issues
+	completedSuccessfully := false
+	defer func() {
+		if s.queries == nil || runID <= 0 {
+			return
+		}
+
+		// Determine final status
+		status := "failed"
+		if completedSuccessfully {
+			status = "completed"
+		}
+
+		// Use fresh context with timeout to ensure DB write succeeds
+		completionCtx, cancelCompletion := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelCompletion()
+
+		if err := s.queries.CompleteDeepResearchRun(completionCtx, pgdb.CompleteDeepResearchRunParams{
+			ID:     runID,
+			Status: status,
+		}); err != nil {
+			log.Error("failed to mark deep research run as completed in defer",
+				slog.Int64("run_id", runID),
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("status", status),
+				slog.String("error", err.Error()))
+		} else {
+			log.Info("deep research run marked as completed in defer",
+				slog.Int64("run_id", runID),
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("status", status))
+		}
+	}()
+
 	// Create and register session with runID for token tracking
 	_ = s.sessionManager.CreateSession(userID, chatID, runID, serverConn, sessionCtx, cancel)
 	defer s.sessionManager.RemoveSession(userID, chatID)
@@ -1288,25 +1363,8 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 						}
 					}
 
-					// Mark run as completed in database (outside subscription check so it always runs)
-					if s.queries != nil && runID > 0 {
-						status := "completed"
-						if err := s.queries.CompleteDeepResearchRun(ctx, pgdb.CompleteDeepResearchRunParams{
-							ID:     runID,
-							Status: status,
-						}); err != nil {
-							log.Error("failed to mark run as completed",
-								slog.Int64("run_id", runID),
-								slog.String("user_id", userID),
-								slog.String("chat_id", chatID),
-								slog.String("error", err.Error()))
-						} else {
-							log.Info("deep research run marked as completed",
-								slog.Int64("run_id", runID),
-								slog.String("user_id", userID),
-								slog.String("chat_id", chatID))
-						}
-					}
+					// Mark as successful for defer completion
+					completedSuccessfully = true
 				}
 
 				// Check if session is complete
@@ -1321,29 +1379,9 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 						slog.Int("total_messages", messageCount),
 						slog.Duration("session_duration", time.Since(startTime)))
 
-					// Mark run as failed if this is an error (not handled by research_complete case above)
-					if msg.Type != "research_complete" && s.queries != nil && runID > 0 {
-						status := "failed"
-						if err := s.queries.CompleteDeepResearchRun(ctx, pgdb.CompleteDeepResearchRunParams{
-							ID:     runID,
-							Status: status,
-						}); err != nil {
-							log.Error("failed to mark run as failed",
-								slog.Int64("run_id", runID),
-								slog.String("user_id", userID),
-								slog.String("chat_id", chatID),
-								slog.String("error", err.Error()))
-						} else {
-							log.Info("deep research run marked as failed",
-								slog.Int64("run_id", runID),
-								slog.String("user_id", userID),
-								slog.String("chat_id", chatID))
-						}
-					}
-
 					// Final message has been stored and broadcast, now clean up
 					// This cancels the session context and exits the loop
-					// Defers will close backend connection and remove session from manager
+					// Defers will close backend connection, mark run as completed, and remove session from manager
 					cancel()
 					return
 				}
