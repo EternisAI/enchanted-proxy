@@ -10,6 +10,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/common"
 	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 )
@@ -84,21 +85,8 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger) 
 						slog.String("model", model),
 						slog.String("tier", tierConfig.Name))
 
-					// Build helpful error message with allowed models
-					var errorMsg string
-					if len(tierConfig.AllowedModels) == 0 {
-						errorMsg = fmt.Sprintf("Model '%s' not available for %s tier", model, tierConfig.DisplayName)
-					} else {
-						errorMsg = fmt.Sprintf("Model '%s' not allowed. Allowed models for %s tier: %v",
-							model, tierConfig.DisplayName, tierConfig.AllowedModels)
-					}
-
-					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-						"error":          errorMsg,
-						"tier":           tierConfig.Name,
-						"model":          model,
-						"allowed_models": tierConfig.AllowedModels,
-					})
+					err := errors.ModelNotAllowed(model, tierConfig.Name, tierConfig.DisplayName, tierConfig.AllowedModels)
+					errors.AbortWithForbidden(c, err)
 					return
 				}
 			}

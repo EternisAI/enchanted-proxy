@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
@@ -137,16 +138,13 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 		}
 
 		// Check quota before creating run record
-		if err := service.checkDeepResearchQuota(c.Request.Context(), userID, tierConfig); err != nil {
+		if forbiddenErr := service.checkDeepResearchQuota(c.Request.Context(), userID, tierConfig); forbiddenErr != nil {
 			log.Warn("deep research quota check failed",
 				slog.String("user_id", userID),
 				slog.String("chat_id", req.ChatID),
 				slog.String("tier", tierConfig.Name),
-				slog.String("error", err.Error()))
-			c.JSON(http.StatusForbidden, StartDeepResearchResponse{
-				Success: false,
-				Error:   err.Error(),
-			})
+				slog.String("reason", string(forbiddenErr.Reason)))
+			errors.AbortWithForbidden(c, forbiddenErr)
 			return
 		}
 

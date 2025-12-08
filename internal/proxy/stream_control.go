@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/streaming"
@@ -66,7 +67,7 @@ func StopStreamHandler(
 					log.Warn("chat ownership verification failed",
 						slog.String("user_id", userID),
 						slog.String("chat_id", chatID))
-					c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: You don't own this chat"})
+					errors.AbortWithForbidden(c, errors.ChatNotOwned(chatID))
 					return
 				}
 				log.Error("failed to verify chat ownership",

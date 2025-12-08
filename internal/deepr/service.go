@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
@@ -88,7 +89,8 @@ func (s *Service) canForwardMessage(ctx context.Context, userID, chatID string) 
 
 // checkDeepResearchQuota validates run limits and enforces per-run caps using tier-based system.
 // This replaces the old Firestore-based freemium validation with PostgreSQL tier system.
-func (s *Service) checkDeepResearchQuota(ctx context.Context, userID string, tierConfig tiers.Config) error {
+// Returns *errors.ForbiddenError for quota violations, or a regular error for system failures.
+func (s *Service) checkDeepResearchQuota(ctx context.Context, userID string, tierConfig tiers.Config) *errors.ForbiddenError {
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 
 	if !s.deepResearchRateLimitEnabled {
@@ -104,14 +106,13 @@ func (s *Service) checkDeepResearchQuota(ctx context.Context, userID string, tie
 			log.Error("failed to check active runs",
 				slog.String("user_id", userID),
 				slog.String("error", err.Error()))
-			return fmt.Errorf("failed to check active runs: %w", err)
+			return errors.TierValidationFailed("failed to check active runs")
 		}
 		if hasActive {
 			log.Warn("user blocked - already has active deep research run",
 				slog.String("user_id", userID),
 				slog.Int("max_active", tierConfig.DeepResearchMaxActiveSessions))
-			return fmt.Errorf("You have an active deep research session. Please complete or cancel it before starting a new one. (Tier: %s, Max Active: %d)",
-				tierConfig.DisplayName, tierConfig.DeepResearchMaxActiveSessions)
+			return errors.ActiveDeepResearchSession(tierConfig.Name, tierConfig.DisplayName, tierConfig.DeepResearchMaxActiveSessions)
 		}
 	}
 
@@ -122,7 +123,7 @@ func (s *Service) checkDeepResearchQuota(ctx context.Context, userID string, tie
 			log.Error("failed to check daily runs",
 				slog.String("user_id", userID),
 				slog.String("error", err.Error()))
-			return fmt.Errorf("failed to check daily runs: %w", err)
+			return errors.TierValidationFailed("failed to check daily runs")
 		}
 		if int(count) >= tierConfig.DeepResearchDailyRuns {
 			log.Warn("daily deep research limit exceeded",
@@ -131,8 +132,7 @@ func (s *Service) checkDeepResearchQuota(ctx context.Context, userID string, tie
 				slog.Int("daily_limit", tierConfig.DeepResearchDailyRuns))
 			now := time.Now().UTC()
 			nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
-			return fmt.Errorf("You've used %d/%d deep research runs today. Resets at %s UTC. (Tier: %s)",
-				count, tierConfig.DeepResearchDailyRuns, nextMidnight.Format("2006-01-02 15:04:05"), tierConfig.DisplayName)
+			return errors.DeepResearchDailyLimit(tierConfig.Name, tierConfig.DisplayName, count, int64(tierConfig.DeepResearchDailyRuns), nextMidnight)
 		}
 	}
 
@@ -143,15 +143,14 @@ func (s *Service) checkDeepResearchQuota(ctx context.Context, userID string, tie
 			log.Error("failed to check lifetime runs",
 				slog.String("user_id", userID),
 				slog.String("error", err.Error()))
-			return fmt.Errorf("failed to check lifetime runs: %w", err)
+			return errors.TierValidationFailed("failed to check lifetime runs")
 		}
 		if int(count) >= tierConfig.DeepResearchLifetimeRuns {
 			log.Warn("lifetime deep research limit reached",
 				slog.String("user_id", userID),
 				slog.Int64("lifetime_runs", count),
 				slog.Int("lifetime_limit", tierConfig.DeepResearchLifetimeRuns))
-			return fmt.Errorf("You've used %d/%d lifetime deep research runs. Upgrade to Pro for unlimited access. (Tier: %s)",
-				count, tierConfig.DeepResearchLifetimeRuns, tierConfig.DisplayName)
+			return errors.DeepResearchLifetimeLimit(tierConfig.Name, tierConfig.DisplayName, count, int64(tierConfig.DeepResearchLifetimeRuns))
 		}
 	}
 
@@ -242,7 +241,11 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, userID, chatID str
 	}
 
 	// Delegate to new tier-based quota check
-	return s.checkDeepResearchQuota(ctx, userID, tierConfig)
+	if forbiddenErr := s.checkDeepResearchQuota(ctx, userID, tierConfig); forbiddenErr != nil {
+		// Convert ForbiddenError to regular error for backwards compatibility
+		return fmt.Errorf("%s", forbiddenErr.UIMessage)
+	}
+	return nil
 }
 
 // NewService creates a new deep research service with database storage.

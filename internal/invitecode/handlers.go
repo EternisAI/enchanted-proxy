@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -47,7 +48,7 @@ func (h *Handler) RedeemInviteCode(c *gin.Context) {
 	}
 
 	if isWhitelisted {
-		c.JSON(http.StatusForbidden, gin.H{"error": "User already whitelisted"})
+		errors.AbortWithForbidden(c, errors.InviteAlreadyUsed())
 		return
 	}
 
@@ -62,7 +63,7 @@ func (h *Handler) RedeemInviteCode(c *gin.Context) {
 			return
 		}
 		if err.Error() == "code bound to a different user" {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Code bound to a different user"})
+			errors.AbortWithForbidden(c, errors.InviteWrongUser())
 			return
 		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

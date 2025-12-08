@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -145,9 +146,8 @@ func (h *Handler) SubmitKey(c *gin.Context) {
 			errorCode = "session_not_found"
 			message = "Session not found or expired"
 		case codes.PermissionDenied:
-			statusCode = http.StatusForbidden
-			errorCode = "forbidden"
-			message = "You don't own this session"
+			errors.AbortWithForbidden(c, errors.SessionNotOwned(sessionID))
+			return
 		case codes.FailedPrecondition:
 			statusCode = http.StatusConflict
 			errorCode = "session_completed"
@@ -224,10 +224,7 @@ func (h *Handler) WebSocketListen(c *gin.Context) {
 			slog.String("user_id", userID),
 			slog.String("session_id", sessionID),
 			slog.String("session_owner", session.UserID))
-		c.JSON(http.StatusForbidden, ErrorResponse{
-			Error:   "forbidden",
-			Message: "You don't own this session",
-		})
+		errors.AbortWithForbidden(c, errors.SessionNotOwned(sessionID))
 		return
 	}
 
