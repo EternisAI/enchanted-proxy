@@ -107,11 +107,11 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 	}
 
 	// GLM-4.6 - Free & Pro - via local/our IPs (3× multiplier)
-	if cfg.EternisInferenceAPIKey != "" {
+	if cfg.NearAPIKey != "" {
 		routes["zai-org/glm-4.6"] = ProviderConfig{
-			BaseURL:         "http://127.0.0.1:20001/v1",
-			APIKey:          cfg.EternisInferenceAPIKey,
-			Name:            "Eternis",
+			BaseURL:         "https://cloud-api.near.ai/v1",
+			APIKey:          cfg.NearAPIKey,
+			Name:            "NEAR AI",
 			APIType:         APITypeChatCompletions,
 			TokenMultiplier: 3.0,
 		}
