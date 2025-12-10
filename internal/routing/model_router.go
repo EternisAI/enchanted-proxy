@@ -118,7 +118,7 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 		routes["glm-4.6"] = routes["zai-org/glm-4.6"] // Alias
 	}
 
-	// Dolphin Mistral (Venice) - Pro only - via GCP self-hosted (0.5× multiplier)
+	// Dolphin Mistral (Venice) - Free & Pro - via GCP self-hosted (0.5× multiplier)
 	// Note: This service doesn't require authentication
 	routes["dolphin-mistral-eternis"] = ProviderConfig{
 		BaseURL:         "http://34.30.193.13:8000/v1",

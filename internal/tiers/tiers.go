@@ -70,11 +70,12 @@ var Configs = map[Tier]Config{
 		DailyPlanTokens:   0, // No daily limit
 		// Note: AllowedModels must match exactly what clients send in the "model" field
 		// Includes all known aliases to prevent blocking users
-		// Free tier can only use: DeepSeek R1, Llama 3.3 70B, GLM-4.6
+		// Free tier can only use: DeepSeek R1, Llama 3.3 70B, GLM-4.6, Dolphin Mistral (uncensored)
 		AllowedModels: []string{
 			"deepseek-r1-0528", "deepseek-r1",                      // DeepSeek R1 (1×)
 			"llama3-3-70b", "llama-3.3-70b",                         // Llama 3.3 70B (1×)
 			"zai-org/GLM-4.6", "glm-4.6",                            // GLM-4.6 (3×)
+			"dolphin-mistral-eternis", "dolphin-mistral",            // Dolphin Mistral (0.5×, uncensored)
 		},
 		DeepResearchDailyRuns:         0, // Not available daily
 		DeepResearchLifetimeRuns:      1, // 1 lifetime run
