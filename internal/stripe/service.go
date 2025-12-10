@@ -21,6 +21,18 @@ import (
 // ErrNoCustomerID is returned when a user has no Stripe customer ID in the database.
 var ErrNoCustomerID = errors.New("no stripe customer ID found for user")
 
+// Stripe Product IDs for Pro subscription (environment-specific)
+const (
+	ProductIDProd  = "prod_Ta0z3eSnwVZ8JW" // Production
+	ProductIDStage = "prod_TX3SHsvenM1l9q" // Staging
+	ProductIDDev   = "prod_TWwBMYEM1V9dkc" // Development
+)
+
+// isValidProProduct checks if the given product ID is one of the allowed Pro subscription products.
+func isValidProProduct(productID string) bool {
+	return productID == ProductIDProd || productID == ProductIDStage || productID == ProductIDDev
+}
+
 // Service handles Stripe subscription management and webhook processing.
 // It manages the lifecycle of Pro subscriptions for web app users, including:
 // - Creating Stripe Checkout Sessions for new subscriptions
@@ -264,6 +276,19 @@ func (s *Service) handleCheckoutCompleted(ctx context.Context, event stripe.Even
 		return fmt.Errorf("failed to retrieve subscription: %w", err)
 	}
 
+	// Validate product ID - only process webhooks for our Pro subscription products
+	if sub.Items == nil || len(sub.Items.Data) == 0 {
+		return fmt.Errorf("subscription has no items")
+	}
+
+	productID := sub.Items.Data[0].Price.Product.ID
+	if !isValidProProduct(productID) {
+		s.logger.Warn("ignoring checkout for unrecognized product",
+			"subscription_id", sub.ID,
+			"product_id", productID)
+		return nil // Ignore this webhook - not our product
+	}
+
 	userID, ok := sub.Metadata["firebase_user_id"]
 	if !ok || userID == "" {
 		return fmt.Errorf("missing firebase_user_id in subscription metadata")
@@ -272,9 +297,6 @@ func (s *Service) handleCheckoutCompleted(ctx context.Context, event stripe.Even
 	// Get current period end from the first subscription item
 	// Note: Subscriptions can have multiple items, but for our use case (single price),
 	// the first item's period end represents the subscription's billing period end
-	if sub.Items == nil || len(sub.Items.Data) == 0 {
-		return fmt.Errorf("subscription has no items")
-	}
 	expiresAt := time.Unix(sub.Items.Data[0].CurrentPeriodEnd, 0)
 
 	// Get customer ID from subscription for billing portal access
@@ -327,6 +349,20 @@ func (s *Service) handleSubscriptionDeleted(ctx context.Context, event stripe.Ev
 	var sub stripe.Subscription
 	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
 		return fmt.Errorf("failed to parse subscription: %w", err)
+	}
+
+	// Validate product ID - only process webhooks for our Pro subscription products
+	if sub.Items == nil || len(sub.Items.Data) == 0 {
+		s.logger.Warn("subscription has no items", "subscription_id", sub.ID)
+		return nil // Ignore malformed subscription
+	}
+
+	productID := sub.Items.Data[0].Price.Product.ID
+	if !isValidProProduct(productID) {
+		s.logger.Warn("ignoring subscription deletion for unrecognized product",
+			"subscription_id", sub.ID,
+			"product_id", productID)
+		return nil // Ignore this webhook - not our product
 	}
 
 	userID, ok := sub.Metadata["firebase_user_id"]
@@ -389,6 +425,20 @@ func (s *Service) handleSubscriptionUpdated(ctx context.Context, event stripe.Ev
 	var sub stripe.Subscription
 	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
 		return fmt.Errorf("failed to parse subscription: %w", err)
+	}
+
+	// Validate product ID - only process webhooks for our Pro subscription products
+	if sub.Items == nil || len(sub.Items.Data) == 0 {
+		s.logger.Warn("subscription has no items", "subscription_id", sub.ID)
+		return nil // Ignore malformed subscription
+	}
+
+	productID := sub.Items.Data[0].Price.Product.ID
+	if !isValidProProduct(productID) {
+		s.logger.Warn("ignoring subscription update for unrecognized product",
+			"subscription_id", sub.ID,
+			"product_id", productID)
+		return nil // Ignore this webhook - not our product
 	}
 
 	userID, ok := sub.Metadata["firebase_user_id"]
