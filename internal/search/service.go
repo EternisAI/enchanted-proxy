@@ -47,6 +47,7 @@ type ExaSearchRequest struct {
 	Queries    []string `json:"queries,omitempty"`
 	Query      string   `json:"query,omitempty"`
 	NumResults int      `json:"num_results,omitempty"` // default: 10, max: 10
+	Livecrawl  string   `json:"livecrawl,omitempty"`   // "never", "fallback", "preferred", "always"
 }
 
 // SearchResponse represents the standardized search response.
@@ -221,6 +222,7 @@ func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSear
 			payload, err := s.buildExaAPIPayload(ExaSearchRequest{
 				Queries:    []string{q},
 				NumResults: req.NumResults,
+				Livecrawl:  req.Livecrawl,
 			})
 			if err != nil {
 				resultChan <- searchResult{query: q, err: fmt.Errorf("failed to build API payload: %w", err)}
@@ -402,6 +404,12 @@ func (s *Service) buildExaAPIPayload(req ExaSearchRequest) ([]byte, error) {
 	// Configure content options - use Exa's built-in summary instead of custom prompt
 	contents := map[string]interface{}{
 		"summary": true, // Use Exa's default summary generation
+	}
+
+	// Add livecrawl option if specified (controls caching behavior)
+	// Options: "never" (default, use cache), "fallback", "preferred", "always"
+	if req.Livecrawl != "" {
+		contents["livecrawl"] = req.Livecrawl
 	}
 
 	payload["contents"] = contents
