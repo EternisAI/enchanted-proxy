@@ -49,6 +49,10 @@ func (t *ExaSearchTool) Definition() ToolDefinition {
 						"type":        "integer",
 						"description": "Number of results to return (default: 10)",
 					},
+					"requires_live_results": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Set to true when fresh/real-time data is needed. Examples: current stock prices, today's date or time, weather forecasts, live sports scores, breaking news. Default false uses cached results which is faster.",
+					},
 				},
 				"required":             []string{"queries"},
 				"additionalProperties": false,
@@ -59,8 +63,9 @@ func (t *ExaSearchTool) Definition() ToolDefinition {
 
 // ExaSearchArgs represents the arguments for Exa search.
 type ExaSearchArgs struct {
-	Queries    []string `json:"queries"`
-	NumResults int      `json:"numResults,omitempty"`
+	Queries            []string `json:"queries"`
+	NumResults         int      `json:"numResults,omitempty"`
+	RequiresLiveResults bool     `json:"requires_live_results,omitempty"`
 }
 
 // Execute runs the Exa search.
@@ -93,14 +98,23 @@ func (t *ExaSearchTool) Execute(ctx context.Context, args string) (string, error
 		searchArgs.NumResults = 10
 	}
 
+	// Map boolean to Exa's livecrawl parameter
+	// "always" ensures fresh data, never uses cache
+	livecrawl := ""
+	if searchArgs.RequiresLiveResults {
+		livecrawl = "always"
+	}
+
 	t.logger.Info("executing web search",
 		"queries", searchArgs.Queries,
-		"num_results", searchArgs.NumResults)
+		"num_results", searchArgs.NumResults,
+		"requires_live_results", searchArgs.RequiresLiveResults)
 
 	// Call search service
 	searchReq := search.ExaSearchRequest{
 		Queries:    searchArgs.Queries,
 		NumResults: searchArgs.NumResults,
+		Livecrawl:  livecrawl,
 	}
 
 	resp, err := t.searchService.SearchExa(ctx, searchReq)
