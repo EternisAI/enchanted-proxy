@@ -99,10 +99,10 @@ func (t *ExaSearchTool) Execute(ctx context.Context, args string) (string, error
 	}
 
 	// Map boolean to Exa's livecrawl parameter
-	// "preferred" tries live crawl first but falls back to cache on failure
+	// "always" ensures fresh data, never uses cache
 	livecrawl := ""
 	if searchArgs.RequiresLiveResults {
-		livecrawl = "preferred"
+		livecrawl = "always"
 	}
 
 	t.logger.Info("executing web search",
