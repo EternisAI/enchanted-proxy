@@ -37,20 +37,16 @@ func NewTokenManager(firestoreClient *firestore.Client, logger *logger.Logger) *
 func (tm *TokenManager) GetUserTokens(ctx context.Context, userID string) ([]TokenInfo, error) {
 	log := tm.logger.WithContext(ctx).WithComponent("token-manager")
 
-	log.Info("fetching push tokens from Firestore",
-		slog.String("user_id", userID),
-		slog.String("path", fmt.Sprintf("push_tokens/%s", userID)))
-
 	docRef := tm.firestoreClient.Collection("push_tokens").Doc(userID)
 	doc, err := docRef.Get(ctx)
 
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
-			log.Warn("no push tokens document found for user",
+			log.Debug("no push tokens found",
 				slog.String("user_id", userID))
 			return nil, fmt.Errorf("no push tokens found for user %s", userID)
 		}
-		log.Error("failed to fetch push tokens document",
+		log.Warn("failed to fetch push tokens",
 			slog.String("user_id", userID),
 			slog.String("error", err.Error()))
 		return nil, fmt.Errorf("failed to fetch push tokens: %w", err)
@@ -59,7 +55,7 @@ func (tm *TokenManager) GetUserTokens(ctx context.Context, userID string) ([]Tok
 	data := doc.Data()
 	tokensData, ok := data["tokens"]
 	if !ok {
-		log.Warn("tokens field not found in push tokens document",
+		log.Debug("tokens field not found",
 			slog.String("user_id", userID))
 		return nil, fmt.Errorf("tokens field not found for user %s", userID)
 	}
@@ -67,14 +63,13 @@ func (tm *TokenManager) GetUserTokens(ctx context.Context, userID string) ([]Tok
 	// Parse tokens map: {deviceId: {token, deviceId, lastUpdatedAt}, ...}
 	tokensMap, ok := tokensData.(map[string]interface{})
 	if !ok {
-		log.Error("tokens field is not a map",
-			slog.String("user_id", userID),
-			slog.String("type", fmt.Sprintf("%T", tokensData)))
+		log.Warn("invalid tokens data structure",
+			slog.String("user_id", userID))
 		return nil, fmt.Errorf("invalid tokens data structure")
 	}
 
 	if len(tokensMap) == 0 {
-		log.Warn("empty tokens map for user",
+		log.Debug("no tokens available",
 			slog.String("user_id", userID))
 		return nil, fmt.Errorf("no tokens available for user %s", userID)
 	}
@@ -84,16 +79,11 @@ func (tm *TokenManager) GetUserTokens(ctx context.Context, userID string) ([]Tok
 	for deviceID, tokenData := range tokensMap {
 		tokenMap, ok := tokenData.(map[string]interface{})
 		if !ok {
-			log.Warn("skipping invalid token entry",
-				slog.String("device_id", deviceID),
-				slog.String("type", fmt.Sprintf("%T", tokenData)))
 			continue
 		}
 
 		token, ok := tokenMap["token"].(string)
 		if !ok || token == "" {
-			log.Warn("skipping token entry with missing token field",
-				slog.String("device_id", deviceID))
 			continue
 		}
 
@@ -111,15 +101,10 @@ func (tm *TokenManager) GetUserTokens(ctx context.Context, userID string) ([]Tok
 	}
 
 	if len(tokens) == 0 {
-		log.Warn("no valid tokens found after parsing",
-			slog.String("user_id", userID),
-			slog.Int("raw_entries", len(tokensMap)))
+		log.Debug("no valid tokens found",
+			slog.String("user_id", userID))
 		return nil, fmt.Errorf("no valid tokens found for user %s", userID)
 	}
-
-	log.Info("successfully retrieved push tokens",
-		slog.String("user_id", userID),
-		slog.Int("token_count", len(tokens)))
 
 	return tokens, nil
 }

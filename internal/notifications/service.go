@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"cloud.google.com/go/firestore"
 	"firebase.google.com/go/v4/messaging"
@@ -92,71 +91,56 @@ func (s *Service) sendNotification(
 		return nil
 	}
 
-	log.Info(strings.Repeat("=", 80))
-	log.Info("🔔 SENDING PUSH NOTIFICATIONS",
-		slog.String("user_id", userID),
-		slog.String("type", notification.Data["type"]),
-		slog.String("title", notification.Title))
-	log.Info(strings.Repeat("=", 80))
-
 	// Get user's push tokens
 	tokens, err := s.tokenManager.GetUserTokens(ctx, userID)
 	if err != nil {
 		log.Warn("failed to retrieve push tokens",
 			slog.String("user_id", userID),
-			slog.String("error", err.Error()))
+			slog.String("type", notification.Data["type"]))
 		return fmt.Errorf("failed to retrieve push tokens: %w", err)
 	}
 
-	log.Info("📦 preparing notification payload",
-		slog.String("title", notification.Title),
-		slog.Int("body_length", len(notification.Body)),
-		slog.Int("data_fields", len(notification.Data)))
-
-	// Send to all devices
-	log.Info("📤 sending to devices",
-		slog.Int("device_count", len(tokens)))
+	log.Info("sending push notification",
+		slog.String("user_id", userID),
+		slog.String("type", notification.Data["type"]),
+		slog.Int("devices", len(tokens)))
 
 	var results []SendResult
 	successCount := 0
 	failureCount := 0
+	var lastError string
 
-	for idx, tokenInfo := range tokens {
-		log.Info(fmt.Sprintf("      ├─ Device %d/%d", idx+1, len(tokens)),
-			slog.String("device_id", tokenInfo.DeviceID),
-			slog.String("token_prefix", tokenInfo.Token[:min(10, len(tokenInfo.Token))]+"..."))
-
+	for _, tokenInfo := range tokens {
 		result := s.sendToDevice(ctx, tokenInfo, notification)
 		results = append(results, result)
 
 		if result.Success {
 			successCount++
-			log.Info("      └─ ✅ sent successfully",
-				slog.String("response", result.Response))
 		} else {
 			failureCount++
-			log.Error("      └─ ❌ failed",
-				slog.String("error", result.Error))
+			lastError = result.Error
 		}
 	}
 
-	// Log summary
-	log.Info(strings.Repeat("-", 80))
-	log.Info("📊 NOTIFICATION SUMMARY",
-		slog.Int("total_devices", len(tokens)),
-		slog.Int("successful", successCount),
-		slog.Int("failed", failureCount))
-
+	// Log summary based on result
 	if successCount == len(tokens) {
-		log.Info("✅ ALL NOTIFICATIONS SENT SUCCESSFULLY")
+		log.Info("push notification sent",
+			slog.String("user_id", userID),
+			slog.String("type", notification.Data["type"]),
+			slog.Int("devices", successCount))
 	} else if successCount > 0 {
-		log.Warn("⚠️  PARTIAL SUCCESS",
-			slog.String("status", fmt.Sprintf("%d/%d sent", successCount, len(tokens))))
+		log.Warn("push notification partially sent",
+			slog.String("user_id", userID),
+			slog.String("type", notification.Data["type"]),
+			slog.Int("sent", successCount),
+			slog.Int("failed", failureCount))
 	} else {
-		log.Error("❌ ALL NOTIFICATIONS FAILED")
+		log.Error("push notification failed",
+			slog.String("user_id", userID),
+			slog.String("type", notification.Data["type"]),
+			slog.Int("devices", len(tokens)),
+			slog.String("error", lastError))
 	}
-
-	log.Info(strings.Repeat("=", 80))
 
 	// Return error only if all notifications failed
 	if failureCount == len(tokens) {
@@ -172,8 +156,6 @@ func (s *Service) sendToDevice(
 	tokenInfo TokenInfo,
 	notification CompletionNotification,
 ) SendResult {
-	log := s.logger.WithContext(ctx).WithComponent("push-notifications")
-
 	// Create FCM message
 	message := &messaging.Message{
 		Notification: &messaging.Notification{
@@ -185,7 +167,6 @@ func (s *Service) sendToDevice(
 	}
 
 	// Send via FCM
-	log.Info("      ├─ 📡 sending via FCM...")
 	response, err := s.messagingClient.Send(ctx, message)
 
 	if err != nil {
