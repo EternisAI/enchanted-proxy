@@ -173,7 +173,7 @@ func (s *Service) sendToDevice(
 
 	if err != nil {
 		// Log detailed error information for debugging
-		log.Error("FCM send failed - detailed error info",
+		log.Error("FCM send failed - CHECK STARTUP LOGS FOR CREDENTIALS",
 			slog.String("error", err.Error()),
 			slog.String("error_type", fmt.Sprintf("%T", err)),
 			slog.String("token_prefix", tokenInfo.Token[:min(10, len(tokenInfo.Token))]),
