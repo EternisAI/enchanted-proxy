@@ -26,6 +26,7 @@ func NewFirebaseClient(ctx context.Context, projectID, credJSON string) (*Fireba
 	// Parse credentials to log what we're using (for debugging)
 	var credMap map[string]interface{}
 	if err := json.Unmarshal([]byte(credJSON), &credMap); err != nil {
+		log.Printf("ERROR: Failed to parse FIREBASE_CRED_JSON: %v", err)
 		return nil, fmt.Errorf("failed to parse credentials JSON: %w", err)
 	}
 
@@ -34,14 +35,18 @@ func NewFirebaseClient(ctx context.Context, projectID, credJSON string) (*Fireba
 	credPrivateKeyID, _ := credMap["private_key_id"].(string)
 
 	// Log credential details for debugging (without private key)
-	log.Printf("Firebase credentials: project_id=%s, client_email=%s, private_key_id=%s",
-		credProjectID, credClientEmail, credPrivateKeyID)
-	log.Printf("Firebase config: ProjectID=%s (from env)", projectID)
+	// Using log.Printf to ensure it appears in stdout/stderr logs
+	log.Printf("=== FIREBASE CREDENTIALS LOADED ===")
+	log.Printf("  Credentials project_id: %s", credProjectID)
+	log.Printf("  Credentials client_email: %s", credClientEmail)
+	log.Printf("  Credentials private_key_id: %s", credPrivateKeyID)
+	log.Printf("  Config ProjectID (from env): %s", projectID)
 
 	// Warn if there's a mismatch
 	if projectID != "" && credProjectID != projectID {
-		log.Printf("WARNING: ProjectID mismatch - config: %s, credentials: %s", projectID, credProjectID)
+		log.Printf("  ⚠️  WARNING: ProjectID MISMATCH - config: %s, credentials: %s", projectID, credProjectID)
 	}
+	log.Printf("======================================")
 
 	opt := option.WithCredentialsJSON([]byte(credJSON))
 
