@@ -14,6 +14,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
+	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
@@ -32,6 +33,7 @@ type Service struct {
 	firestoreClient              *messaging.FirestoreClient
 	deepResearchRateLimitEnabled bool
 	queries                      pgdb.Querier // For tier-based quota enforcement
+	notificationService          *notifications.Service
 }
 
 // mapEventTypeToState maps event types from deep research server to session states.
@@ -249,7 +251,7 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, userID, chatID str
 }
 
 // NewService creates a new deep research service with database storage.
-func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool) *Service {
+func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool, notificationService *notifications.Service) *Service {
 	var encryptionService *messaging.EncryptionService
 	var firestoreClient *messaging.FirestoreClient
 
@@ -268,6 +270,7 @@ func NewService(logger *logger.Logger, trackingService *request_tracking.Service
 		encryptionService:            encryptionService,
 		firestoreClient:              firestoreClient,
 		deepResearchRateLimitEnabled: deepResearchRateLimitEnabled,
+		notificationService:          notificationService,
 	}
 }
 
@@ -585,6 +588,22 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 				// Mark as successful if research completed without error
 				if msg.Type == "research_complete" {
 					completedSuccessfully = true
+
+					// Send push notification for successful completion
+					if s.notificationService != nil {
+						go func() {
+							// Use background context to ensure notification sends even if session context is cancelled
+							notifyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+							defer cancel()
+
+							if err := s.notificationService.SendDeepResearchCompletionNotification(notifyCtx, userID, chatID); err != nil {
+								log.Error("failed to send deep research completion notification",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("error", err.Error()))
+							}
+						}()
+					}
 				}
 
 				return
@@ -1368,6 +1387,22 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 
 					// Mark as successful for defer completion
 					completedSuccessfully = true
+
+					// Send push notification for successful completion
+					if s.notificationService != nil {
+						go func() {
+							// Use background context to ensure notification sends even if session context is cancelled
+							notifyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+							defer cancel()
+
+							if err := s.notificationService.SendDeepResearchCompletionNotification(notifyCtx, userID, chatID); err != nil {
+								log.Error("failed to send deep research completion notification",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("error", err.Error()))
+							}
+						}()
+					}
 				}
 
 				// Check if session is complete

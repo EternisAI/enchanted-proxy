@@ -7,12 +7,12 @@ import (
 
 // ResponseStatus represents the status of an OpenAI background response.
 type ResponseStatus struct {
-	ID                string     `json:"id"`                           // Response ID (e.g., "resp_abc123")
-	Status            string     `json:"status"`                       // "queued" | "in_progress" | "completed" | "failed"
-	Model             string     `json:"model,omitempty"`              // Model ID
-	CreatedAt         *UnixTime  `json:"created_at,omitempty"`         // When response was created
-	CompletedAt       *UnixTime  `json:"completed_at,omitempty"`       // When response completed (if completed)
-	Error             *ErrorInfo `json:"error,omitempty"`              // Error details (if failed)
+	ID          string     `json:"id"`                     // Response ID (e.g., "resp_abc123")
+	Status      string     `json:"status"`                 // "queued" | "in_progress" | "completed" | "failed"
+	Model       string     `json:"model,omitempty"`        // Model ID
+	CreatedAt   *UnixTime  `json:"created_at,omitempty"`   // When response was created
+	CompletedAt *UnixTime  `json:"completed_at,omitempty"` // When response completed (if completed)
+	Error       *ErrorInfo `json:"error,omitempty"`        // Error details (if failed)
 }
 
 // UnixTime handles Unix timestamp (integer) from OpenAI API.

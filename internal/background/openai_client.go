@@ -43,7 +43,8 @@ func NewOpenAIClient(apiKey, baseURL string, logger *logger.Logger) *OpenAIClien
 //   - error: If polling failed
 //
 // Example response from OpenAI:
-//   {"id": "resp_abc123", "status": "in_progress", "created_at": 1234567890}
+//
+//	{"id": "resp_abc123", "status": "in_progress", "created_at": 1234567890}
 func (c *OpenAIClient) GetResponseStatus(ctx context.Context, responseID string) (*ResponseStatus, error) {
 	// Note: baseURL already includes /v1, so we just append /responses/{id}
 	url := fmt.Sprintf("%s/responses/%s", c.baseURL, responseID)
@@ -151,13 +152,15 @@ func (c *OpenAIClient) GetResponseContent(ctx context.Context, responseID string
 //   - string: The extracted message content
 //
 // Responses API format (primary):
-//   {"output": [
-//     {"type": "reasoning", "id": "rs_xxx..."},
-//     {"type": "message", "status": "completed", "content": [{"type": "output_text", "text": "Hello"}]}
-//   ]}
+//
+//	{"output": [
+//	  {"type": "reasoning", "id": "rs_xxx..."},
+//	  {"type": "message", "status": "completed", "content": [{"type": "output_text", "text": "Hello"}]}
+//	]}
 //
 // Legacy Chat Completions format (fallback):
-//   {"choices": [{"message": {"content": "Hello world"}}]}
+//
+//	{"choices": [{"message": {"content": "Hello world"}}]}
 func ExtractContent(content *ResponseContent) string {
 	// Try Responses API format first (output array)
 	if len(content.Output) > 0 {

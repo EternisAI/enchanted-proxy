@@ -28,6 +28,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/mcp"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
+	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/oauth"
 	"github.com/eternisai/enchanted-proxy/internal/proxy"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
@@ -197,6 +198,25 @@ func main() {
 		log.Info("title generation service disabled (requires message storage)")
 	}
 
+	// Initialize push notification service
+	var notificationService *notifications.Service
+	if config.AppConfig.PushNotificationsEnabled && firebaseClient != nil {
+		notificationService = notifications.NewService(
+			firebaseClient.GetMessagingClient(),
+			firebaseClient.GetFirestoreClient(),
+			logger.WithComponent("push-notifications"),
+			true, // enabled
+		)
+		log.Info("push notification service initialized",
+			slog.Bool("enabled", true))
+	} else {
+		if !config.AppConfig.PushNotificationsEnabled {
+			log.Info("push notifications disabled by configuration")
+		} else {
+			log.Warn("firebase client not available - push notifications will not work")
+		}
+	}
+
 	// Initialize tool system
 	toolRegistry := tools.NewRegistry()
 	exaSearchTool := tools.NewExaSearchTool(searchService, logger.WithComponent("exa-search-tool"))
@@ -232,6 +252,7 @@ func main() {
 		pollingManager = background.NewPollingManager(
 			messageService,
 			requestTrackingService,
+			notificationService,
 			logger.WithComponent("polling"),
 			config.AppConfig,
 		)
@@ -342,6 +363,7 @@ func main() {
 		requestTrackingService: requestTrackingService,
 		messageService:         messageService,
 		titleService:           titleService,
+		notificationService:    notificationService,
 		streamManager:          streamManager,
 		pollingManager:         pollingManager,
 		modelRouter:            modelRouter,
@@ -462,6 +484,7 @@ type restServerInput struct {
 	requestTrackingService *request_tracking.Service
 	messageService         *messaging.Service
 	titleService           *title_generation.Service
+	notificationService    *notifications.Service
 	streamManager          *streaming.StreamManager
 	pollingManager         *background.PollingManager
 	modelRouter            *routing.ModelRouter
@@ -572,9 +595,9 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		}
 
 		// Deep Research endpoints (protected)
-		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled))    // POST API to start deep research
-		api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled)) // POST API to submit clarification response
-		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled))              // WebSocket proxy for deep research
+		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled, input.notificationService))     // POST API to start deep research
+		api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled, input.notificationService)) // POST API to submit clarification response
+		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled, input.notificationService))              // WebSocket proxy for deep research
 
 		// Stream Control API routes (protected)
 		chats := api.Group("/chats")
@@ -591,9 +614,9 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 			{
 				keyShare := encryption.Group("/key-share")
 				{
-					keyShare.POST("/session", input.keyshareHandler.CreateSession)                                                                                                                                                                  // POST /api/v1/encryption/key-share/session
-					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)                                                                                                                                                           // POST /api/v1/encryption/key-share/session/:sessionId
-					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen)                                                                                                                                               // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
+					keyShare.POST("/session", input.keyshareHandler.CreateSession)                    // POST /api/v1/encryption/key-share/session
+					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)             // POST /api/v1/encryption/key-share/session/:sessionId
+					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen) // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
 				}
 			}
 		}

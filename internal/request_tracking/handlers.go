@@ -48,12 +48,12 @@ type TokenLimitInfo struct {
 }
 
 type DeepResearchInfo struct {
-	DailyRuns             int `json:"daily_runs"`               // -1 = unlimited
-	LifetimeRuns          int `json:"lifetime_runs"`            // 0 = check daily only
-	TokenCap              int `json:"token_cap"`                // Per-run cap
-	MaxActiveSessions     int `json:"max_active_sessions"`
-	DailyRunsUsed         int `json:"daily_runs_used"`
-	LifetimeRunsUsed      int `json:"lifetime_runs_used"`
+	DailyRuns         int `json:"daily_runs"`    // -1 = unlimited
+	LifetimeRuns      int `json:"lifetime_runs"` // 0 = check daily only
+	TokenCap          int `json:"token_cap"`     // Per-run cap
+	MaxActiveSessions int `json:"max_active_sessions"`
+	DailyRunsUsed     int `json:"daily_runs_used"`
+	LifetimeRunsUsed  int `json:"lifetime_runs_used"`
 }
 
 // RateLimitStatusHandler returns comprehensive rate limit and tier information.
@@ -169,12 +169,12 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 		dailyRunsUsed, _ := trackingService.GetUserDeepResearchRunsToday(ctx, userID)
 		lifetimeRunsUsed, _ := trackingService.GetUserDeepResearchRunsLifetime(ctx, userID)
 		response.DeepResearch = &DeepResearchInfo{
-			DailyRuns:             tierConfig.DeepResearchDailyRuns,
-			LifetimeRuns:          tierConfig.DeepResearchLifetimeRuns,
-			TokenCap:              tierConfig.DeepResearchTokenCap,
-			MaxActiveSessions:     tierConfig.DeepResearchMaxActiveSessions,
-			DailyRunsUsed:         int(dailyRunsUsed),
-			LifetimeRunsUsed:      int(lifetimeRunsUsed),
+			DailyRuns:         tierConfig.DeepResearchDailyRuns,
+			LifetimeRuns:      tierConfig.DeepResearchLifetimeRuns,
+			TokenCap:          tierConfig.DeepResearchTokenCap,
+			MaxActiveSessions: tierConfig.DeepResearchMaxActiveSessions,
+			DailyRunsUsed:     int(dailyRunsUsed),
+			LifetimeRunsUsed:  int(lifetimeRunsUsed),
 		}
 
 		c.JSON(http.StatusOK, response)

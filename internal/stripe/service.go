@@ -305,11 +305,11 @@ func (s *Service) handleCheckoutCompleted(ctx context.Context, event stripe.Even
 	provider := "stripe"
 	tier := "pro" // Activating subscription
 	if err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
-		UserID:                 userID,
-		SubscriptionTier:       tier,
-		SubscriptionExpiresAt:  sql.NullTime{Time: expiresAt, Valid: true},
-		SubscriptionProvider:   provider,
-		StripeCustomerID:       &customerID,
+		UserID:                userID,
+		SubscriptionTier:      tier,
+		SubscriptionExpiresAt: sql.NullTime{Time: expiresAt, Valid: true},
+		SubscriptionProvider:  provider,
+		StripeCustomerID:      &customerID,
 	}); err != nil {
 		return fmt.Errorf("failed to upsert entitlement: %w", err)
 	}
@@ -374,11 +374,11 @@ func (s *Service) handleSubscriptionDeleted(ctx context.Context, event stripe.Ev
 	provider := "stripe"
 	tier := "free" // Revoking subscription
 	if err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
-		UserID:                 userID,
-		SubscriptionTier:       tier,
-		SubscriptionExpiresAt:  sql.NullTime{Valid: false},
-		SubscriptionProvider:   provider,
-		StripeCustomerID:       nil, // Don't overwrite existing customer ID
+		UserID:                userID,
+		SubscriptionTier:      tier,
+		SubscriptionExpiresAt: sql.NullTime{Valid: false},
+		SubscriptionProvider:  provider,
+		StripeCustomerID:      nil, // Don't overwrite existing customer ID
 	}); err != nil {
 		return fmt.Errorf("failed to revoke entitlement: %w", err)
 	}
@@ -483,11 +483,11 @@ func (s *Service) handleSubscriptionUpdated(ctx context.Context, event stripe.Ev
 		tier = "pro"
 	}
 	if err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
-		UserID:                 userID,
-		SubscriptionTier:       tier,
-		SubscriptionExpiresAt:  proExpiresAt,
-		SubscriptionProvider:   provider,
-		StripeCustomerID:       nil, // Don't overwrite existing customer ID
+		UserID:                userID,
+		SubscriptionTier:      tier,
+		SubscriptionExpiresAt: proExpiresAt,
+		SubscriptionProvider:  provider,
+		StripeCustomerID:      nil, // Don't overwrite existing customer ID
 	}); err != nil {
 		return fmt.Errorf("failed to update entitlement: %w", err)
 	}

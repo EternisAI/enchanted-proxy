@@ -12,6 +12,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
+	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/gin-gonic/gin"
@@ -53,7 +54,7 @@ type ClarifyDeepResearchResponse struct {
 }
 
 // StartDeepResearchHandler handles POST requests to start deep research.
-func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool) gin.HandlerFunc {
+func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool, notificationService *notifications.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := logger.WithContext(c.Request.Context()).WithComponent("deepr")
 
@@ -94,7 +95,7 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			slog.String("query", req.Query))
 
 		// Create service instance
-		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, queries, deepResearchRateLimitEnabled)
+		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, queries, deepResearchRateLimitEnabled, notificationService)
 
 		// Save user's initial query message to Firestore only if message ID is provided
 		// This prevents duplicate messages when client has already saved the message locally
@@ -297,7 +298,7 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 }
 
 // ClarifyDeepResearchHandler handles POST requests to submit clarification responses.
-func ClarifyDeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool) gin.HandlerFunc {
+func ClarifyDeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool, notificationService *notifications.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := logger.WithContext(c.Request.Context()).WithComponent("deepr")
 
@@ -338,7 +339,7 @@ func ClarifyDeepResearchHandler(logger *logger.Logger, trackingService *request_
 			slog.String("response", req.Response))
 
 		// Create service instance for message saving
-		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, queries, deepResearchRateLimitEnabled)
+		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, queries, deepResearchRateLimitEnabled, notificationService)
 
 		// Check if there's an active backend session
 		if !sessionManager.HasActiveBackend(userID, req.ChatID) {
@@ -412,7 +413,7 @@ func ClarifyDeepResearchHandler(logger *logger.Logger, trackingService *request_
 }
 
 // DeepResearchHandler handles WebSocket connections for deep research streaming.
-func DeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool) gin.HandlerFunc {
+func DeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool, notificationService *notifications.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := logger.WithContext(c.Request.Context()).WithComponent("deepr")
 
@@ -469,7 +470,7 @@ func DeepResearchHandler(logger *logger.Logger, trackingService *request_trackin
 			slog.String("remote_addr", c.Request.RemoteAddr))
 
 		// Create service instance with shared session manager
-		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, queries, deepResearchRateLimitEnabled)
+		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, queries, deepResearchRateLimitEnabled, notificationService)
 
 		// Handle the WebSocket connection
 		service.HandleConnection(c.Request.Context(), conn, userID, chatID)

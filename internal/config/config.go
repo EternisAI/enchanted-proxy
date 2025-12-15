@@ -40,8 +40,8 @@ type Config struct {
 	ReplicateAPIToken string
 
 	// Rate Limiting
-	RateLimitEnabled   bool
-	RateLimitLogOnly   bool // If true, only log violations, don't block.
+	RateLimitEnabled    bool
+	RateLimitLogOnly    bool // If true, only log violations, don't block.
 	RateLimitFailClosed bool // If true, fail closed when tier config unavailable (503 error).
 
 	// Deep Research Rate Limiting
@@ -110,6 +110,9 @@ type Config struct {
 	BackgroundPollingMaxInterval int  // Maximum seconds between polls (default: 10, used after initial rapid polling)
 	BackgroundPollingTimeout     int  // Minutes before giving up on polling (default: 30)
 	BackgroundMaxConcurrentPolls int  // Maximum number of concurrent polling workers (default: 100)
+
+	// Push Notifications
+	PushNotificationsEnabled bool // Enable/disable FCM push notifications for task completions (default: true)
 }
 
 var AppConfig *Config
@@ -247,6 +250,9 @@ func LoadConfig() {
 		BackgroundPollingMaxInterval: getEnvAsInt("BACKGROUND_POLLING_MAX_INTERVAL", 10),
 		BackgroundPollingTimeout:     getEnvAsInt("BACKGROUND_POLLING_TIMEOUT", 30),
 		BackgroundMaxConcurrentPolls: getEnvAsInt("BACKGROUND_MAX_CONCURRENT_POLLS", 100),
+
+		// Push Notifications
+		PushNotificationsEnabled: getEnvOrDefault("PUSH_NOTIFICATIONS_ENABLED", "true") == "true",
 	}
 
 	// Validate required configs

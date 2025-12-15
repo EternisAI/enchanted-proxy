@@ -8,6 +8,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
+	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"log/slog"
 )
@@ -23,14 +24,15 @@ import (
 //
 // Thread-safety: Each worker runs in its own goroutine.
 type PollingWorker struct {
-	job             PollingJob
-	openAIClient    *OpenAIClient
-	messageService  *messaging.Service
-	trackingService *request_tracking.Service
-	logger          *logger.Logger
-	pollCount       int
-	cfg             *config.Config
-	tokenMultiplier float64 // Cost multiplier for this model (e.g., 50× for GPT-5 Pro)
+	job                 PollingJob
+	openAIClient        *OpenAIClient
+	messageService      *messaging.Service
+	trackingService     *request_tracking.Service
+	notificationService *notifications.Service
+	logger              *logger.Logger
+	pollCount           int
+	cfg                 *config.Config
+	tokenMultiplier     float64 // Cost multiplier for this model (e.g., 50× for GPT-5 Pro)
 }
 
 // NewPollingWorker creates a new polling worker.
@@ -39,18 +41,20 @@ func NewPollingWorker(
 	openAIClient *OpenAIClient,
 	messageService *messaging.Service,
 	trackingService *request_tracking.Service,
+	notificationService *notifications.Service,
 	logger *logger.Logger,
 	cfg *config.Config,
 	tokenMultiplier float64,
 ) *PollingWorker {
 	return &PollingWorker{
-		job:             job,
-		openAIClient:    openAIClient,
-		messageService:  messageService,
-		trackingService: trackingService,
-		logger:          logger.WithComponent("polling_worker"),
-		cfg:             cfg,
-		tokenMultiplier: tokenMultiplier,
+		job:                 job,
+		openAIClient:        openAIClient,
+		messageService:      messageService,
+		trackingService:     trackingService,
+		notificationService: notificationService,
+		logger:              logger.WithComponent("polling_worker"),
+		cfg:                 cfg,
+		tokenMultiplier:     tokenMultiplier,
 	}
 }
 
@@ -286,6 +290,29 @@ func (w *PollingWorker) fetchAndSaveResponse(ctx context.Context) error {
 
 	w.logger.Info("successfully saved completed response to Firestore",
 		slog.String("response_id", w.job.ResponseID))
+
+	// Send push notification for successful completion
+	if w.notificationService != nil {
+		go func() {
+			// Use background context to ensure notification sends even if request context is cancelled
+			notifyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			if err := w.notificationService.SendGPT5ProCompletionNotification(
+				notifyCtx,
+				w.job.UserID,
+				w.job.ChatID,
+				w.job.MessageID,
+			); err != nil {
+				w.logger.Error("failed to send GPT-5 Pro completion notification",
+					slog.String("response_id", w.job.ResponseID),
+					slog.String("user_id", w.job.UserID),
+					slog.String("chat_id", w.job.ChatID),
+					slog.String("message_id", w.job.MessageID),
+					slog.String("error", err.Error()))
+			}
+		}()
+	}
 
 	// Log token usage to database for GPT-5 Pro requests
 	if content.Usage == nil {

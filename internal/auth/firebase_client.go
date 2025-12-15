@@ -7,6 +7,7 @@ import (
 
 	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go/v4"
+	"firebase.google.com/go/v4/messaging"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -15,6 +16,7 @@ import (
 // FirebaseClient wraps Firebase services.
 type FirebaseClient struct {
 	firestoreClient *firestore.Client
+	messagingClient *messaging.Client
 }
 
 // NewFirebaseClient creates a new Firebase client with Firestore access.
@@ -36,8 +38,14 @@ func NewFirebaseClient(ctx context.Context, projectID, credJSON string) (*Fireba
 		return nil, fmt.Errorf("failed to get Firestore client: %w", err)
 	}
 
+	messagingClient, err := app.Messaging(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Messaging client: %w", err)
+	}
+
 	return &FirebaseClient{
 		firestoreClient: firestoreClient,
+		messagingClient: messagingClient,
 	}, nil
 }
 
@@ -52,6 +60,11 @@ func (f *FirebaseClient) Close() error {
 // GetFirestoreClient returns the Firestore client instance
 func (f *FirebaseClient) GetFirestoreClient() *firestore.Client {
 	return f.firestoreClient
+}
+
+// GetMessagingClient returns the Messaging client instance for sending push notifications
+func (f *FirebaseClient) GetMessagingClient() *messaging.Client {
+	return f.messagingClient
 }
 
 // DeepResearchUsage represents a user's deep research usage record
