@@ -156,6 +156,8 @@ func (s *Service) sendToDevice(
 	tokenInfo TokenInfo,
 	notification CompletionNotification,
 ) SendResult {
+	log := s.logger.WithContext(ctx).WithComponent("push-notifications")
+
 	// Create FCM message
 	message := &messaging.Message{
 		Notification: &messaging.Notification{
@@ -170,6 +172,14 @@ func (s *Service) sendToDevice(
 	response, err := s.messagingClient.Send(ctx, message)
 
 	if err != nil {
+		// Log detailed error information for debugging
+		log.Error("FCM send failed - detailed error info",
+			slog.String("error", err.Error()),
+			slog.String("error_type", fmt.Sprintf("%T", err)),
+			slog.String("token_prefix", tokenInfo.Token[:min(10, len(tokenInfo.Token))]),
+			slog.String("notification_type", notification.Data["type"]),
+			slog.String("messaging_client_status", fmt.Sprintf("%p", s.messagingClient)))
+
 		return SendResult{
 			Token:   tokenInfo.Token[:min(10, len(tokenInfo.Token))] + "...",
 			Success: false,

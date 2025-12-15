@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -21,6 +23,26 @@ type FirebaseClient struct {
 
 // NewFirebaseClient creates a new Firebase client with Firestore access.
 func NewFirebaseClient(ctx context.Context, projectID, credJSON string) (*FirebaseClient, error) {
+	// Parse credentials to log what we're using (for debugging)
+	var credMap map[string]interface{}
+	if err := json.Unmarshal([]byte(credJSON), &credMap); err != nil {
+		return nil, fmt.Errorf("failed to parse credentials JSON: %w", err)
+	}
+
+	credProjectID, _ := credMap["project_id"].(string)
+	credClientEmail, _ := credMap["client_email"].(string)
+	credPrivateKeyID, _ := credMap["private_key_id"].(string)
+
+	// Log credential details for debugging (without private key)
+	log.Printf("Firebase credentials: project_id=%s, client_email=%s, private_key_id=%s",
+		credProjectID, credClientEmail, credPrivateKeyID)
+	log.Printf("Firebase config: ProjectID=%s (from env)", projectID)
+
+	// Warn if there's a mismatch
+	if projectID != "" && credProjectID != projectID {
+		log.Printf("WARNING: ProjectID mismatch - config: %s, credentials: %s", projectID, credProjectID)
+	}
+
 	opt := option.WithCredentialsJSON([]byte(credJSON))
 
 	// Create Firebase config with project ID

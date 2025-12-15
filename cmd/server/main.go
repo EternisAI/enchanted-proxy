@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -201,8 +202,15 @@ func main() {
 	// Initialize push notification service
 	var notificationService *notifications.Service
 	if config.AppConfig.PushNotificationsEnabled && firebaseClient != nil {
+		messagingClient := firebaseClient.GetMessagingClient()
+
+		log.Info("initializing push notification service",
+			slog.Bool("enabled", true),
+			slog.String("messaging_client", fmt.Sprintf("%p", messagingClient)),
+			slog.Bool("messaging_client_nil", messagingClient == nil))
+
 		notificationService = notifications.NewService(
-			firebaseClient.GetMessagingClient(),
+			messagingClient,
 			firebaseClient.GetFirestoreClient(),
 			logger.WithComponent("push-notifications"),
 			true, // enabled
