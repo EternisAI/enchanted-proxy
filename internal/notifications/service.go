@@ -2,10 +2,8 @@ package notifications
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"cloud.google.com/go/firestore"
 	"firebase.google.com/go/v4/messaging"
@@ -18,8 +16,8 @@ type Service struct {
 	tokenManager    *TokenManager
 	logger          *logger.Logger
 	enabled         bool
-	firestoreClient *firestore.Client
-	projectID       string
+	credJSON        string // For debug curl generation
+	projectID       string // For debug curl generation
 }
 
 // NewService creates a new push notification service.
@@ -28,6 +26,7 @@ func NewService(
 	firestoreClient *firestore.Client,
 	logger *logger.Logger,
 	enabled bool,
+	credJSON string,
 	projectID string,
 ) *Service {
 	tokenManager := NewTokenManager(firestoreClient, logger)
@@ -37,7 +36,7 @@ func NewService(
 		tokenManager:    tokenManager,
 		logger:          logger,
 		enabled:         enabled,
-		firestoreClient: firestoreClient,
+		credJSON:        credJSON,
 		projectID:       projectID,
 	}
 }
@@ -179,8 +178,8 @@ func (s *Service) sendToDevice(
 	response, err := s.messagingClient.Send(ctx, message)
 
 	if err != nil {
-		// Build equivalent curl command for debugging
-		curlCmd := s.buildDebugCurl(message)
+		// Generate debug curl command that can be copy-pasted to test
+		debugCurl := GenerateDebugCurl(ctx, s.credJSON, s.projectID, message)
 
 		// Log detailed error information for debugging
 		log.Error("FCM send failed - CHECK STARTUP LOGS FOR CREDENTIALS",
@@ -189,7 +188,7 @@ func (s *Service) sendToDevice(
 			slog.String("token_prefix", tokenInfo.Token[:min(10, len(tokenInfo.Token))]),
 			slog.String("notification_type", notification.Data["type"]),
 			slog.String("messaging_client_status", fmt.Sprintf("%p", s.messagingClient)),
-			slog.String("debug_curl", curlCmd))
+			slog.String("debug_curl", debugCurl))
 
 		return SendResult{
 			Token:   tokenInfo.Token[:min(10, len(tokenInfo.Token))] + "...",
@@ -211,40 +210,4 @@ func min(a, b int) int {
 		return a
 	}
 	return b
-}
-
-// buildDebugCurl constructs an equivalent curl command for debugging FCM requests.
-// This helps diagnose authentication and payload issues by showing the exact HTTP request.
-func (s *Service) buildDebugCurl(message *messaging.Message) string {
-	// Build the FCM API payload format
-	payload := map[string]interface{}{
-		"message": map[string]interface{}{
-			"token": message.Token,
-			"notification": map[string]interface{}{
-				"title": message.Notification.Title,
-				"body":  message.Notification.Body,
-			},
-			"data": message.Data,
-		},
-	}
-
-	// Marshal to JSON
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Sprintf("ERROR: failed to marshal payload: %v", err)
-	}
-
-	// Escape single quotes in JSON for shell safety
-	payloadStr := strings.ReplaceAll(string(payloadJSON), "'", "'\\''")
-
-	// Build curl command
-	// Note: ACCESS_TOKEN needs to be obtained from gcloud or service account credentials
-	curlCmd := fmt.Sprintf(`curl -X POST 'https://fcm.googleapis.com/v1/projects/%s/messages:send' \
-  -H 'Authorization: Bearer $(gcloud auth application-default print-access-token)' \
-  -H 'Content-Type: application/json' \
-  -d '%s'`,
-		s.projectID,
-		payloadStr)
-
-	return curlCmd
 }
