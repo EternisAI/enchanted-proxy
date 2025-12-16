@@ -117,6 +117,16 @@ func main() {
 	var firebaseClient *auth.FirebaseClient
 
 	if config.AppConfig.FirebaseCredJSON != "" {
+		// Check for environment variables that might interfere with Firebase SDK
+		googleAppCreds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+		googleCloudProject := os.Getenv("GOOGLE_CLOUD_PROJECT")
+		gcloudProject := os.Getenv("GCLOUD_PROJECT")
+
+		log.Info("google environment variables check",
+			slog.String("GOOGLE_APPLICATION_CREDENTIALS", googleAppCreds),
+			slog.String("GOOGLE_CLOUD_PROJECT", googleCloudProject),
+			slog.String("GCLOUD_PROJECT", gcloudProject))
+
 		// Parse credentials to log what we're using (for debugging FCM issues)
 		var credMap map[string]interface{}
 		if err := json.Unmarshal([]byte(config.AppConfig.FirebaseCredJSON), &credMap); err != nil {

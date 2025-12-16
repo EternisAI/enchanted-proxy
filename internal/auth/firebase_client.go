@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -23,14 +24,20 @@ type FirebaseClient struct {
 func NewFirebaseClient(ctx context.Context, projectID, credJSON string) (*FirebaseClient, error) {
 	// Credentials are logged in main.go before this function is called
 
-	opt := option.WithCredentialsJSON([]byte(credJSON))
+	// Create custom HTTP client with logging transport for debugging
+	httpClient := &http.Client{
+		Transport: NewLoggingTransport(),
+	}
+
+	opt1 := option.WithCredentialsJSON([]byte(credJSON))
+	opt2 := option.WithHTTPClient(httpClient)
 
 	// Create Firebase config with project ID
 	config := &firebase.Config{
 		ProjectID: projectID,
 	}
 
-	app, err := firebase.NewApp(ctx, config, opt)
+	app, err := firebase.NewApp(ctx, config, opt1, opt2)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing firebase app: %v", err)
 	}
