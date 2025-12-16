@@ -859,12 +859,23 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 	// Listen for new messages from backend (they'll be broadcast to all clients)
 	done := make(chan struct{})
 
+	// Get the session to access its context
+	session, exists := s.sessionManager.GetSession(userID, chatID)
+	if !exists || session == nil {
+		log.Error("session not found after reconnection",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID))
+		clientConn.Close()
+		return
+	}
+
 	// Listen for messages from this client
+	// Use session context so client can disconnect without terminating the backend session
 	go func() {
 		defer close(done)
 		for {
 			select {
-			case <-ctx.Done():
+			case <-session.Context.Done():
 				return
 			default:
 				_, message, err := clientConn.ReadMessage()
@@ -886,7 +897,7 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 					slog.Int("message_size", len(message)))
 
 				// Check if message can be forwarded based on session state
-				canForward, currentState, err := s.canForwardMessage(ctx, userID, chatID)
+				canForward, currentState, err := s.canForwardMessage(session.Context, userID, chatID)
 				if err != nil {
 					log.Error("failed to check if message can be forwarded",
 						slog.String("user_id", userID),
@@ -928,8 +939,8 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 }
 
 // handleClientMessages handles forwarding messages from a client to the backend.
-func (s *Service) handleClientMessages(ctx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
-	log := s.logger.WithContext(ctx).WithComponent("deepr")
+func (s *Service) handleClientMessages(sessionCtx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
+	log := s.logger.WithContext(sessionCtx).WithComponent("deepr")
 
 	log.Info("client message handler started",
 		slog.String("user_id", userID),
@@ -939,8 +950,8 @@ func (s *Service) handleClientMessages(ctx context.Context, clientConn *websocke
 	messageCount := 0
 	for {
 		select {
-		case <-ctx.Done():
-			log.Info("client message handler stopped - context canceled",
+		case <-sessionCtx.Done():
+			log.Info("client message handler stopped - session ended",
 				slog.String("user_id", userID),
 				slog.String("chat_id", chatID),
 				slog.String("client_id", clientID),
@@ -974,7 +985,7 @@ func (s *Service) handleClientMessages(ctx context.Context, clientConn *websocke
 				slog.Int("message_number", messageCount))
 
 			// Check if message can be forwarded based on session state
-			canForward, currentState, err := s.canForwardMessage(ctx, userID, chatID)
+			canForward, currentState, err := s.canForwardMessage(sessionCtx, userID, chatID)
 			if err != nil {
 				log.Error("failed to check if message can be forwarded",
 					slog.String("user_id", userID),
@@ -1163,7 +1174,8 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 	s.sessionManager.AddClientConnection(userID, chatID, clientID, clientConn)
 
 	// Handle messages from this client to backend in a separate goroutine
-	go s.handleClientMessages(ctx, clientConn, userID, chatID, clientID)
+	// Use session context so client can disconnect without terminating the session
+	go s.handleClientMessages(sessionCtx, clientConn, userID, chatID, clientID)
 
 	log.Info("session established, starting message processing",
 		slog.String("user_id", userID),
