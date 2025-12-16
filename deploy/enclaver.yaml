@@ -62,6 +62,8 @@ egress:
   - 18.214.78.123
   # Firestore (used by deepresearch user tracking)
   - firestore.googleapis.com
+  # Firebase Cloud Messaging (push notifications)
+  - fcm.googleapis.com
 env:
 - APPSTORE_API_KEY_ID
 - APPSTORE_API_KEY_P8
