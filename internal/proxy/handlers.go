@@ -416,12 +416,7 @@ func ProxyHandler(
 			r.Header.Del("X-Message-ID")         // Remove message metadata before forwarding
 		}
 
-		// CRITICAL FIX: Detach request context so upstream continues after client disconnect
-		// Problem: ReverseProxy uses c.Request.Context() for upstream request
-		// When client disconnects, context is cancelled and transport closes upstream connection
-		// Solution: Clone request with context.Background() so upstream is independent
-
-		// Only check for early cancellation (before proxy starts)
+		// Check for early cancellation (before making upstream request)
 		select {
 		case <-c.Request.Context().Done():
 			log.Info("client canceled request before proxy started", slog.String("target_url", target.String()))
@@ -429,14 +424,111 @@ func ProxyHandler(
 		default:
 		}
 
-		// Clone request with background context (survives client disconnect)
-		// The upstream request will use this context instead of the client's context
-		detachedReq := c.Request.Clone(context.Background())
+		// CRITICAL: For streaming requests, bypass ReverseProxy to prevent context cancellation
+		// ReverseProxy internally monitors client connection and cancels upstream even with background context
+		// Solution: Make HTTP request directly for streaming, use background context
+		if strings.Contains(c.GetHeader("Accept"), "text/event-stream") ||
+			strings.Contains(c.Request.Header.Get("Accept"), "text/event-stream") {
+			// Make streaming request directly with detached context
+			handleStreamingDirectly(c, target, apiKey, requestBody, log, start, model, trackingService, messageService, streamManager, cfg, provider)
+			return
+		}
 
-		// Preserve important values that might be lost in clone
-		// (the body is already cloned correctly)
+		// For non-streaming requests, use the normal reverse proxy
+		proxy.ServeHTTP(c.Writer, c.Request)
+	}
+}
 
-		proxy.ServeHTTP(c.Writer, detachedReq)
+// handleStreamingDirectly makes HTTP request directly with background context to prevent cancellation on client disconnect.
+// This bypasses the ReverseProxy which has built-in logic that cancels upstream requests when clients disconnect.
+func handleStreamingDirectly(
+	c *gin.Context,
+	target *url.URL,
+	apiKey string,
+	requestBody []byte,
+	log *logger.Logger,
+	start time.Time,
+	model string,
+	trackingService *request_tracking.Service,
+	messageService *messaging.Service,
+	streamManager *streaming.StreamManager,
+	cfg *config.Config,
+	provider *routing.ProviderConfig,
+) {
+	// Create upstream request with background context (survives client disconnect)
+	upstreamURL := target.String() + c.Request.RequestURI
+	req, err := http.NewRequestWithContext(context.Background(), c.Request.Method, upstreamURL, bytes.NewReader(requestBody))
+	if err != nil {
+		log.Error("failed to create upstream request", slog.String("error", err.Error()))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request"})
+		return
+	}
+
+	// Copy headers from original request
+	for key, values := range c.Request.Header {
+		// Skip headers that shouldn't be forwarded
+		if key == "X-Base-Url" || key == "X-Client-Platform" || key == "X-Encryption-Enabled" ||
+			key == "X-Chat-Id" || key == "X-Message-Id" {
+			continue
+		}
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+
+	// Set authorization
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	// Set User-Agent if not present
+	if req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	}
+
+	// Disable compression
+	req.Header.Set("Accept-Encoding", "identity")
+
+	// Set content length
+	req.ContentLength = int64(len(requestBody))
+
+	// Make the request with the shared transport (uses background context)
+	initProxyTransport()
+	resp, err := proxyTransport.RoundTrip(req)
+	if err != nil {
+		log.Error("upstream request failed",
+			slog.String("error", err.Error()),
+			slog.String("url", upstreamURL))
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Upstream request failed"})
+		return
+	}
+
+	upstreamLatency := time.Since(start)
+
+	// Verify it's actually a streaming response
+	if !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		// Not streaming, read full body and return
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		for key, values := range resp.Header {
+			for _, value := range values {
+				c.Writer.Header().Add(key, value)
+			}
+		}
+		c.Writer.WriteHeader(resp.StatusCode)
+		c.Writer.Write(body) //nolint:errcheck
+		return
+	}
+
+	// Copy response headers to client
+	for key, values := range resp.Header {
+		for _, value := range values {
+			c.Writer.Header().Add(key, value)
+		}
+	}
+	c.Writer.WriteHeader(resp.StatusCode)
+
+	// Handle streaming response with broadcast
+	if err := handleStreamingWithBroadcast(c, resp, log, model, upstreamLatency, trackingService, messageService, streamManager, cfg, provider); err != nil {
+		log.Error("streaming handler failed", slog.String("error", err.Error()))
 	}
 }
 
