@@ -1,13 +1,10 @@
 package proxy
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
@@ -237,105 +234,5 @@ func handleStreamingWithBroadcast(
 		logRequestToDatabase(c, trackingService, model, tokenUsage)
 	}
 
-	return nil
-}
-
-// handleStreamingLegacy handles streaming responses the old way (no broadcast).
-//
-// This is the legacy streaming path that:
-//   - Ties upstream reading to client connection
-//   - Stops reading if client disconnects
-//   - Each client gets its own upstream request
-//
-// This is kept for backward compatibility during migration.
-func handleStreamingLegacy(
-	resp *http.Response,
-	log *logger.Logger,
-	model string,
-	upstreamLatency time.Duration,
-	c *gin.Context,
-	trackingService *request_tracking.Service,
-	messageService *messaging.Service,
-	provider *routing.ProviderConfig,
-) error {
-	pr, pw := io.Pipe()
-	originalBody := resp.Body
-	resp.Body = pr
-
-	go func() {
-		defer pw.Close()           //nolint:errcheck
-		defer originalBody.Close() //nolint:errcheck
-
-		defer func() {
-			if r := recover(); r != nil {
-				log.Error("panic in streaming response handler",
-					slog.Any("panic", r),
-					slog.String("target_url", resp.Request.URL.String()),
-					slog.String("provider", request_tracking.GetProviderFromBaseURL(c.GetHeader("X-BASE-URL"))),
-				)
-			}
-		}()
-
-		var reader io.Reader = originalBody
-
-		scanner := bufio.NewScanner(reader)
-		scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 64KB initial, 1MB max.
-		var tokenUsage *Usage
-		var firstChunk string
-		var fullContent strings.Builder // Accumulate full response content
-
-		ctx := c.Request.Context()
-		for scanner.Scan() {
-			select {
-			case <-ctx.Done():
-				log.Debug("client disconnected, stopping stream processing")
-				return
-			default:
-			}
-
-			line := scanner.Text()
-
-			// Pipe the line to the client immediately.
-			if _, err := pw.Write(append([]byte(line), '\n')); err != nil {
-				log.Error("failed to write to pipe", slog.String("error", err.Error()))
-				return
-			}
-
-			if firstChunk == "" && log.Enabled(ctx, slog.LevelDebug) && strings.HasPrefix(line, "data: ") && !strings.Contains(line, "[DONE]") {
-				firstChunk = line
-			}
-
-			// Extract and accumulate content for message storage
-			if content := extractContentFromSSELine(line); content != "" {
-				fullContent.WriteString(content)
-			}
-
-			// Extract the token usage from second to last chunk which contains a usage field.
-			// See: https://openrouter.ai/docs/use-cases/usage-accounting#streaming-with-usage-information
-			if usage := extractTokenUsageFromSSELine(line); usage != nil {
-				tokenUsage = usage
-			}
-		}
-
-		if err := scanner.Err(); err != nil {
-			log.Error("scanner error while processing SSE stream", slog.String("error", err.Error()))
-		}
-
-		logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, []byte(firstChunk), c.Request.Context())
-
-		// Log request to database with multiplier if provider is available
-		if provider != nil {
-			logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
-		} else {
-			logRequestToDatabase(c, trackingService, model, tokenUsage)
-		}
-
-		// Save message to Firestore asynchronously
-		isError := resp.StatusCode >= 400
-		saveMessageAsync(c, messageService, fullContent.String(), isError)
-	}()
-
-	// Remove Content-Length for chunked encoding.
-	resp.Header.Del("Content-Length")
 	return nil
 }

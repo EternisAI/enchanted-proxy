@@ -226,24 +226,26 @@ func main() {
 	log.Info("tool system initialized", slog.Int("registered_tools", len(toolRegistry.List())))
 
 	// Initialize stream manager for broadcast streaming
+	// CRITICAL: Always create streamManager to ensure streaming continues after client disconnect
+	// StreamManager can work with nil messageService (storage will be disabled but streaming works)
 	var streamManager *streaming.StreamManager
-	if messageService != nil {
-		streamManager = streaming.NewStreamManager(messageService, logger.WithComponent("streaming"))
-		log.Info("stream manager initialized")
+	streamManager = streaming.NewStreamManager(messageService, logger.WithComponent("streaming"))
+	log.Info("stream manager initialized",
+		slog.Bool("message_storage_enabled", config.AppConfig.MessageStorageEnabled),
+		slog.Bool("message_service_available", messageService != nil),
+		slog.Bool("firebase_credentials_configured", config.AppConfig.FirebaseCredJSON != ""),
+		slog.Bool("storage_will_work", messageService != nil))
 
-		// Initialize tool executor for tool call execution
-		toolExecutor := streaming.NewToolExecutor(
-			toolRegistry,
-			logger.WithComponent("tool-executor"),
-		)
-		streamManager.SetToolExecutor(toolExecutor)
-		log.Info("tool executor initialized")
+	// Initialize tool executor for tool call execution
+	toolExecutor := streaming.NewToolExecutor(
+		toolRegistry,
+		logger.WithComponent("tool-executor"),
+	)
+	streamManager.SetToolExecutor(toolExecutor)
+	log.Info("tool executor initialized")
 
-		// Ensure cleanup on shutdown
-		defer streamManager.Shutdown()
-	} else {
-		log.Info("stream manager disabled (requires message storage)")
-	}
+	// Ensure cleanup on shutdown
+	defer streamManager.Shutdown()
 
 	// Initialize background polling manager for GPT-5 Pro
 	var pollingManager *background.PollingManager

@@ -329,12 +329,9 @@ func ProxyHandler(
 			isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
 			if isStreaming {
-				// Use broadcast streaming if StreamManager available, otherwise legacy
-				if streamManager != nil {
-					return handleStreamingWithBroadcast(c, resp, log, model, upstreamLatency, trackingService, messageService, streamManager, cfg, provider)
-				} else {
-					return handleStreamingLegacy(resp, log, model, upstreamLatency, c, trackingService, messageService, provider)
-				}
+				// CRITICAL: Always use broadcast streaming with StreamManager
+				// This ensures streaming continues after client disconnect (saves full message to Firestore)
+				return handleStreamingWithBroadcast(c, resp, log, model, upstreamLatency, trackingService, messageService, streamManager, cfg, provider)
 			} else {
 				return handleNonStreamingResponse(resp, log, model, upstreamLatency, c, trackingService, messageService, provider)
 			}
