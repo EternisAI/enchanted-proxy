@@ -94,7 +94,7 @@ var Configs = map[Tier]Config{
 		DeepResearchDailyRuns:         10,
 		DeepResearchLifetimeRuns:      0, // Check daily only
 		DeepResearchTokenCap:          10_000,
-		DeepResearchMaxActiveSessions: 1,
+		DeepResearchMaxActiveSessions: 0, // 0 = unlimited concurrent sessions
 		// Pro tier has all features including document upload
 		AllowedFeatures: []Feature{FeatureDocumentUpload},
 	},

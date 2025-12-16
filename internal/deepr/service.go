@@ -101,7 +101,8 @@ func (s *Service) checkDeepResearchQuota(ctx context.Context, userID string, tie
 		return nil
 	}
 
-	// Check active jobs (applies to free tier with max 1 active session)
+	// Check active jobs (only applies when MaxActiveSessions == 1, i.e., Free tier)
+	// Pro tier has MaxActiveSessions == 0 (unlimited), so this check is skipped
 	if tierConfig.DeepResearchMaxActiveSessions == 1 {
 		hasActive, err := s.queries.HasActiveDeepResearchRun(ctx, userID)
 		if err != nil {
