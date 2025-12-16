@@ -9,7 +9,6 @@ import (
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
-	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -23,33 +22,7 @@ type FirebaseClient struct {
 
 // NewFirebaseClient creates a new Firebase client with Firestore access.
 func NewFirebaseClient(ctx context.Context, projectID, credJSON string, log *logger.Logger) (*FirebaseClient, error) {
-	// Credentials are logged in main.go before this function is called
-
-	// NOTE: Cannot use custom HTTP client because Firestore uses gRPC which is incompatible
-	// with option.WithHTTPClient(). The Messaging client uses HTTP REST API but shares
-	// the same Firebase app initialization.
-
-	// DEBUGGING: Manually generate OAuth token to compare with working curl
-	creds, err := google.CredentialsFromJSON(ctx, []byte(credJSON),
-		"https://www.googleapis.com/auth/firebase.messaging")
-	if err != nil {
-		log.Error("failed to parse credentials for manual OAuth", "error", err)
-	} else {
-		token, err := creds.TokenSource.Token()
-		if err != nil {
-			log.Error("failed to generate manual OAuth token", "error", err)
-		} else {
-			log.Info("manually generated OAuth token (like working curl)",
-				"token_prefix", token.AccessToken[:30],
-				"token_suffix", token.AccessToken[len(token.AccessToken)-20:],
-				"expiry", token.Expiry,
-				"token_type", token.TokenType)
-		}
-	}
-
 	opt := option.WithCredentialsJSON([]byte(credJSON))
-
-	// Create Firebase config with project ID
 	config := &firebase.Config{
 		ProjectID: projectID,
 	}

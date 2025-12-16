@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -117,39 +115,6 @@ func main() {
 	var firebaseClient *auth.FirebaseClient
 
 	if config.AppConfig.FirebaseCredJSON != "" {
-		// Check for environment variables that might interfere with Firebase SDK
-		googleAppCreds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
-		googleCloudProject := os.Getenv("GOOGLE_CLOUD_PROJECT")
-		gcloudProject := os.Getenv("GCLOUD_PROJECT")
-
-		log.Info("google environment variables check",
-			slog.String("GOOGLE_APPLICATION_CREDENTIALS", googleAppCreds),
-			slog.String("GOOGLE_CLOUD_PROJECT", googleCloudProject),
-			slog.String("GCLOUD_PROJECT", gcloudProject))
-
-		// Parse credentials to log what we're using (for debugging FCM issues)
-		var credMap map[string]interface{}
-		if err := json.Unmarshal([]byte(config.AppConfig.FirebaseCredJSON), &credMap); err != nil {
-			log.Error("failed to parse FIREBASE_CRED_JSON", slog.String("error", err.Error()))
-			os.Exit(1)
-		}
-
-		credProjectID, _ := credMap["project_id"].(string)
-		credClientEmail, _ := credMap["client_email"].(string)
-		credPrivateKeyID, _ := credMap["private_key_id"].(string)
-
-		log.Info("firebase credentials loaded",
-			slog.String("cred_project_id", credProjectID),
-			slog.String("cred_client_email", credClientEmail),
-			slog.String("cred_private_key_id", credPrivateKeyID),
-			slog.String("config_project_id", config.AppConfig.FirebaseProjectID))
-
-		if config.AppConfig.FirebaseProjectID != "" && credProjectID != config.AppConfig.FirebaseProjectID {
-			log.Warn("firebase project ID mismatch",
-				slog.String("config", config.AppConfig.FirebaseProjectID),
-				slog.String("credentials", credProjectID))
-		}
-
 		firebaseClient, err = auth.NewFirebaseClient(context.Background(), config.AppConfig.FirebaseProjectID, config.AppConfig.FirebaseCredJSON, logger.WithComponent("firebase"))
 		if err != nil {
 			log.Error("failed to initialize firebase client", slog.String("error", err.Error()))
@@ -236,23 +201,13 @@ func main() {
 	// Initialize push notification service
 	var notificationService *notifications.Service
 	if config.AppConfig.PushNotificationsEnabled && firebaseClient != nil {
-		messagingClient := firebaseClient.GetMessagingClient()
-
-		log.Info("initializing push notification service",
-			slog.Bool("enabled", true),
-			slog.String("messaging_client", fmt.Sprintf("%p", messagingClient)),
-			slog.Bool("messaging_client_nil", messagingClient == nil))
-
 		notificationService = notifications.NewService(
-			messagingClient,
+			firebaseClient.GetMessagingClient(),
 			firebaseClient.GetFirestoreClient(),
 			logger.WithComponent("push-notifications"),
-			true, // enabled
-			config.AppConfig.FirebaseCredJSON,
-			config.AppConfig.FirebaseProjectID,
+			true,
 		)
-		log.Info("push notification service initialized",
-			slog.Bool("enabled", true))
+		log.Info("push notification service initialized")
 	} else {
 		if !config.AppConfig.PushNotificationsEnabled {
 			log.Info("push notifications disabled by configuration")

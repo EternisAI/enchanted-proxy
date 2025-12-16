@@ -1,18 +1,13 @@
 package notifications
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 
 	"cloud.google.com/go/firestore"
 	"firebase.google.com/go/v4/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
-	"golang.org/x/oauth2/google"
 )
 
 // Service handles sending push notifications via Firebase Cloud Messaging.
@@ -21,8 +16,6 @@ type Service struct {
 	tokenManager    *TokenManager
 	logger          *logger.Logger
 	enabled         bool
-	credJSON        string // For debug curl generation
-	projectID       string // For debug curl generation
 }
 
 // NewService creates a new push notification service.
@@ -31,8 +24,6 @@ func NewService(
 	firestoreClient *firestore.Client,
 	logger *logger.Logger,
 	enabled bool,
-	credJSON string,
-	projectID string,
 ) *Service {
 	tokenManager := NewTokenManager(firestoreClient, logger)
 
@@ -41,8 +32,6 @@ func NewService(
 		tokenManager:    tokenManager,
 		logger:          logger,
 		enabled:         enabled,
-		credJSON:        credJSON,
-		projectID:       projectID,
 	}
 }
 
@@ -167,9 +156,6 @@ func (s *Service) sendToDevice(
 	tokenInfo TokenInfo,
 	notification CompletionNotification,
 ) SendResult {
-	log := s.logger.WithContext(ctx).WithComponent("push-notifications")
-
-	// Create FCM message
 	message := &messaging.Message{
 		Notification: &messaging.Notification{
 			Title: notification.Title,
@@ -179,22 +165,8 @@ func (s *Service) sendToDevice(
 		Token: tokenInfo.Token,
 	}
 
-	// Send via direct HTTP using manual OAuth (bypassing SDK due to Nitro Enclave issues)
-	response, err := s.sendViaDirectHTTP(ctx, message)
-
+	response, err := s.messagingClient.Send(ctx, message)
 	if err != nil {
-		// Generate debug curl command that can be copy-pasted to test
-		debugCurl := GenerateDebugCurl(ctx, s.credJSON, s.projectID, message)
-
-		// Log detailed error information for debugging
-		log.Error("FCM send failed - CHECK STARTUP LOGS FOR CREDENTIALS",
-			slog.String("error", err.Error()),
-			slog.String("error_type", fmt.Sprintf("%T", err)),
-			slog.String("token_prefix", tokenInfo.Token[:min(10, len(tokenInfo.Token))]),
-			slog.String("notification_type", notification.Data["type"]),
-			slog.String("messaging_client_status", fmt.Sprintf("%p", s.messagingClient)),
-			slog.String("debug_curl", debugCurl))
-
 		return SendResult{
 			Token:   tokenInfo.Token[:min(10, len(tokenInfo.Token))] + "...",
 			Success: false,
@@ -207,98 +179,6 @@ func (s *Service) sendToDevice(
 		Success:  true,
 		Response: response,
 	}
-}
-
-// sendViaDirectHTTP sends FCM notification using direct HTTP REST API with manual OAuth.
-// This bypasses the Firebase SDK which has issues in Nitro Enclave environment.
-func (s *Service) sendViaDirectHTTP(ctx context.Context, message *messaging.Message) (string, error) {
-	log := s.logger.WithContext(ctx).WithComponent("fcm-direct-http")
-
-	// Generate OAuth token manually (we verified this works in Nitro Enclave)
-	creds, err := google.CredentialsFromJSON(ctx, []byte(s.credJSON),
-		"https://www.googleapis.com/auth/firebase.messaging")
-	if err != nil {
-		return "", fmt.Errorf("failed to parse credentials: %w", err)
-	}
-
-	token, err := creds.TokenSource.Token()
-	if err != nil {
-		return "", fmt.Errorf("failed to get OAuth token: %w", err)
-	}
-
-	log.Info("generated OAuth token for direct FCM HTTP request",
-		slog.String("token_prefix", token.AccessToken[:30]),
-		slog.String("token_suffix", token.AccessToken[len(token.AccessToken)-20:]),
-		slog.Time("expiry", token.Expiry))
-
-	// Build FCM v1 API request body
-	requestBody := map[string]interface{}{
-		"message": map[string]interface{}{
-			"token": message.Token,
-			"notification": map[string]interface{}{
-				"title": message.Notification.Title,
-				"body":  message.Notification.Body,
-			},
-			"data": message.Data,
-		},
-	}
-
-	bodyBytes, err := json.Marshal(requestBody)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal request body: %w", err)
-	}
-
-	// Create HTTP request
-	url := fmt.Sprintf("https://fcm.googleapis.com/v1/projects/%s/messages:send", s.projectID)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(bodyBytes))
-	if err != nil {
-		return "", fmt.Errorf("failed to create HTTP request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-	req.Header.Set("Content-Type", "application/json")
-
-	log.Info("sending direct HTTP request to FCM",
-		slog.String("url", url),
-		slog.String("device_token_prefix", message.Token[:min(20, len(message.Token))]))
-
-	// Make the request
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Read response body
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	log.Info("received FCM response",
-		slog.Int("status_code", resp.StatusCode),
-		slog.String("status", resp.Status),
-		slog.String("response_body", string(responseBody)))
-
-	// Check for errors
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("FCM API error (status %d): %s", resp.StatusCode, string(responseBody))
-	}
-
-	// Parse response to get message ID
-	var fcmResponse struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(responseBody, &fcmResponse); err != nil {
-		return "", fmt.Errorf("failed to parse FCM response: %w", err)
-	}
-
-	log.Info("FCM notification sent successfully via direct HTTP",
-		slog.String("message_id", fcmResponse.Name))
-
-	return fcmResponse.Name, nil
 }
 
 // min returns the minimum of two integers (helper function).
