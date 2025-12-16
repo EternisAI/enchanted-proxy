@@ -1536,6 +1536,25 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 								slog.String("chat_id", chatID))
 						}
 					}
+
+					// Mark as successful for defer completion
+					completedSuccessfully = true
+
+					// Send push notification for successful completion
+					if s.notificationService != nil {
+						go func() {
+							// Use background context to ensure notification sends even if session context is cancelled
+							notifyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+							defer cancel()
+
+							if err := s.notificationService.SendDeepResearchCompletionNotification(notifyCtx, userID, chatID); err != nil {
+								log.Error("failed to send deep research completion notification",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("error", err.Error()))
+							}
+						}()
+					}
 				}
 
 				// Check if session is complete even without storage
