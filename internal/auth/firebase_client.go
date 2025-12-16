@@ -9,6 +9,7 @@ import (
 	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
+	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -21,12 +22,12 @@ type FirebaseClient struct {
 }
 
 // NewFirebaseClient creates a new Firebase client with Firestore access.
-func NewFirebaseClient(ctx context.Context, projectID, credJSON string) (*FirebaseClient, error) {
+func NewFirebaseClient(ctx context.Context, projectID, credJSON string, log *logger.Logger) (*FirebaseClient, error) {
 	// Credentials are logged in main.go before this function is called
 
 	// Create custom HTTP client with logging transport for debugging
 	httpClient := &http.Client{
-		Transport: NewLoggingTransport(),
+		Transport: NewLoggingTransport(log.WithComponent("firebase-http")),
 	}
 
 	opt1 := option.WithCredentialsJSON([]byte(credJSON))

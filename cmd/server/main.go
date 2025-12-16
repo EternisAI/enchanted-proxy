@@ -150,7 +150,7 @@ func main() {
 				slog.String("credentials", credProjectID))
 		}
 
-		firebaseClient, err = auth.NewFirebaseClient(context.Background(), config.AppConfig.FirebaseProjectID, config.AppConfig.FirebaseCredJSON)
+		firebaseClient, err = auth.NewFirebaseClient(context.Background(), config.AppConfig.FirebaseProjectID, config.AppConfig.FirebaseCredJSON, logger.WithComponent("firebase"))
 		if err != nil {
 			log.Error("failed to initialize firebase client", slog.String("error", err.Error()))
 			os.Exit(1)
