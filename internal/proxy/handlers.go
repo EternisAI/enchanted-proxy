@@ -329,7 +329,8 @@ func ProxyHandler(
 			isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
 			if isStreaming {
-				// CRITICAL: Always use broadcast streaming with StreamManager
+				// Use broadcast streaming with StreamManager
+				// The upstream request is now detached from client context (see request clone below)
 				// This ensures streaming continues after client disconnect (saves full message to Firestore)
 				return handleStreamingWithBroadcast(c, resp, log, model, upstreamLatency, trackingService, messageService, streamManager, cfg, provider)
 			} else {
@@ -415,16 +416,27 @@ func ProxyHandler(
 			r.Header.Del("X-Message-ID")         // Remove message metadata before forwarding
 		}
 
-		// Some canceled requests by clients could cause panic.
-		// We handle that gracefully.
-		// See: https://github.com/gin-gonic/gin/issues/2279
+		// CRITICAL FIX: Detach request context so upstream continues after client disconnect
+		// Problem: ReverseProxy uses c.Request.Context() for upstream request
+		// When client disconnects, context is cancelled and transport closes upstream connection
+		// Solution: Clone request with context.Background() so upstream is independent
+
+		// Only check for early cancellation (before proxy starts)
 		select {
 		case <-c.Request.Context().Done():
-			log.Info("client canceled request", slog.String("target_url", target.String()))
+			log.Info("client canceled request before proxy started", slog.String("target_url", target.String()))
 			return
 		default:
-			proxy.ServeHTTP(c.Writer, c.Request)
 		}
+
+		// Clone request with background context (survives client disconnect)
+		// The upstream request will use this context instead of the client's context
+		detachedReq := c.Request.Clone(context.Background())
+
+		// Preserve important values that might be lost in clone
+		// (the body is already cloned correctly)
+
+		proxy.ServeHTTP(c.Writer, detachedReq)
 	}
 }
 
