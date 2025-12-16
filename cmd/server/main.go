@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -116,6 +117,29 @@ func main() {
 	var firebaseClient *auth.FirebaseClient
 
 	if config.AppConfig.FirebaseCredJSON != "" {
+		// Parse credentials to log what we're using (for debugging FCM issues)
+		var credMap map[string]interface{}
+		if err := json.Unmarshal([]byte(config.AppConfig.FirebaseCredJSON), &credMap); err != nil {
+			log.Error("failed to parse FIREBASE_CRED_JSON", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
+
+		credProjectID, _ := credMap["project_id"].(string)
+		credClientEmail, _ := credMap["client_email"].(string)
+		credPrivateKeyID, _ := credMap["private_key_id"].(string)
+
+		log.Info("firebase credentials loaded",
+			slog.String("cred_project_id", credProjectID),
+			slog.String("cred_client_email", credClientEmail),
+			slog.String("cred_private_key_id", credPrivateKeyID),
+			slog.String("config_project_id", config.AppConfig.FirebaseProjectID))
+
+		if config.AppConfig.FirebaseProjectID != "" && credProjectID != config.AppConfig.FirebaseProjectID {
+			log.Warn("firebase project ID mismatch",
+				slog.String("config", config.AppConfig.FirebaseProjectID),
+				slog.String("credentials", credProjectID))
+		}
+
 		firebaseClient, err = auth.NewFirebaseClient(context.Background(), config.AppConfig.FirebaseProjectID, config.AppConfig.FirebaseCredJSON)
 		if err != nil {
 			log.Error("failed to initialize firebase client", slog.String("error", err.Error()))
