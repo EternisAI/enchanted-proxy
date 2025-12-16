@@ -25,12 +25,9 @@ func NewFirebaseClient(ctx context.Context, projectID, credJSON string) (*Fireba
 
 	opt := option.WithCredentialsJSON([]byte(credJSON))
 
-	// Create Firebase config with project ID
-	config := &firebase.Config{
-		ProjectID: projectID,
-	}
-
-	app, err := firebase.NewApp(ctx, config, opt)
+	// Don't pass explicit ProjectID config - let SDK use project_id from credentials JSON
+	// Passing explicit config can cause authentication issues with FCM
+	app, err := firebase.NewApp(ctx, nil, opt)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing firebase app: %v", err)
 	}
