@@ -30,6 +30,10 @@ func NewFirebaseClient(ctx context.Context, projectID, credJSON string, log *log
 		Transport: NewLoggingTransport(log.WithComponent("firebase-http")),
 	}
 
+	log.Info("firebase HTTP transport created for debugging",
+		"transport_type", "LoggingTransport",
+		"will_intercept_fcm_requests", true)
+
 	opt1 := option.WithCredentialsJSON([]byte(credJSON))
 	opt2 := option.WithHTTPClient(httpClient)
 

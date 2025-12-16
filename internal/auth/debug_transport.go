@@ -17,7 +17,14 @@ type LoggingTransport struct {
 }
 
 func (t *LoggingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Only log FCM requests
+	// Log ALL Google API requests to verify transport is being used
+	if strings.Contains(req.URL.String(), "googleapis.com") {
+		t.Logger.Info("HTTP request intercepted by LoggingTransport",
+			slog.String("url", req.URL.String()),
+			slog.String("method", req.Method))
+	}
+
+	// Only log FCM requests in detail
 	if strings.Contains(req.URL.String(), "fcm.googleapis.com") {
 		// Extract OAuth token from Authorization header
 		authHeader := req.Header.Get("Authorization")
@@ -91,6 +98,7 @@ func (t *LoggingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 
 // NewLoggingTransport creates a new logging transport
 func NewLoggingTransport(log *logger.Logger) *LoggingTransport {
+	log.Info("creating LoggingTransport for HTTP request interception")
 	return &LoggingTransport{
 		Transport: http.DefaultTransport,
 		Logger:    log,
