@@ -214,6 +214,7 @@ func main() {
 			firebaseClient.GetFirestoreClient(),
 			logger.WithComponent("push-notifications"),
 			true, // enabled
+			config.AppConfig.FirebaseProjectID,
 		)
 		log.Info("push notification service initialized",
 			slog.Bool("enabled", true))
