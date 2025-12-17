@@ -611,10 +611,17 @@ func (s *StreamSession) readUpstream() {
 
 	// Check for scanner errors
 	if err := scanner.Err(); err != nil {
+		// Special handling for context.Canceled errors - these indicate a bug
+		// where the HTTP response body reader is tied to a canceled context
+		isContextCanceled := errors.Is(err, context.Canceled)
+
 		s.logger.Error("scanner error while reading upstream",
 			slog.String("error", err.Error()),
 			slog.String("chat_id", s.chatID),
-			slog.String("message_id", s.messageID))
+			slog.String("message_id", s.messageID),
+			slog.Bool("is_context_canceled", isContextCanceled),
+			slog.Int("chunks_read", chunkIndex),
+			slog.String("error_type", fmt.Sprintf("%T", err)))
 
 		// Broadcast error chunk to subscribers
 		errorChunk := StreamChunk{

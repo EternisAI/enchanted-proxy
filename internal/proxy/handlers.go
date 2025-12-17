@@ -584,6 +584,12 @@ func handleStreamingInBackground(
 		// CRITICAL: Create completely independent HTTP client
 		// Do NOT use shared proxyTransport - it may have cleanup logic tied to other requests
 		// This client must be 100% isolated from any Gin/ReverseProxy infrastructure
+		//
+		// CRITICAL: Disable HTTP/2 to prevent spurious "context canceled" errors
+		// Go has a bug (https://github.com/golang/go/issues/49366) where HTTP/2
+		// response bodies can return "context canceled" errors when the request
+		// context is canceled, even after successful reads. This causes scanner
+		// errors in our streaming code. HTTP/1.1 doesn't have this issue.
 		independentClient := &http.Client{
 			Transport: &http.Transport{
 				MaxIdleConns:        100,
@@ -591,7 +597,7 @@ func handleStreamingInBackground(
 				IdleConnTimeout:     90 * time.Second,
 				DisableKeepAlives:   false,
 				DisableCompression:  true,
-				ForceAttemptHTTP2:   true,
+				ForceAttemptHTTP2:   false, // CRITICAL: Disable HTTP/2 to prevent context canceled errors
 				DialContext: (&net.Dialer{
 					Timeout:   30 * time.Second,
 					KeepAlive: 30 * time.Second,
