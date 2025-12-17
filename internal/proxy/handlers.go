@@ -442,7 +442,14 @@ func ProxyHandler(
 }
 
 // handleStreamingInBackground starts upstream request in independent background goroutine.
-// This completely decouples upstream reading from Gin handler lifecycle (like GPT-5 Pro polling).
+// This completely decouples upstream reading from Gin handler lifecycle.
+//
+// CRITICAL: Uses context.WithoutCancel() to prevent Gin v1.8.0+ context cancellation.
+// In Gin v1.8.0+, request contexts are canceled when clients disconnect, even in goroutines.
+// This caused "context canceled" errors that stopped upstream reading mid-stream.
+// Solution: context.WithoutCancel() creates a detached context that preserves values but
+// removes cancellation propagation (see https://github.com/gin-gonic/gin/issues/3554).
+//
 // The handler streams to client while connected, but upstream continues even after client disconnects.
 func handleStreamingInBackground(
 	c *gin.Context,
@@ -518,13 +525,19 @@ func handleStreamingInBackground(
 	// This goroutine is COMPLETELY independent of the Gin handler lifecycle
 	// DO NOT reference 'c' inside this goroutine except for already-extracted data
 	go func() {
-		// Use background context (never cancelled by client disconnect)
-		// This context will live for the entire duration of the stream
-		ctx := context.Background()
+		// CRITICAL FIX for Gin v1.8.0+ context cancellation:
+		// Gin v1.8.0 introduced breaking changes where request contexts get canceled
+		// even in goroutines (see https://github.com/gin-gonic/gin/issues/3554)
+		// Solution: Use context.WithoutCancel() to create a detached context that:
+		//   1. Preserves context values (for tracing, logging, etc.)
+		//   2. Removes cancellation propagation from the request context
+		// This ensures the goroutine continues even after client disconnects
+		ctx := context.WithoutCancel(c.Request.Context())
 
-		log.Info("background: goroutine started, completely independent of client connection",
+		log.Info("background: goroutine started with detached context (WithoutCancel)",
 			slog.String("chat_id", chatID),
-			slog.String("message_id", messageID))
+			slog.String("message_id", messageID),
+			slog.Bool("context_canceled", ctx.Err() != nil))
 
 		upstreamURL := targetURL + requestURI
 		req, err := http.NewRequestWithContext(ctx, requestMethod, upstreamURL, bytes.NewReader(requestBody))
@@ -613,11 +626,12 @@ func handleStreamingInBackground(
 
 		upstreamLatency := time.Since(start)
 
-		log.Info("background: HTTP response received",
+		log.Info("background: HTTP response received, context still valid (WithoutCancel working)",
 			slog.String("chat_id", chatID),
 			slog.Int("status", resp.StatusCode),
 			slog.String("content_type", resp.Header.Get("Content-Type")),
-			slog.Duration("latency", upstreamLatency))
+			slog.Duration("latency", upstreamLatency),
+			slog.Bool("context_canceled", ctx.Err() != nil))
 
 		// Attach response body to session and start reading
 		session := streamManager.GetSession(chatID, messageID)
