@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -518,7 +519,12 @@ func handleStreamingInBackground(
 	// DO NOT reference 'c' inside this goroutine except for already-extracted data
 	go func() {
 		// Use background context (never cancelled by client disconnect)
+		// This context will live for the entire duration of the stream
 		ctx := context.Background()
+
+		log.Info("background: goroutine started, completely independent of client connection",
+			slog.String("chat_id", chatID),
+			slog.String("message_id", messageID))
 
 		upstreamURL := targetURL + requestURI
 		req, err := http.NewRequestWithContext(ctx, requestMethod, upstreamURL, bytes.NewReader(requestBody))
@@ -529,10 +535,25 @@ func handleStreamingInBackground(
 			return
 		}
 
+		// Defensive check: Verify request uses background context
+		if req.Context().Err() != nil {
+			log.Error("background: request context already cancelled before making request",
+				slog.String("error", req.Context().Err().Error()),
+				slog.String("chat_id", chatID))
+			return
+		}
+
 		// Copy headers (using pre-copied headers, not c.Request.Header)
+		// Skip proxy-specific headers that shouldn't be forwarded to upstream
+		proxyHeaders := map[string]bool{
+			"X-Base-Url":           true,
+			"X-Client-Platform":    true,
+			"X-Encryption-Enabled": true,
+			"X-Chat-Id":            true,
+			"X-Message-Id":         true,
+		}
 		for key, values := range requestHeaders {
-			if key == "X-Base-Url" || key == "X-Client-Platform" || key == "X-Encryption-Enabled" ||
-				key == "X-Chat-Id" || key == "X-Message-Id" {
+			if proxyHeaders[key] {
 				continue
 			}
 			for _, value := range values {
@@ -547,17 +568,56 @@ func handleStreamingInBackground(
 		req.Header.Set("Accept-Encoding", "identity")
 		req.ContentLength = int64(len(requestBody))
 
-		// Make HTTP request in background (independent of Gin handler)
-		initProxyTransport()
-		resp, err := proxyTransport.RoundTrip(req)
+		// CRITICAL: Create completely independent HTTP client
+		// Do NOT use shared proxyTransport - it may have cleanup logic tied to other requests
+		// This client must be 100% isolated from any Gin/ReverseProxy infrastructure
+		independentClient := &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+				DisableCompression:  true,
+				ForceAttemptHTTP2:   true,
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				TLSHandshakeTimeout:   30 * time.Second,
+				ResponseHeaderTimeout: 120 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			},
+			Timeout: 0, // No timeout - streaming can take a long time
+		}
+
+		// Make HTTP request with independent client (no shared state)
+		log.Info("background: making HTTP request to upstream",
+			slog.String("url", upstreamURL),
+			slog.String("chat_id", chatID))
+
+		resp, err := independentClient.Do(req)
 		if err != nil {
-			log.Error("background: upstream request failed",
+			log.Error("background: upstream HTTP request failed",
 				slog.String("error", err.Error()),
-				slog.String("chat_id", chatID))
+				slog.String("chat_id", chatID),
+				slog.Bool("is_context_canceled", errors.Is(err, context.Canceled)),
+				slog.Bool("is_context_deadline", errors.Is(err, context.DeadlineExceeded)))
+
+			// CRITICAL: Notify session of error so subscribers don't hang forever
+			if session := streamManager.GetSession(chatID, messageID); session != nil {
+				// Mark session as completed with error (this will close subscriber channels)
+				session.ForceComplete(fmt.Errorf("upstream request failed: %w", err))
+			}
 			return
 		}
 
 		upstreamLatency := time.Since(start)
+
+		log.Info("background: HTTP response received",
+			slog.String("chat_id", chatID),
+			slog.Int("status", resp.StatusCode),
+			slog.String("content_type", resp.Header.Get("Content-Type")),
+			slog.Duration("latency", upstreamLatency))
 
 		// Attach response body to session and start reading
 		session := streamManager.GetSession(chatID, messageID)
@@ -575,15 +635,23 @@ func handleStreamingInBackground(
 		session.SetUpstreamAPIKey(apiKey)
 
 		// Start upstream reading (this happens in session's own goroutine)
+		// From this point, session owns resp.Body and will close it
 		session.SetUpstreamBodyAndStart(resp.Body)
 
-		log.Info("background: upstream reading started",
+		log.Info("background: upstream reading started, goroutine will continue until completion",
 			slog.String("chat_id", chatID),
-			slog.String("message_id", messageID),
-			slog.Duration("latency", upstreamLatency))
+			slog.String("message_id", messageID))
 
-		// Wait for session to complete
+		// Wait for session to complete (this goroutine stays alive until stream finishes)
 		session.WaitForCompletion()
+
+		// Check if session had errors
+		if err := session.GetError(); err != nil {
+			log.Error("background: session completed with error",
+				slog.String("error", err.Error()),
+				slog.String("chat_id", chatID),
+				slog.String("message_id", messageID))
+		}
 
 		// Save to Firestore after completion
 		if userID != "" && messageService != nil {
@@ -632,7 +700,8 @@ func handleStreamingInBackground(
 	}()
 
 	// Meanwhile, in the foreground: subscribe to session and stream to client
-	// This part can return when client disconnects, but background continues
+	// CRITICAL: Do NOT wait for background goroutine - subscribe immediately
+	// This decouples client connection from upstream request entirely
 	session := streamManager.GetSession(chatID, messageID)
 	if session == nil {
 		log.Error("pending session not found for client streaming",
@@ -641,35 +710,18 @@ func handleStreamingInBackground(
 		return
 	}
 
-	// Wait for session to start (background goroutine will start it)
-	timeout := time.After(30 * time.Second)
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-timeout:
-			log.Error("timeout waiting for session to start",
-				slog.String("chat_id", chatID))
-			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "Upstream timeout"})
-			return
-		case <-ticker.C:
-			if session.IsStarted() {
-				goto SessionStarted
-			}
-		}
-	}
-
-SessionStarted:
-	// Set response headers for streaming
+	// Set response headers for SSE immediately
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 
-	// Subscribe and stream to client
+	// Subscribe immediately (even if session hasn't started yet)
+	// Subscriber will receive chunks as they arrive via channel
+	// Use client's request context so subscriber cleanup happens on disconnect
 	subscriberID := uuid.New().String()
-	subscriber, err := session.Subscribe(context.Background(), subscriberID, streaming.SubscriberOptions{
+	subscriber, err := session.Subscribe(c.Request.Context(), subscriberID, streaming.SubscriberOptions{
 		ReplayFromStart: false,
 		BufferSize:      100,
 	})
@@ -682,7 +734,12 @@ SessionStarted:
 
 	streamManager.RecordSubscription()
 
-	// Stream to client (returns when client disconnects or stream completes)
+	log.Info("client subscribed, will receive chunks as they arrive",
+		slog.String("chat_id", chatID),
+		slog.String("subscriber_id", subscriberID))
+
+	// Stream to client (blocks until client disconnects or stream completes)
+	// When this returns, handler ends, but background goroutine continues
 	streamToClient(c, subscriber, session, log)
 
 	// Handler returns here (client may have disconnected)

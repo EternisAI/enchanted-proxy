@@ -63,8 +63,8 @@ func (t *ExaSearchTool) Definition() ToolDefinition {
 
 // ExaSearchArgs represents the arguments for Exa search.
 type ExaSearchArgs struct {
-	Queries            []string `json:"queries"`
-	NumResults         int      `json:"numResults,omitempty"`
+	Queries             []string `json:"queries"`
+	NumResults          int      `json:"numResults,omitempty"`
 	RequiresLiveResults bool     `json:"requires_live_results,omitempty"`
 }
 

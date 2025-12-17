@@ -957,6 +957,27 @@ func (s *StreamSession) WaitForCompletion() {
 	<-s.completedChan
 }
 
+// ForceComplete forcibly completes the session with an error.
+// This is used when the upstream HTTP request fails before streaming starts.
+// It notifies all subscribers that the session has ended with an error.
+//
+// Parameters:
+//   - err: The error that caused the session to fail
+//
+// This method is idempotent - calling it multiple times is safe.
+func (s *StreamSession) ForceComplete(err error) {
+	s.logger.Warn("force completing session due to error",
+		slog.String("chat_id", s.chatID),
+		slog.String("message_id", s.messageID),
+		slog.String("error", err.Error()))
+
+	// Cancel the stop context to stop any ongoing reads (if started)
+	s.stopCancel()
+
+	// Mark as completed with error (closes subscriber channels)
+	s.markCompleted(err)
+}
+
 // IsStopped returns whether the stream was stopped by user/system.
 func (s *StreamSession) IsStopped() bool {
 	s.stopMu.RLock()
