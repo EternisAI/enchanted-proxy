@@ -496,6 +496,17 @@ func handleStreamingInBackground(
 		}
 	}
 
+	// CRITICAL: Copy ALL request data BEFORE starting goroutine
+	// DO NOT access c.Request.* inside the goroutine - it gets cleaned up when handler returns
+	requestMethod := c.Request.Method
+	requestURI := c.Request.RequestURI
+	requestPath := c.Request.URL.Path
+	requestHeaders := make(http.Header)
+	for key, values := range c.Request.Header {
+		requestHeaders[key] = append([]string(nil), values...)
+	}
+	targetURL := target.String()
+
 	// Create pending session BEFORE making HTTP request
 	streamManager.CreatePendingSession(chatID, messageID)
 	log.Debug("created pending session for background streaming",
@@ -504,12 +515,13 @@ func handleStreamingInBackground(
 
 	// Start background goroutine that makes HTTP request and reads stream
 	// This goroutine is COMPLETELY independent of the Gin handler lifecycle
+	// DO NOT reference 'c' inside this goroutine except for already-extracted data
 	go func() {
 		// Use background context (never cancelled by client disconnect)
 		ctx := context.Background()
 
-		upstreamURL := target.String() + c.Request.RequestURI
-		req, err := http.NewRequestWithContext(ctx, c.Request.Method, upstreamURL, bytes.NewReader(requestBody))
+		upstreamURL := targetURL + requestURI
+		req, err := http.NewRequestWithContext(ctx, requestMethod, upstreamURL, bytes.NewReader(requestBody))
 		if err != nil {
 			log.Error("background: failed to create upstream request",
 				slog.String("error", err.Error()),
@@ -517,8 +529,8 @@ func handleStreamingInBackground(
 			return
 		}
 
-		// Copy headers
-		for key, values := range c.Request.Header {
+		// Copy headers (using pre-copied headers, not c.Request.Header)
+		for key, values := range requestHeaders {
 			if key == "X-Base-Url" || key == "X-Client-Platform" || key == "X-Encryption-Enabled" ||
 				key == "X-Chat-Id" || key == "X-Message-Id" {
 				continue
@@ -559,7 +571,7 @@ func handleStreamingInBackground(
 
 		// Set original request body for tool execution
 		session.SetOriginalRequest(requestBody)
-		session.SetUpstreamURL(target.String())
+		session.SetUpstreamURL(targetURL)
 		session.SetUpstreamAPIKey(apiKey)
 
 		// Start upstream reading (this happens in session's own goroutine)
@@ -597,12 +609,12 @@ func handleStreamingInBackground(
 		// Create minimal request info for logging
 		info := request_tracking.RequestInfo{
 			UserID:   userID,
-			Endpoint: c.Request.URL.Path,
+			Endpoint: requestPath,
 			Model:    model,
 			Provider: provider.Name,
 		}
 
-		if tokenUsage != nil && provider.TokenMultiplier > 0 {
+		if tokenUsage != nil && provider.TokenMultiplier > 0 && trackingService != nil {
 			planTokens := int(float64(tokenUsage.TotalTokens) * provider.TokenMultiplier)
 			tokenData := &request_tracking.TokenUsageWithMultiplier{
 				PromptTokens:     tokenUsage.PromptTokens,
