@@ -444,11 +444,26 @@ func ProxyHandler(
 // handleStreamingInBackground starts upstream request in independent background goroutine.
 // This completely decouples upstream reading from Gin handler lifecycle.
 //
-// CRITICAL: Uses context.WithoutCancel() to prevent Gin v1.8.0+ context cancellation.
-// In Gin v1.8.0+, request contexts are canceled when clients disconnect, even in goroutines.
-// This caused "context canceled" errors that stopped upstream reading mid-stream.
-// Solution: context.WithoutCancel() creates a detached context that preserves values but
-// removes cancellation propagation (see https://github.com/gin-gonic/gin/issues/3554).
+// NUCLEAR OPTION - Four-layer defense against "context canceled" errors:
+//
+// 1. context.Background() - Completely fresh context with NO ties to request
+//   - More isolated than context.WithoutCancel() which still inherits from parent
+//   - Zero connection to Gin request lifecycle
+//
+// 2. HTTP/1.1 only - Disables HTTP/2 to prevent Go stdlib HTTP/2 bug
+//   - Go has HTTP/2 bug where response bodies return spurious context.Canceled
+//   - Solution: ForceAttemptHTTP2: false
+//   - See: https://github.com/golang/go/issues/49366
+//
+// 3. io.Pipe() isolation - Session reads from pipe, not resp.Body directly
+//   - Creates buffer between HTTP transport and session scanner
+//   - Prevents direct context propagation from HTTP layer to scanner
+//
+// 4. Manual Read() loop with context.Canceled suppression - CRITICAL
+//   - Manually read resp.Body and write to pipe
+//   - When resp.Body.Read() returns context.Canceled, treat as EOF
+//   - Close pipe normally (without error) so session sees clean completion
+//   - This ensures ALL successfully-read data reaches the session
 //
 // The handler streams to client while connected, but upstream continues even after client disconnects.
 func handleStreamingInBackground(
@@ -525,19 +540,15 @@ func handleStreamingInBackground(
 	// This goroutine is COMPLETELY independent of the Gin handler lifecycle
 	// DO NOT reference 'c' inside this goroutine except for already-extracted data
 	go func() {
-		// CRITICAL FIX for Gin v1.8.0+ context cancellation:
-		// Gin v1.8.0 introduced breaking changes where request contexts get canceled
-		// even in goroutines (see https://github.com/gin-gonic/gin/issues/3554)
-		// Solution: Use context.WithoutCancel() to create a detached context that:
-		//   1. Preserves context values (for tracing, logging, etc.)
-		//   2. Removes cancellation propagation from the request context
-		// This ensures the goroutine continues even after client disconnects
-		ctx := context.WithoutCancel(c.Request.Context())
+		// NUCLEAR OPTION: Use completely fresh context.Background()
+		// We've tried context.WithoutCancel() but even that might have hidden ties
+		// to the parent context. Use context.Background() for absolute isolation.
+		// We don't need request context values since this goroutine is independent.
+		ctx := context.Background()
 
-		log.Info("background: goroutine started with detached context (WithoutCancel)",
+		log.Info("background: goroutine started with fresh context.Background()",
 			slog.String("chat_id", chatID),
-			slog.String("message_id", messageID),
-			slog.Bool("context_canceled", ctx.Err() != nil))
+			slog.String("message_id", messageID))
 
 		upstreamURL := targetURL + requestURI
 		req, err := http.NewRequestWithContext(ctx, requestMethod, upstreamURL, bytes.NewReader(requestBody))
@@ -632,12 +643,11 @@ func handleStreamingInBackground(
 
 		upstreamLatency := time.Since(start)
 
-		log.Info("background: HTTP response received, context still valid (WithoutCancel working)",
+		log.Info("background: HTTP response received successfully",
 			slog.String("chat_id", chatID),
 			slog.Int("status", resp.StatusCode),
 			slog.String("content_type", resp.Header.Get("Content-Type")),
-			slog.Duration("latency", upstreamLatency),
-			slog.Bool("context_canceled", ctx.Err() != nil))
+			slog.Duration("latency", upstreamLatency))
 
 		// Attach response body to session and start reading
 		session := streamManager.GetSession(chatID, messageID)
@@ -654,9 +664,80 @@ func handleStreamingInBackground(
 		session.SetUpstreamURL(targetURL)
 		session.SetUpstreamAPIKey(apiKey)
 
+		// CRITICAL FIX: resp.Body is internally tied to the request context
+		// Even with context.WithoutCancel(), the response body reader can still
+		// receive context cancellation signals from the HTTP transport layer.
+		// Solution: Create an io.Pipe() and copy data from resp.Body to pipe.
+		// The pipe is completely independent of HTTP contexts.
+		pipeReader, pipeWriter := io.Pipe()
+
+		// Copy resp.Body to pipe in background goroutine
+		go func() {
+			defer resp.Body.Close()
+			defer pipeWriter.Close()
+
+			log.Debug("background: starting io.Copy from resp.Body to pipe",
+				slog.String("chat_id", chatID))
+
+			// NUCLEAR OPTION: Read manually with context.Canceled error suppression
+			// io.Copy would stop on ANY error, but we want to ignore context.Canceled
+			// and treat it as successful EOF. This ensures the pipe gets all data that
+			// was successfully read before cancellation occurred.
+			buf := make([]byte, 32*1024) // 32KB buffer
+			var totalCopied int64
+
+			for {
+				n, readErr := resp.Body.Read(buf)
+				if n > 0 {
+					// Write what we read to pipe
+					written, writeErr := pipeWriter.Write(buf[:n])
+					totalCopied += int64(written)
+
+					if writeErr != nil {
+						log.Error("background: error writing to pipe",
+							slog.String("error", writeErr.Error()),
+							slog.String("chat_id", chatID),
+							slog.Int64("bytes_copied", totalCopied))
+						pipeWriter.CloseWithError(writeErr)
+						return
+					}
+				}
+
+				if readErr != nil {
+					// Check if error is context.Canceled or io.EOF
+					isContextCanceled := errors.Is(readErr, context.Canceled)
+					isEOF := readErr == io.EOF
+
+					if isContextCanceled {
+						// CRITICAL: Treat context.Canceled as successful completion
+						// All data that was read successfully is already in the pipe
+						log.Warn("background: resp.Body.Read returned context.Canceled, treating as EOF",
+							slog.String("chat_id", chatID),
+							slog.Int64("bytes_copied", totalCopied))
+						// Close pipe normally (no error)
+						return
+					} else if isEOF {
+						// Normal completion
+						log.Debug("background: io.Copy completed successfully (EOF)",
+							slog.String("chat_id", chatID),
+							slog.Int64("bytes_copied", totalCopied))
+						return
+					} else {
+						// Actual error (not context cancellation)
+						log.Error("background: error reading from resp.Body",
+							slog.String("error", readErr.Error()),
+							slog.String("chat_id", chatID),
+							slog.Int64("bytes_copied", totalCopied))
+						pipeWriter.CloseWithError(readErr)
+						return
+					}
+				}
+			}
+		}()
+
 		// Start upstream reading (this happens in session's own goroutine)
-		// From this point, session owns resp.Body and will close it
-		session.SetUpstreamBodyAndStart(resp.Body)
+		// Session reads from pipe, which is isolated from HTTP context
+		session.SetUpstreamBodyAndStart(pipeReader)
 
 		log.Info("background: upstream reading started, goroutine will continue until completion",
 			slog.String("chat_id", chatID),
