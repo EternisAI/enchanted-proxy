@@ -9,6 +9,7 @@ import (
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
+	"github.com/eternisai/enchanted-proxy/internal/tiers"
 	appstore "github.com/richzw/appstore"
 )
 
@@ -54,15 +55,23 @@ func (s *Service) AttachAppStoreSubscription(ctx context.Context, userID string,
 		}
 	}
 
+	// Determine tier based on product ID
+	tier := string(tiers.TierPro)
+	if strings.HasSuffix(p.ProductID, "plus.lifetime") {
+		tier = string(tiers.TierPlus)
+	}
+
 	var expiresAt sql.NullTime
 	if p.ExpiresDate > 0 {
 		expiresAt = sql.NullTime{Time: time.UnixMilli(p.ExpiresDate), Valid: true}
+	} else if tier == string(tiers.TierPlus) {
+		// Lifetime purchases don't expire - set far future date
+		expiresAt = sql.NullTime{Time: time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC), Valid: true}
 	} else {
-		return nil, time.Time{}, fmt.Errorf("missing expiresDate")
+		return nil, time.Time{}, fmt.Errorf("missing expiresDate for non-lifetime product")
 	}
 
 	provider := "apple"
-	tier := "pro" // Apple subscriptions are always pro when active
 	if err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
 		UserID:                userID,
 		SubscriptionTier:      tier,
