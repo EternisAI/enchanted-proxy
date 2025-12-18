@@ -85,6 +85,7 @@ func ProxyHandler(
 			model       string
 		)
 
+		var isStreamingRequest bool
 		if c.Request.Body != nil {
 			requestBody, err = io.ReadAll(c.Request.Body)
 			if err != nil {
@@ -96,7 +97,7 @@ func ProxyHandler(
 
 			model = ExtractModelFromRequestBody(c.Request.URL.Path, requestBody)
 
-			// Extract chatId and messageId from request body for session tracking
+			// Extract chatId, messageId, and streaming flag from request body
 			// Store in context so handlers can access them as fallback if headers are missing
 			var reqBody map[string]interface{}
 			if err := json.Unmarshal(requestBody, &reqBody); err == nil {
@@ -105,6 +106,10 @@ func ProxyHandler(
 				}
 				if messageID, ok := reqBody["messageId"].(string); ok && messageID != "" {
 					c.Set("bodyMessageId", messageID)
+				}
+				// Check if this is a streaming request
+				if stream, ok := reqBody["stream"].(bool); ok && stream {
+					isStreamingRequest = true
 				}
 			}
 		}
@@ -424,23 +429,269 @@ func ProxyHandler(
 		default:
 		}
 
-		// Use ReverseProxy for ALL requests (streaming and non-streaming)
-		// Streaming is detected in ModifyResponse callback by checking response Content-Type header
-		// Memory buffering in handleStreamingWithBroadcast() prevents context cancellation
+		// CRITICAL: Streaming requests CANNOT use ReverseProxy
+		//
+		// ReverseProxy's resp.Body is fundamentally tied to request context.
+		// When client disconnects, Go's HTTP library cancels resp.Body reads,
+		// even if we try to buffer with io.ReadAll(). This is a Go limitation.
+		//
+		// Solution: Detect streaming requests BEFORE making HTTP call (check "stream": true in body)
+		// and bypass ReverseProxy entirely, using independent HTTP client with context.Background().
+		if isStreamingRequest {
+			log.Info("detected streaming request, using independent HTTP client",
+				slog.String("model", model))
+			handleStreamingDirect(c, target, apiKey, requestBody, log, start, model, trackingService, messageService, streamManager, cfg, provider)
+			return
+		}
+
+		// Use ReverseProxy for non-streaming requests only
 		proxy.ServeHTTP(c.Writer, c.Request)
 	}
 }
 
-// NOTE: handleStreamingInBackground() was removed to eliminate duplicate streaming code paths.
+// handleStreamingDirect makes an independent HTTP request for streaming and bypasses ReverseProxy.
 //
-// Previously, there were TWO different streaming implementations:
-// 1. handleStreamingInBackground() - triggered by Accept: text/event-stream header (REMOVED)
-// 2. handleStreamingWithBroadcast() - triggered via ReverseProxy ModifyResponse (KEPT)
+// This is the ONLY correct way to handle streaming that continues after client disconnect.
+// ReverseProxy's resp.Body is inherently tied to request context and cannot be detached.
 //
-// This caused bugs where fixes applied to one path didn't apply to the other.
-// Now ALL streaming requests go through the unified ReverseProxy path.
+// Flow:
+//  1. Create pending session
+//  2. Make HTTP request in background with context.Background() and independent HTTP client
+//  3. Stream response directly to session (NO buffering with io.ReadAll)
+//  4. Client subscribes and receives chunks in real-time
+//  5. If client disconnects, upstream continues reading and saves complete message
 //
-// See handleStreamingWithBroadcast() in streaming_handler.go for the single, correct implementation.
+// Key differences from ReverseProxy approach:
+//  - Uses context.Background() instead of request context
+//  - Independent HTTP client not tied to Gin lifecycle
+//  - Direct streaming (chunks visible immediately, not buffered)
+//  - Upstream continues even after ALL clients disconnect
+func handleStreamingDirect(
+	c *gin.Context,
+	target *url.URL,
+	apiKey string,
+	requestBody []byte,
+	log *logger.Logger,
+	start time.Time,
+	model string,
+	trackingService *request_tracking.Service,
+	messageService *messaging.Service,
+	streamManager *streaming.StreamManager,
+	cfg *config.Config,
+	provider *routing.ProviderConfig,
+) {
+	// Extract session IDs
+	chatID := c.GetHeader("X-Chat-ID")
+	messageID := c.GetHeader("X-Message-ID")
+
+	// Fall back to body IDs if headers missing
+	if chatID == "" {
+		if bodyID, exists := c.Get("bodyChatId"); exists {
+			if idStr, ok := bodyID.(string); ok {
+				chatID = idStr
+			}
+		}
+	}
+	if messageID == "" {
+		if bodyID, exists := c.Get("bodyMessageId"); exists {
+			if idStr, ok := bodyID.(string); ok {
+				messageID = idStr
+			}
+		}
+	}
+
+	// Generate fallback IDs if still missing
+	if chatID == "" {
+		chatID = fmt.Sprintf("chat-%d", time.Now().UnixNano())
+		log.Warn("X-Chat-ID missing, generated fallback", slog.String("chat_id", chatID))
+	}
+	if messageID == "" {
+		messageID = fmt.Sprintf("msg-%d", time.Now().UnixNano())
+		log.Warn("X-Message-ID missing, generated fallback", slog.String("message_id", messageID))
+	}
+
+	// Extract user ID and encryption settings
+	userID, _ := auth.GetUserID(c)
+	var encryptionEnabled *bool
+	if val, exists := c.Get("encryptionEnabled"); exists {
+		if boolPtr, ok := val.(*bool); ok {
+			encryptionEnabled = boolPtr
+		}
+	}
+
+	// Create pending session BEFORE making HTTP request
+	streamManager.CreatePendingSession(chatID, messageID)
+	log.Debug("created pending session for direct streaming",
+		slog.String("chat_id", chatID),
+		slog.String("message_id", messageID))
+
+	// Copy request data BEFORE starting goroutine (cannot access c.Request after handler returns)
+	requestPath := c.Request.URL.Path
+	targetURL := target.String()
+
+	// Start background goroutine for upstream request
+	go func() {
+		// Use context.Background() for complete isolation from client connection
+		ctx := context.Background()
+
+		log.Info("direct streaming: starting independent HTTP request",
+			slog.String("chat_id", chatID),
+			slog.String("message_id", messageID))
+
+		// Build upstream URL
+		upstreamURL := targetURL + requestPath
+		req, err := http.NewRequestWithContext(ctx, "POST", upstreamURL, bytes.NewReader(requestBody))
+		if err != nil {
+			log.Error("direct streaming: failed to create request",
+				slog.String("error", err.Error()),
+				slog.String("chat_id", chatID))
+			if session := streamManager.GetSession(chatID, messageID); session != nil {
+				session.ForceComplete(fmt.Errorf("failed to create request: %w", err))
+			}
+			return
+		}
+
+		// Set headers
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("User-Agent", "Mozilla/5.0")
+		req.Header.Set("Accept-Encoding", "identity")
+		req.ContentLength = int64(len(requestBody))
+
+		// Create independent HTTP client (NOT shared transport)
+		// Disable HTTP/2 to prevent context canceled errors
+		client := &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConns:          100,
+				MaxIdleConnsPerHost:   10,
+				IdleConnTimeout:       90 * time.Second,
+				DisableKeepAlives:     false,
+				DisableCompression:    true,
+				ForceAttemptHTTP2:     false, // HTTP/1.1 only
+				DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+				TLSHandshakeTimeout:   30 * time.Second,
+				ResponseHeaderTimeout: 120 * time.Second,
+			},
+			Timeout: 0, // No timeout for streaming
+		}
+
+		// Make HTTP request
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Error("direct streaming: upstream request failed",
+				slog.String("error", err.Error()),
+				slog.String("chat_id", chatID))
+			if session := streamManager.GetSession(chatID, messageID); session != nil {
+				session.ForceComplete(fmt.Errorf("upstream request failed: %w", err))
+			}
+			return
+		}
+
+		upstreamLatency := time.Since(start)
+		log.Info("direct streaming: response received",
+			slog.String("chat_id", chatID),
+			slog.Int("status", resp.StatusCode),
+			slog.Duration("latency", upstreamLatency))
+
+		// Get session
+		session := streamManager.GetSession(chatID, messageID)
+		if session == nil {
+			log.Error("direct streaming: pending session not found",
+				slog.String("chat_id", chatID))
+			resp.Body.Close()
+			return
+		}
+
+		// Set request body for tool execution
+		if requestBody != nil {
+			session.SetOriginalRequest(requestBody)
+			session.SetUpstreamURL(targetURL)
+			session.SetUpstreamAPIKey(apiKey)
+		}
+
+		// CRITICAL: Stream directly, do NOT buffer with io.ReadAll
+		// Session reads from resp.Body in real-time and broadcasts chunks immediately
+		log.Info("direct streaming: attaching response body to session (NO buffering)",
+			slog.String("chat_id", chatID))
+		session.SetUpstreamBodyAndStart(resp.Body)
+
+		// Wait for session to complete
+		session.WaitForCompletion()
+
+		// Save to Firestore
+		if userID != "" && messageService != nil {
+			err := streamManager.SaveCompletedSession(ctx, session, userID, encryptionEnabled, model)
+			if err != nil {
+				log.Error("direct streaming: failed to save session",
+					slog.String("error", err.Error()),
+					slog.String("chat_id", chatID))
+			}
+		}
+
+		// Log tokens
+		sessionUsage := session.GetTokenUsage()
+		if sessionUsage != nil && trackingService != nil {
+			tokenData := &request_tracking.TokenUsageWithMultiplier{
+				PromptTokens:     sessionUsage.PromptTokens,
+				CompletionTokens: sessionUsage.CompletionTokens,
+				TotalTokens:      sessionUsage.TotalTokens,
+				Multiplier:       provider.TokenMultiplier,
+				PlanTokens:       int(float64(sessionUsage.TotalTokens) * provider.TokenMultiplier),
+			}
+			info := request_tracking.RequestInfo{
+				UserID:   userID,
+				Endpoint: requestPath,
+				Model:    model,
+				Provider: provider.Name,
+			}
+			trackingService.LogRequestWithPlanTokensAsync(ctx, info, tokenData) //nolint:errcheck
+		}
+
+		log.Info("direct streaming: completed",
+			slog.String("chat_id", chatID),
+			slog.String("message_id", messageID))
+	}()
+
+	// Meanwhile in foreground: Subscribe client and stream to them
+	session := streamManager.GetSession(chatID, messageID)
+	if session == nil {
+		log.Error("direct streaming: failed to get session for client",
+			slog.String("chat_id", chatID))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create streaming session"})
+		return
+	}
+
+	// Set SSE headers
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.WriteHeader(http.StatusOK)
+
+	// Subscribe to session
+	subscriber, err := session.Subscribe(c.Request.Context(), fmt.Sprintf("client-%d", time.Now().UnixNano()), streaming.SubscriberOptions{
+		ReplayFromStart: false,
+		BufferSize:      100,
+	})
+	if err != nil {
+		log.Error("direct streaming: failed to subscribe",
+			slog.String("error", err.Error()),
+			slog.String("chat_id", chatID))
+		return
+	}
+
+	streamManager.RecordSubscription()
+
+	log.Info("direct streaming: client subscribed, streaming chunks",
+		slog.String("chat_id", chatID))
+
+	// Stream to client (helper function)
+	streamToClient(c, subscriber, session, log)
+
+	log.Debug("direct streaming: client finished",
+		slog.String("chat_id", chatID))
+}
 
 // handleStreamingResponse extracts token usage from streaming responses.
 func handleStreamingResponse(resp *http.Response, log *logger.Logger, model string, upstreamLatency time.Duration, c *gin.Context, trackingService *request_tracking.Service, messageService *messaging.Service, provider *routing.ProviderConfig) error {
