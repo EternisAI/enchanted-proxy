@@ -9,6 +9,7 @@ import (
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
+	"github.com/eternisai/enchanted-proxy/internal/tiers"
 	appstore "github.com/richzw/appstore"
 )
 
@@ -55,15 +56,15 @@ func (s *Service) AttachAppStoreSubscription(ctx context.Context, userID string,
 	}
 
 	// Determine tier based on product ID
-	tier := "pro"
-	if strings.Contains(p.ProductID, "plus.lifetime") {
-		tier = "plus"
+	tier := string(tiers.TierPro)
+	if strings.HasSuffix(p.ProductID, "plus.lifetime") {
+		tier = string(tiers.TierPlus)
 	}
 
 	var expiresAt sql.NullTime
 	if p.ExpiresDate > 0 {
 		expiresAt = sql.NullTime{Time: time.UnixMilli(p.ExpiresDate), Valid: true}
-	} else if tier == "plus" {
+	} else if tier == string(tiers.TierPlus) {
 		// Lifetime purchases don't expire - set far future date
 		expiresAt = sql.NullTime{Time: time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC), Valid: true}
 	} else {
