@@ -1,10 +1,8 @@
 package proxy
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -107,56 +105,22 @@ func handleStreamingWithBroadcast(
 			isNew = false
 		} else {
 			// Pending session - attach upstream body and start reading
-			// CRITICAL FIX: Buffer entire response to prevent context cancellation
-			// resp.Body from ReverseProxy is tied to request context and gets cancelled
-			// when client disconnects. We must read it into memory first.
-			log.Info("buffering response before attaching to pending session",
+			// NOTE: This code path should NOT be used for streaming requests anymore.
+			// Streaming requests (stream: true) now use handleStreamingDirect() which
+			// bypasses ReverseProxy entirely. This path remains only for non-streaming
+			// responses that happen to have text/event-stream Content-Type.
+			log.Debug("attaching upstream body to pending session (non-streaming response)",
 				slog.String("chat_id", chatID),
 				slog.String("message_id", messageID))
-
-			bodyBytes, err := io.ReadAll(resp.Body)
-			resp.Body.Close()
-
-			if err != nil {
-				log.Error("failed to buffer response body",
-					slog.String("error", err.Error()),
-					slog.String("chat_id", chatID))
-				return fmt.Errorf("failed to read response body: %w", err)
-			}
-
-			log.Info("response buffered successfully",
-				slog.String("chat_id", chatID),
-				slog.Int("bytes", len(bodyBytes)))
-
-			// Create memory reader (immune to context cancellation)
-			memoryReader := io.NopCloser(bytes.NewReader(bodyBytes))
-			session.SetUpstreamBodyAndStart(memoryReader)
+			session.SetUpstreamBodyAndStart(resp.Body)
 			isNew = true // First time starting this session
 		}
 	} else {
 		// No session at all - create new one (shouldn't happen often with pending session creation)
-		// CRITICAL FIX: Buffer entire response before creating session
-		log.Info("buffering response before creating new session",
+		log.Debug("creating new session with upstream body (no pending session found)",
 			slog.String("chat_id", chatID),
 			slog.String("message_id", messageID))
-
-		bodyBytes, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if err != nil {
-			log.Error("failed to buffer response body",
-				slog.String("error", err.Error()),
-				slog.String("chat_id", chatID))
-			return fmt.Errorf("failed to read response body: %w", err)
-		}
-
-		log.Info("response buffered successfully",
-			slog.String("chat_id", chatID),
-			slog.Int("bytes", len(bodyBytes)))
-
-		// Create memory reader (immune to context cancellation)
-		memoryReader := io.NopCloser(bytes.NewReader(bodyBytes))
-		session, isNew = streamManager.GetOrCreateSession(chatID, messageID, memoryReader)
+		session, isNew = streamManager.GetOrCreateSession(chatID, messageID, resp.Body)
 	}
 
 	// Set original request body and provider config (needed for tool execution and continuation)
