@@ -10,6 +10,7 @@ type Tier string
 
 const (
 	TierFree Tier = "free"
+	TierPlus Tier = "plus"
 	TierPro  Tier = "pro"
 )
 
@@ -83,6 +84,21 @@ var Configs = map[Tier]Config{
 		DeepResearchMaxActiveSessions: 1,
 		// Free tier does NOT have document upload feature
 		AllowedFeatures: []Feature{}, // No special features
+	},
+	TierPlus: {
+		Name:              "plus",
+		DisplayName:       "Plus",
+		MonthlyPlanTokens: 0,
+		WeeklyPlanTokens:  0,
+		DailyPlanTokens:   40_000, // 40k tokens/day
+		AllowedModels: []string{
+			"zai-org/GLM-4.6", "glm-4.6", // Only GLM 4.6
+		},
+		DeepResearchDailyRuns:         -1, // Unlimited daily runs
+		DeepResearchLifetimeRuns:      0,  // Check daily only
+		DeepResearchTokenCap:          10_000,
+		DeepResearchMaxActiveSessions: 0, // Unlimited concurrent
+		AllowedFeatures:               []Feature{},
 	},
 	TierPro: {
 		Name:                          "pro",
