@@ -438,6 +438,40 @@ func ProxyHandler(
 		// Solution: Detect streaming requests BEFORE making HTTP call (check "stream": true in body)
 		// and bypass ReverseProxy entirely, using independent HTTP client with context.Background().
 		if isStreamingRequest {
+			// Inject tool definitions for streaming requests
+			// (non-streaming requests get tools injected in proxy.Director)
+			if toolRegistry != nil && len(requestBody) > 0 {
+				var reqBody map[string]interface{}
+				if err := json.Unmarshal(requestBody, &reqBody); err == nil {
+					// Extract model ID from request
+					modelID := ""
+					if modelField, ok := reqBody["model"].(string); ok {
+						modelID = modelField
+					}
+
+					// Inject tool definitions if not already present and model supports them
+					if _, hasTools := reqBody["tools"]; !hasTools {
+						if tools.SupportsTools(modelID) {
+							toolDefs := toolRegistry.GetDefinitions()
+							if len(toolDefs) > 0 {
+								reqBody["tools"] = toolDefs
+								log.Debug("injected tool definitions for streaming request",
+									slog.Int("tool_count", len(toolDefs)),
+									slog.String("model", modelID))
+
+								// Re-serialize with tools
+								if modifiedBody, err := json.Marshal(reqBody); err == nil {
+									requestBody = modifiedBody
+								}
+							}
+						} else {
+							log.Debug("skipped tool injection for streaming model without tool support",
+								slog.String("model", modelID))
+						}
+					}
+				}
+			}
+
 			log.Info("detected streaming request, using independent HTTP client",
 				slog.String("model", model))
 			handleStreamingDirect(c, target, apiKey, requestBody, log, start, model, trackingService, messageService, streamManager, cfg, provider)
