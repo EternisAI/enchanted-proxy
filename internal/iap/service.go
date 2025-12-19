@@ -56,8 +56,9 @@ func (s *Service) AttachAppStoreSubscription(ctx context.Context, userID string,
 	}
 
 	// Determine tier based on product ID
+	// Use HasPrefix to handle environment suffixes (e.g., silo.plus.lifetime.development)
 	tier := string(tiers.TierPro)
-	if strings.HasSuffix(p.ProductID, "plus.lifetime") {
+	if strings.HasPrefix(p.ProductID, "silo.plus.lifetime") {
 		tier = string(tiers.TierPlus)
 	}
 
