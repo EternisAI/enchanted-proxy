@@ -223,6 +223,11 @@ func main() {
 		log.Error("failed to register exa search tool", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
+	scheduledTasksTool := tools.NewScheduledTasksTool(taskService, logger.WithComponent("scheduled-tasks-tool"))
+	if err := toolRegistry.Register(scheduledTasksTool); err != nil {
+		log.Error("failed to register scheduled tasks tool", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 	log.Info("tool system initialized", slog.Int("registered_tools", len(toolRegistry.List())))
 
 	// Initialize stream manager for broadcast streaming

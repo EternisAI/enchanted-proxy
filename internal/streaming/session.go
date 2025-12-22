@@ -65,6 +65,8 @@ type StreamSession struct {
 	// Identifiers
 	chatID    string
 	messageID string
+	userID    string // User ID for authentication (used by tools)
+	userIDMu  sync.RWMutex
 
 	// Timing
 	startTime       time.Time
@@ -223,6 +225,28 @@ func (s *StreamSession) SetUpstreamAPIKey(apiKey string) {
 	s.requestMu.Lock()
 	defer s.requestMu.Unlock()
 	s.upstreamAPIKey = apiKey
+}
+
+// SetUserID stores the user ID for authentication during tool execution.
+// Must be called before Start() if tool execution with authentication is desired.
+func (s *StreamSession) SetUserID(userID string) {
+	s.userIDMu.Lock()
+	defer s.userIDMu.Unlock()
+	s.userID = userID
+}
+
+// getContextWithUserID returns a context derived from stopCtx with userID added.
+// This is used internally for tool execution to provide authentication context.
+func (s *StreamSession) getContextWithUserID() context.Context {
+	s.userIDMu.RLock()
+	userID := s.userID
+	s.userIDMu.RUnlock()
+
+	// If userID is set, add it to context for tool authentication
+	if userID != "" {
+		return logger.WithUserID(s.stopCtx, userID)
+	}
+	return s.stopCtx
 }
 
 // readUpstream reads from the upstream AI provider and broadcasts to subscribers.
@@ -386,7 +410,8 @@ func (s *StreamSession) readUpstream() {
 			}
 
 			// Execute tools with real-time notification callback
-			toolResults, err := s.toolExecutor.ExecuteToolCalls(s.stopCtx, s.chatID, s.messageID, toolCalls, onNotification)
+			// Use context with userID for authentication
+			toolResults, err := s.toolExecutor.ExecuteToolCalls(s.getContextWithUserID(), s.chatID, s.messageID, toolCalls, onNotification)
 			if err != nil {
 				s.logger.Error("tool execution failed",
 					slog.String("error", err.Error()),

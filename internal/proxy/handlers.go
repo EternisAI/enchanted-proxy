@@ -644,6 +644,11 @@ func handleStreamingDirect(
 			session.SetUpstreamAPIKey(apiKey)
 		}
 
+		// Set user ID for tool authentication
+		if userID != "" {
+			session.SetUserID(userID)
+		}
+
 		// CRITICAL: Stream directly, do NOT buffer with io.ReadAll
 		// Session reads from resp.Body in real-time and broadcasts chunks immediately
 		log.Info("direct streaming: attaching response body to session (NO buffering)",
