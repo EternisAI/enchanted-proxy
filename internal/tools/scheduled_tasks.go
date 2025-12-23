@@ -62,7 +62,7 @@ func (t *ScheduledTasksTool) Definition() ToolDefinition {
 					},
 					"chatId": map[string]interface{}{
 						"type":        "string",
-						"description": "Chat ID where the task was created and where results will be displayed (required for 'create' action)",
+						"description": "Chat ID where the task was created and where results will be displayed. This is automatically detected from the conversation context - you should NOT ask the user for this value. Only provide this parameter if calling the API directly outside of a chat context.",
 					},
 					"taskId": map[string]interface{}{
 						"type":        "string",
@@ -146,9 +146,15 @@ func (t *ScheduledTasksTool) executeList(ctx context.Context, userID string) (st
 
 // executeCreate creates a new scheduled task.
 func (t *ScheduledTasksTool) executeCreate(ctx context.Context, userID string, args *ScheduledTasksArgs) (string, error) {
-	// Validate required fields
-	if args.ChatID == "" {
-		return "", fmt.Errorf("chatId is required for create action")
+	// Get chatID from context if not provided in args
+	chatID := args.ChatID
+	if chatID == "" {
+		chatID = getChatIDFromContext(ctx)
+	}
+
+	// Validate chatID is available (either from args or context)
+	if chatID == "" {
+		return "", fmt.Errorf("chatId is required for create action (should be auto-detected from context)")
 	}
 	if args.TaskName == "" {
 		return "", fmt.Errorf("taskName is required for create action")
@@ -180,9 +186,9 @@ func (t *ScheduledTasksTool) executeCreate(ctx context.Context, userID string, a
 		"task_type", args.Type,
 		"cron", args.Time)
 
-	// Create task request
+	// Create task request (use chatID from context or args)
 	req := &task.CreateTaskRequest{
-		ChatID:   args.ChatID,
+		ChatID:   chatID,
 		TaskName: args.TaskName,
 		TaskText: args.TaskText,
 		Type:     args.Type,
@@ -235,4 +241,14 @@ func getUserIDFromContext(ctx context.Context) (string, bool) {
 		return "", false
 	}
 	return userID, true
+}
+
+// getChatIDFromContext extracts the chat ID from the context.
+// Returns empty string if not found (caller should handle).
+func getChatIDFromContext(ctx context.Context) string {
+	chatID, ok := ctx.Value(logger.ContextKeyChatID).(string)
+	if !ok || chatID == "" {
+		return ""
+	}
+	return chatID
 }

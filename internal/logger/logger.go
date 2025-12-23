@@ -23,6 +23,8 @@ const (
 	ContextKeyRequestID contextKey = "request_id"
 	// ContextKeyUserID is the key for user ID in the context.
 	ContextKeyUserID contextKey = "user_id"
+	// ContextKeyChatID is the key for chat ID in the context.
+	ContextKeyChatID contextKey = "chat_id"
 	// ContextKeyOperation is the key for operation name in the context.
 	ContextKeyOperation contextKey = "operation"
 )
@@ -105,6 +107,10 @@ func (l *Logger) WithContext(ctx context.Context) *Logger {
 
 	if userID, ok := ctx.Value(ContextKeyUserID).(string); ok && userID != "" {
 		logger = logger.With(slog.String("user_id", userID))
+	}
+
+	if chatID, ok := ctx.Value(ContextKeyChatID).(string); ok && chatID != "" {
+		logger = logger.With(slog.String("chat_id", chatID))
 	}
 
 	if operation, ok := ctx.Value(ContextKeyOperation).(string); ok && operation != "" {

@@ -1,8 +1,11 @@
 package tools
 
 import (
+	"context"
 	"log/slog"
 	"testing"
+
+	"github.com/eternisai/enchanted-proxy/internal/logger"
 )
 
 // NOTE: This file contains basic tests for the schedule_task tool.
@@ -109,6 +112,45 @@ func TestParseArguments_Invalid(t *testing.T) {
 	err := ParseArguments(args, &parsed)
 	if err == nil {
 		t.Error("expected error for invalid JSON, got nil")
+	}
+}
+
+// Test context extraction functions
+func TestGetChatIDFromContext(t *testing.T) {
+	// Test with chatID in context
+	ctx := logger.WithChatID(context.Background(), "test-chat-123")
+	chatID := getChatIDFromContext(ctx)
+	if chatID != "test-chat-123" {
+		t.Errorf("expected chatID 'test-chat-123', got '%s'", chatID)
+	}
+
+	// Test with empty context
+	emptyCtx := context.Background()
+	chatID = getChatIDFromContext(emptyCtx)
+	if chatID != "" {
+		t.Errorf("expected empty chatID, got '%s'", chatID)
+	}
+}
+
+func TestGetUserIDFromContext(t *testing.T) {
+	// Test with userID in context
+	ctx := logger.WithUserID(context.Background(), "test-user-456")
+	userID, ok := getUserIDFromContext(ctx)
+	if !ok {
+		t.Error("expected getUserIDFromContext to return true")
+	}
+	if userID != "test-user-456" {
+		t.Errorf("expected userID 'test-user-456', got '%s'", userID)
+	}
+
+	// Test with empty context
+	emptyCtx := context.Background()
+	userID, ok = getUserIDFromContext(emptyCtx)
+	if ok {
+		t.Error("expected getUserIDFromContext to return false for empty context")
+	}
+	if userID != "" {
+		t.Errorf("expected empty userID, got '%s'", userID)
 	}
 }
 

@@ -235,18 +235,26 @@ func (s *StreamSession) SetUserID(userID string) {
 	s.userID = userID
 }
 
-// getContextWithUserID returns a context derived from stopCtx with userID added.
-// This is used internally for tool execution to provide authentication context.
+// getContextWithUserID returns a context derived from stopCtx with userID and chatID added.
+// This is used internally for tool execution to provide authentication and session context.
 func (s *StreamSession) getContextWithUserID() context.Context {
 	s.userIDMu.RLock()
 	userID := s.userID
 	s.userIDMu.RUnlock()
 
-	// If userID is set, add it to context for tool authentication
+	ctx := s.stopCtx
+
+	// Add userID to context for tool authentication
 	if userID != "" {
-		return logger.WithUserID(s.stopCtx, userID)
+		ctx = logger.WithUserID(ctx, userID)
 	}
-	return s.stopCtx
+
+	// Add chatID to context for tool session awareness
+	if s.chatID != "" {
+		ctx = logger.WithChatID(ctx, s.chatID)
+	}
+
+	return ctx
 }
 
 // readUpstream reads from the upstream AI provider and broadcasts to subscribers.
