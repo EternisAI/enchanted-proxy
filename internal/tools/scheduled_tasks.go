@@ -196,19 +196,18 @@ func (t *ScheduledTasksTool) executeCreate(ctx context.Context, userID string, a
 	}
 
 	// Call task service
-	createdTask, err := t.taskService.CreateTask(ctx, userID, req)
+	_, err := t.taskService.CreateTask(ctx, userID, req)
 	if err != nil {
 		return "", fmt.Errorf("failed to create task: %w", err)
 	}
 
-	// Format success response
-	taskType := "recurring"
+	// Format success response (conversational, no task ID)
 	if args.Type == "one_time" {
-		taskType = "one-time"
+		return "Got it! I've scheduled that for you. You'll get a notification at the scheduled time.", nil
 	}
 
-	return fmt.Sprintf("Successfully created %s task: %s\nTask ID: %s\nSchedule: %s (UTC)\n\nThe task will execute according to the schedule and results will appear in your chat.",
-		taskType, createdTask.TaskName, createdTask.TaskID, createdTask.Time), nil
+	// Recurring task
+	return "Perfect! I've set up that recurring reminder for you. You'll receive notifications according to the schedule.", nil
 }
 
 // executeDelete deletes a task by ID.
@@ -231,7 +230,7 @@ func (t *ScheduledTasksTool) executeDelete(ctx context.Context, userID string, t
 		return "", fmt.Errorf("failed to delete task: %w", err)
 	}
 
-	return fmt.Sprintf("Successfully deleted task (ID: %s)", taskID), nil
+	return "Done! I've cancelled that reminder for you.", nil
 }
 
 // getUserIDFromContext extracts the user ID from the context.
