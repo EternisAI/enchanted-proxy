@@ -27,15 +27,17 @@ const (
 )
 
 type Service struct {
-	queries pgdb.Querier
-	logger  *logger.Logger
-	client  *http.Client
+	queries      pgdb.Querier
+	logger       *logger.Logger
+	client       *http.Client
+	isProduction bool
 }
 
-func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
+func NewService(queries pgdb.Querier, logger *logger.Logger, isProduction bool) *Service {
 	return &Service{
-		queries: queries,
-		logger:  logger,
+		queries:      queries,
+		logger:       logger,
+		isProduction: isProduction,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -163,7 +165,13 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 		return nil, 0, fmt.Errorf("failed to get ZEC price: %w", err)
 	}
 
-	zecAmount := float64(product.PriceUSD) / zecPriceUSD
+	priceUSD := float64(product.PriceUSD)
+	if !s.isProduction {
+		priceUSD = priceUSD / 100.0
+		s.logger.Info("zcash debug mode: reduced price", "original_usd", product.PriceUSD, "debug_usd", priceUSD)
+	}
+
+	zecAmount := priceUSD / zecPriceUSD
 	zatAmount := int64(zecAmount * 100_000_000)
 
 	invoiceID := fmt.Sprintf("%s_%s_%d", userID, productID, time.Now().Unix())

@@ -140,7 +140,8 @@ func main() {
 	requestTrackingService := request_tracking.NewService(db.Queries, logger.WithComponent("request_tracking"))
 	iapService := iap.NewService(db.Queries)
 	stripeService := stripe.NewService(db.Queries, logger.WithComponent("stripe"))
-	zcashService := zcash.NewService(db.Queries, logger.WithComponent("zcash"))
+	isProduction := config.AppConfig.GinMode == "release"
+	zcashService := zcash.NewService(db.Queries, logger.WithComponent("zcash"), isProduction)
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
 
