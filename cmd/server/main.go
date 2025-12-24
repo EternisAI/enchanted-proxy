@@ -39,6 +39,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/stripe"
 	"github.com/eternisai/enchanted-proxy/internal/task"
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
+	"github.com/eternisai/enchanted-proxy/internal/zcash"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
 	"github.com/eternisai/enchanted-proxy/internal/tools"
 	"github.com/gin-gonic/gin"
@@ -139,6 +140,7 @@ func main() {
 	requestTrackingService := request_tracking.NewService(db.Queries, logger.WithComponent("request_tracking"))
 	iapService := iap.NewService(db.Queries)
 	stripeService := stripe.NewService(db.Queries, logger.WithComponent("stripe"))
+	zcashService := zcash.NewService(db.Queries, logger.WithComponent("zcash"))
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
 
@@ -315,6 +317,7 @@ func main() {
 	inviteCodeHandler := invitecode.NewHandler(inviteCodeService)
 	iapHandler := iap.NewHandler(iapService, logger.WithComponent("iap"))
 	stripeHandler := stripe.NewHandler(stripeService, logger.WithComponent("stripe"))
+	zcashHandler := zcash.NewHandler(zcashService, logger.WithComponent("zcash"))
 	mcpHandler := mcp.NewHandler(mcpService)
 	searchHandler := search.NewHandler(searchService, logger.WithComponent("search"))
 	taskHandler := task.NewHandler(taskService, logger.WithComponent("task"))
@@ -379,6 +382,7 @@ func main() {
 		inviteCodeHandler:      inviteCodeHandler,
 		iapHandler:             iapHandler,
 		stripeHandler:          stripeHandler,
+		zcashHandler:           zcashHandler,
 		mcpHandler:             mcpHandler,
 		searchHandler:          searchHandler,
 		taskHandler:            taskHandler,
@@ -500,6 +504,7 @@ type restServerInput struct {
 	inviteCodeHandler      *invitecode.Handler
 	iapHandler             *iap.Handler
 	stripeHandler          *stripe.Handler
+	zcashHandler           *zcash.Handler
 	mcpHandler             *mcp.Handler
 	searchHandler          *search.Handler
 	taskHandler            *task.Handler
@@ -586,6 +591,15 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		{
 			stripe.POST("/create-checkout-session", input.stripeHandler.CreateCheckoutSession)
 			stripe.POST("/create-portal-session", input.stripeHandler.CreatePortalSession)
+		}
+
+		// ZCash (protected)
+		zcashGroup := api.Group("/zcash")
+		{
+			zcashGroup.GET("/products", input.zcashHandler.GetProducts)
+			zcashGroup.POST("/invoice", input.zcashHandler.CreateInvoice)
+			zcashGroup.GET("/invoice/:invoiceId", input.zcashHandler.GetInvoiceStatus)
+			zcashGroup.POST("/confirm", input.zcashHandler.ConfirmPayment)
 		}
 
 		// Search API routes (protected)
