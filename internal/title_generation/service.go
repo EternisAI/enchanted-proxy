@@ -17,7 +17,6 @@ type Service struct {
 	logger          *logger.Logger
 	messageService  *messaging.Service // For encryption
 	firestoreClient *messaging.FirestoreClient
-	modelRouter     ModelRouter        // For looking up model configs
 	titleChan       chan TitleGenerationRequest
 	workerPool      sync.WaitGroup
 	shutdown        chan struct{}
@@ -25,12 +24,11 @@ type Service struct {
 }
 
 // NewService creates a new title generation service
-func NewService(logger *logger.Logger, messageService *messaging.Service, firestoreClient *messaging.FirestoreClient, modelRouter ModelRouter) *Service {
+func NewService(logger *logger.Logger, messageService *messaging.Service, firestoreClient *messaging.FirestoreClient) *Service {
 	s := &Service{
 		logger:          logger,
 		messageService:  messageService,
 		firestoreClient: firestoreClient,
-		modelRouter:     modelRouter,
 		titleChan:       make(chan TitleGenerationRequest, 100), // Buffer for title gen jobs
 		shutdown:        make(chan struct{}),
 	}
@@ -215,7 +213,7 @@ func (s *Service) handleTitleGeneration(req TitleGenerationRequest) {
 }
 
 // QueueTitleGeneration queues a title generation request
-func (s *Service) QueueTitleGeneration(ctx context.Context, req TitleGenerationRequest) {
+func (s *Service) QueueTitleGeneration(ctx context.Context, req TitleGenerationRequest, apiKey string) {
 	if s.closed.Load() {
 		s.logger.Warn("service is shutting down, cannot queue title generation")
 		return
@@ -224,8 +222,7 @@ func (s *Service) QueueTitleGeneration(ctx context.Context, req TitleGenerationR
 	log := s.logger.WithContext(ctx)
 
 	// Generate title via AI first (blocking, but fast)
-	// Uses GLM-4.6 for attempts 1-2, Llama 3.3 70B for final attempt
-	title, err := GenerateTitle(ctx, req, s.modelRouter)
+	title, err := GenerateTitle(ctx, req, apiKey)
 	if err != nil {
 		log.Error("failed to generate title", slog.String("error", err.Error()))
 		return

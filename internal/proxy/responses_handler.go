@@ -155,16 +155,15 @@ func handleResponsesAPI(
 			}
 
 			// Queue async title generation (non-blocking)
-			// Uses GLM-4.6 for first 2 attempts, Llama 3.3 70B for final fallback
 			go titleService.QueueTitleGeneration(context.Background(), title_generation.TitleGenerationRequest{
 				UserID:            userID,
 				ChatID:            chatID,
 				FirstMessage:      firstMessage,
-				Model:             model, // Ignored - hardcoded models used instead
-				BaseURL:           provider.BaseURL, // Ignored - looked up from routing
+				Model:             model,
+				BaseURL:           provider.BaseURL,
 				Platform:          platform,
 				EncryptionEnabled: encryptionEnabled,
-			})
+			}, provider.APIKey)
 		}
 	}
 

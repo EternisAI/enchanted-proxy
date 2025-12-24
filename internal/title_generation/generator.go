@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/eternisai/enchanted-proxy/internal/routing"
 )
 
 const titleSystemPrompt = `You are a title generator. Generate a short, concise title for this conversation based on
@@ -49,40 +47,13 @@ func isRetryableError(err error) bool {
 		strings.Contains(errStr, "500")
 }
 
-// ModelRouter interface for looking up model provider configs
-type ModelRouter interface {
-	RouteModel(modelID string, platform string) (*routing.ProviderConfig, error)
-}
-
 // GenerateTitle calls AI to generate a title from the first message with retry logic
-// Attempts 1-2: GLM-4.6 (cheap, fast)
-// Attempt 3: Llama 3.3 70B from Tinfoil (fallback)
-func GenerateTitle(ctx context.Context, req TitleGenerationRequest, router ModelRouter) (string, error) {
+func GenerateTitle(ctx context.Context, req TitleGenerationRequest, apiKey string) (string, error) {
 	maxRetries := 3
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		// Select model based on attempt number
-		var modelToUse string
-		if attempt < 3 {
-			modelToUse = "glm-4.6" // Attempts 1-2
-		} else {
-			modelToUse = "llama3-3-70b" // Attempt 3 (final fallback)
-		}
-
-		// Look up provider config for selected model
-		providerConfig, err := router.RouteModel(modelToUse, req.Platform)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to route model %s: %w", modelToUse, err)
-			// Route lookup failed - try next attempt with different model
-			if attempt < maxRetries {
-				time.Sleep(time.Duration(attempt) * time.Second)
-				continue
-			}
-			break
-		}
-
-		title, err := generateTitleAttempt(ctx, req, providerConfig.BaseURL, providerConfig.APIKey, modelToUse)
+		title, err := generateTitleAttempt(ctx, req, apiKey)
 		if err == nil {
 			return title, nil
 		}
@@ -109,10 +80,10 @@ func GenerateTitle(ctx context.Context, req TitleGenerationRequest, router Model
 }
 
 // generateTitleAttempt is a single attempt to generate a title
-func generateTitleAttempt(ctx context.Context, req TitleGenerationRequest, baseURL string, apiKey string, model string) (string, error) {
+func generateTitleAttempt(ctx context.Context, req TitleGenerationRequest, apiKey string) (string, error) {
 	// Build OpenAI-compatible request
 	payload := map[string]interface{}{
-		"model": model, // Use model from routing (glm-4.6 or llama3-3-70b)
+		"model": req.Model,
 		"messages": []map[string]string{
 			{"role": "system", "content": titleSystemPrompt},
 			{"role": "user", "content": req.FirstMessage},
@@ -128,7 +99,7 @@ func generateTitleAttempt(ctx context.Context, req TitleGenerationRequest, baseU
 	}
 
 	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", req.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}

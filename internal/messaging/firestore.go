@@ -287,6 +287,7 @@ func (f *FirestoreClient) SaveChatTitle(ctx context.Context, userID, chatID stri
 	// Retry logic to handle race condition where chat document is being created by client
 	// Try up to 5 times with exponential backoff (max ~7 seconds total wait)
 	maxRetries := 5
+	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		_, err := docRef.Update(ctx, updates)
@@ -295,6 +296,8 @@ func (f *FirestoreClient) SaveChatTitle(ctx context.Context, userID, chatID stri
 			// Success!
 			return nil
 		}
+
+		lastErr = err
 
 		// Only retry on NotFound errors (race condition)
 		if status.Code(err) == codes.NotFound {
