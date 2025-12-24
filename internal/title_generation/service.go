@@ -17,6 +17,7 @@ type Service struct {
 	logger          *logger.Logger
 	messageService  *messaging.Service // For encryption
 	firestoreClient *messaging.FirestoreClient
+	modelRouter     ModelRouter        // For looking up model configs
 	titleChan       chan TitleGenerationRequest
 	workerPool      sync.WaitGroup
 	shutdown        chan struct{}
@@ -24,11 +25,12 @@ type Service struct {
 }
 
 // NewService creates a new title generation service
-func NewService(logger *logger.Logger, messageService *messaging.Service, firestoreClient *messaging.FirestoreClient) *Service {
+func NewService(logger *logger.Logger, messageService *messaging.Service, firestoreClient *messaging.FirestoreClient, modelRouter ModelRouter) *Service {
 	s := &Service{
 		logger:          logger,
 		messageService:  messageService,
 		firestoreClient: firestoreClient,
+		modelRouter:     modelRouter,
 		titleChan:       make(chan TitleGenerationRequest, 100), // Buffer for title gen jobs
 		shutdown:        make(chan struct{}),
 	}
@@ -213,7 +215,7 @@ func (s *Service) handleTitleGeneration(req TitleGenerationRequest) {
 }
 
 // QueueTitleGeneration queues a title generation request
-func (s *Service) QueueTitleGeneration(ctx context.Context, req TitleGenerationRequest, apiKey string) {
+func (s *Service) QueueTitleGeneration(ctx context.Context, req TitleGenerationRequest) {
 	if s.closed.Load() {
 		s.logger.Warn("service is shutting down, cannot queue title generation")
 		return
@@ -222,7 +224,8 @@ func (s *Service) QueueTitleGeneration(ctx context.Context, req TitleGenerationR
 	log := s.logger.WithContext(ctx)
 
 	// Generate title via AI first (blocking, but fast)
-	title, err := GenerateTitle(ctx, req, apiKey)
+	// Uses GLM-4.6 for attempts 1-2, Llama 3.3 70B for final attempt
+	title, err := GenerateTitle(ctx, req, s.modelRouter)
 	if err != nil {
 		log.Error("failed to generate title", slog.String("error", err.Error()))
 		return
@@ -233,14 +236,45 @@ func (s *Service) QueueTitleGeneration(ctx context.Context, req TitleGenerationR
 	// Update request with generated title
 	req.FirstMessage = title
 
+	// Check again if service is shutting down (after AI call which could take time)
+	// Prevents panic from sending to closed channel
+	if s.closed.Load() {
+		log.Warn("service is shutting down after title generation, cannot queue",
+			slog.String("chat_id", req.ChatID))
+		return
+	}
+
 	// Queue for encryption and storage
+	// Wait up to 5 seconds for queue space (no silent drops)
 	select {
 	case s.titleChan <- req:
 		log.Debug("title generation queued", slog.String("chat_id", req.ChatID))
 	case <-ctx.Done():
 		log.Warn("context cancelled, cannot queue title generation")
-	default:
-		log.Warn("title generation queue full, dropping request", slog.String("chat_id", req.ChatID))
+	case <-time.After(5 * time.Second):
+		// Queue blocked for 5 seconds - this indicates a serious problem
+		// Check once more if shutting down before blocking
+		if s.closed.Load() {
+			log.Warn("service is shutting down, cannot queue after timeout",
+				slog.String("chat_id", req.ChatID))
+			return
+		}
+
+		// Log as error and try one more time with limited timeout
+		log.Error("title generation queue blocked for 5s, attempting blocking queue",
+			slog.String("chat_id", req.ChatID),
+			slog.Int("queue_size", len(s.titleChan)))
+
+		// Final attempt: blocking send with 30s max timeout (prevents goroutine leak)
+		select {
+		case s.titleChan <- req:
+			log.Info("title generation queued after blocking", slog.String("chat_id", req.ChatID))
+		case <-ctx.Done():
+			log.Error("context cancelled during blocking queue attempt", slog.String("chat_id", req.ChatID))
+		case <-time.After(30 * time.Second):
+			log.Error("title generation queue blocked for 35s total, giving up",
+				slog.String("chat_id", req.ChatID))
+		}
 	}
 }
 

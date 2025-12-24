@@ -182,6 +182,9 @@ func main() {
 		}
 	}
 
+	// Initialize model router for automatic provider routing (needed by title service)
+	modelRouter := routing.NewModelRouter(config.AppConfig, logger.WithComponent("routing"))
+
 	// Initialize title generation service
 	var titleService *title_generation.Service
 	if config.AppConfig.MessageStorageEnabled && messageService != nil && firebaseClient != nil {
@@ -189,6 +192,7 @@ func main() {
 			logger.WithComponent("title_generation"),
 			messageService,
 			messaging.NewFirestoreClient(firebaseClient.GetFirestoreClient()),
+			modelRouter,
 		)
 		log.Info("title generation service initialized")
 
@@ -277,9 +281,6 @@ func main() {
 	} else {
 		log.Info("background polling disabled (requires message storage and BACKGROUND_POLLING_ENABLED=true)")
 	}
-
-	// Initialize model router for automatic provider routing
-	modelRouter := routing.NewModelRouter(config.AppConfig, logger.WithComponent("routing"))
 
 	// Initialize key sharing service
 	var keyshareHandler *keyshare.Handler

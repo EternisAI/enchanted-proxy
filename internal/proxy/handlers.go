@@ -248,15 +248,16 @@ func ProxyHandler(
 
 					// Queue async title generation (non-blocking)
 					// Use background context since this runs async and shouldn't be tied to request lifecycle
+					// Uses GLM-4.6 for first 2 attempts, Llama 3.3 70B for final fallback
 					go titleService.QueueTitleGeneration(context.Background(), title_generation.TitleGenerationRequest{
 						UserID:            userID,
 						ChatID:            chatID,
 						FirstMessage:      firstMessage,
-						Model:             model,
-						BaseURL:           baseURL,
+						Model:             model, // Ignored - hardcoded models used instead
+						BaseURL:           baseURL, // Ignored - looked up from routing
 						Platform:          platform,
 						EncryptionEnabled: encryptionEnabled,
-					}, apiKey)
+					})
 
 					log.Debug("queued title generation",
 						slog.String("chat_id", chatID),
