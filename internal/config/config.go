@@ -60,6 +60,7 @@ type Config struct {
 	// Stripe Configuration
 	StripeSecretKey     string
 	StripeWebhookSecret string
+	StripeWeeklyPriceID string // Weekly subscription price ID (eligible for 3-day free trial)
 
 	// Telegram
 	EnableTelegramServer bool
@@ -200,6 +201,7 @@ func LoadConfig() {
 		// Stripe (trim whitespace to avoid common config errors)
 		StripeSecretKey:     strings.TrimSpace(getEnvOrDefault("STRIPE_SECRET_KEY", "")),
 		StripeWebhookSecret: strings.TrimSpace(getEnvOrDefault("STRIPE_WEBHOOK_SECRET", "")),
+		StripeWeeklyPriceID: strings.TrimSpace(getEnvOrDefault("STRIPE_WEEKLY_PRICE_ID", "")),
 
 		// Telegram
 		EnableTelegramServer: getEnvOrDefault("ENABLE_TELEGRAM_SERVER", "true") == "true",
