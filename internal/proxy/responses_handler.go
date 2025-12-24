@@ -167,7 +167,7 @@ func handleResponsesAPI(
 					UserID:            userID,
 					ChatID:            chatID,
 					FirstMessage:      firstMessage,
-					Model:             "zai-org/glm-4.6", // Use GLM 4.6 for cost savings
+					Model:             "glm-4.6", // Use GLM 4.6 for cost savings (alias that vLLM server recognizes)
 					BaseURL:           titleConfig.BaseURL,
 					Platform:          platform,
 					EncryptionEnabled: encryptionEnabled,

@@ -145,14 +145,14 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 
 					log.Info("queuing title generation for deep research chat",
 						slog.String("chat_id", req.ChatID),
-						slog.String("model", "zai-org/glm-4.6"))
+						slog.String("model", "glm-4.6"))
 
 					// Queue async title generation (non-blocking)
 					go titleService.QueueTitleGeneration(context.Background(), title_generation.TitleGenerationRequest{
 						UserID:       userID,
 						ChatID:       req.ChatID,
 						FirstMessage: req.Query,
-						Model:        "zai-org/glm-4.6", // Use GLM 4.6 for cost savings
+						Model:        "glm-4.6", // Use GLM 4.6 for cost savings (alias that vLLM server recognizes)
 						BaseURL:      titleConfig.BaseURL,
 						Platform:     platform,
 						// Deep research may not support encryption yet - leave nil for now
