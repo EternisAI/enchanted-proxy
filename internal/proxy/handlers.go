@@ -206,7 +206,7 @@ func ProxyHandler(
 			}
 
 			// Handle Responses API request (uses background polling mode)
-			if err := handleResponsesAPI(c, requestBody, provider, model, log, trackingService, messageService, titleService, pollingManager, cfg); err != nil {
+			if err := handleResponsesAPI(c, requestBody, provider, model, log, trackingService, messageService, titleService, pollingManager, modelRouter, cfg); err != nil {
 				log.Error("Responses API handler failed",
 					slog.String("error", err.Error()),
 					slog.String("model", model))

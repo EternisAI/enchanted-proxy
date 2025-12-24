@@ -382,3 +382,25 @@ func (mr *ModelRouter) GetProviders() []string {
 	}
 	return providers
 }
+
+// GetTitleGenerationConfig returns the provider configuration for title generation.
+// Uses GLM 4.6 as the default model for cost-effective title generation.
+//
+// Returns:
+//   - *ProviderConfig: GLM 4.6 provider config (model, baseURL, API key)
+//   - error: If GLM 4.6 is not configured
+//
+// Used by:
+//   - GPT-5 Pro responses (instead of expensive GPT-5 Pro for titles)
+//   - Deep Research sessions (for initial chat title)
+func (mr *ModelRouter) GetTitleGenerationConfig() (*ProviderConfig, error) {
+	// Use GLM 4.6 for title generation (cost-effective, fast)
+	config, exists := mr.routes["zai-org/glm-4.6"]
+	if !exists {
+		return nil, fmt.Errorf("GLM 4.6 not configured for title generation (ETERNIS_INFERENCE_API_KEY missing)")
+	}
+
+	// Return a copy with the model ID set
+	result := config
+	return &result, nil
+}
