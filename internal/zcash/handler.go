@@ -22,12 +22,12 @@ type CreateInvoiceRequestBody struct {
 }
 
 type CreateInvoiceResponseBody struct {
-	InvoiceID   string  `json:"invoice_id"`
-	Address     string  `json:"address"`
-	ProductID   string  `json:"product_id"`
-	PriceUSD    int     `json:"price_usd"`
-	ZecAmount   float64 `json:"zec_amount"`
-	ZatAmount   int64   `json:"zat_amount"`
+	InvoiceID string  `json:"invoice_id"`
+	Address   string  `json:"address"`
+	ProductID string  `json:"product_id"`
+	PriceUSD  float64 `json:"price_usd"`
+	ZecAmount float64 `json:"zec_amount"`
+	ZatAmount int64   `json:"zat_amount"`
 }
 
 func (h *Handler) CreateInvoice(c *gin.Context) {
@@ -43,7 +43,7 @@ func (h *Handler) CreateInvoice(c *gin.Context) {
 		return
 	}
 
-	product := GetProduct(body.ProductID)
+	product := h.service.GetProduct(body.ProductID)
 	if product == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown product"})
 		return
@@ -56,7 +56,7 @@ func (h *Handler) CreateInvoice(c *gin.Context) {
 		return
 	}
 
-	zecAmount := float64(product.PriceUSD) / zecPriceUSD
+	zecAmount := product.PriceUSD / zecPriceUSD
 	zatAmount := int64(zecAmount * 100_000_000)
 
 	c.JSON(http.StatusOK, CreateInvoiceResponseBody{
@@ -120,5 +120,5 @@ func (h *Handler) ConfirmPayment(c *gin.Context) {
 }
 
 func (h *Handler) GetProducts(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"products": GetProducts()})
+	c.JSON(http.StatusOK, gin.H{"products": h.service.GetProducts()})
 }

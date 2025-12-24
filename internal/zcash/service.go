@@ -65,21 +65,25 @@ type InvoiceStatusResponse struct {
 }
 
 type Product struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	PriceUSD    int    `json:"price_usd"`
-	Tier        string `json:"tier"`
-	IsLifetime  bool   `json:"is_lifetime"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	PriceUSD    float64 `json:"price_usd"`
+	Tier        string  `json:"tier"`
+	IsLifetime  bool    `json:"is_lifetime"`
 }
 
-func GetProducts() []Product {
+func (s *Service) GetProducts() []Product {
+	multiplier := 1.0
+	if !s.isProduction {
+		multiplier = 0.01
+	}
 	return []Product{
 		{
 			ID:          ProductMonthlyPro,
 			Name:        "Pro Monthly",
 			Description: "Pro subscription for 1 month",
-			PriceUSD:    PriceMonthlyProUSD,
+			PriceUSD:    float64(PriceMonthlyProUSD) * multiplier,
 			Tier:        string(tiers.TierPro),
 			IsLifetime:  false,
 		},
@@ -87,15 +91,15 @@ func GetProducts() []Product {
 			ID:          ProductLifetimePlus,
 			Name:        "Lifetime Plus",
 			Description: "Plus subscription forever",
-			PriceUSD:    PriceLifetimePlusUSD,
+			PriceUSD:    float64(PriceLifetimePlusUSD) * multiplier,
 			Tier:        string(tiers.TierPlus),
 			IsLifetime:  true,
 		},
 	}
 }
 
-func GetProduct(productID string) *Product {
-	for _, p := range GetProducts() {
+func (s *Service) GetProduct(productID string) *Product {
+	for _, p := range s.GetProducts() {
 		if p.ID == productID {
 			return &p
 		}
@@ -137,9 +141,10 @@ func (s *Service) GetZecPriceUSD(ctx context.Context) (float64, error) {
 		return 0, fmt.Errorf("kraken API error: %s", result.Error[0])
 	}
 
-	tickerData, ok := result.Result["ZECUSD"]
+	// Kraken uses X-prefixed asset names (XZEC for Zcash)
+	tickerData, ok := result.Result["XZECZUSD"]
 	if !ok {
-		return 0, fmt.Errorf("ZECUSD pair not found in kraken response")
+		return 0, fmt.Errorf("XZECZUSD pair not found in kraken response")
 	}
 
 	if len(tickerData.LastTrade) == 0 {
@@ -155,7 +160,7 @@ func (s *Service) GetZecPriceUSD(ctx context.Context) (float64, error) {
 }
 
 func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (*CreateInvoiceResponse, float64, error) {
-	product := GetProduct(productID)
+	product := s.GetProduct(productID)
 	if product == nil {
 		return nil, 0, fmt.Errorf("unknown product: %s", productID)
 	}
@@ -166,10 +171,6 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 	}
 
 	priceUSD := float64(product.PriceUSD)
-	if !s.isProduction {
-		priceUSD = priceUSD / 100.0
-		s.logger.Info("zcash debug mode: reduced price", "original_usd", product.PriceUSD, "debug_usd", priceUSD)
-	}
 
 	zecAmount := priceUSD / zecPriceUSD
 	zatAmount := int64(zecAmount * 100_000_000)
@@ -257,7 +258,7 @@ func (s *Service) ConfirmPayment(ctx context.Context, userID, invoiceID string) 
 		return fmt.Errorf("invoice does not belong to user")
 	}
 
-	product := GetProduct(parts.productID)
+	product := s.GetProduct(parts.productID)
 	if product == nil {
 		return fmt.Errorf("unknown product: %s", parts.productID)
 	}
