@@ -99,7 +99,8 @@ func generateTitleAttempt(ctx context.Context, req TitleGenerationRequest, apiKe
 	}
 
 	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", req.BaseURL+"/chat/completions", bytes.NewReader(body))
+	url := req.BaseURL + "/chat/completions"
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -111,13 +112,18 @@ func generateTitleAttempt(ctx context.Context, req TitleGenerationRequest, apiKe
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("failed to call AI: %w", err)
+		return "", fmt.Errorf("failed to call AI at %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
+	// Read response body for debugging
+	bodyBytes, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return "", fmt.Errorf("failed to read response body: %w", readErr)
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("AI returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", fmt.Errorf("AI returned status %d: %s (url: %s, model: %s)", resp.StatusCode, string(bodyBytes), url, req.Model)
 	}
 
 	// Parse response
@@ -129,12 +135,12 @@ func generateTitleAttempt(ctx context.Context, req TitleGenerationRequest, apiKe
 		} `json:"choices"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w (response: %s)", err, string(bodyBytes))
 	}
 
 	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("no choices in response")
+		return "", fmt.Errorf("no choices in response (response: %s)", string(bodyBytes))
 	}
 
 	title := strings.TrimSpace(result.Choices[0].Message.Content)

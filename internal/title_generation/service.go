@@ -222,13 +222,26 @@ func (s *Service) QueueTitleGeneration(ctx context.Context, req TitleGenerationR
 	log := s.logger.WithContext(ctx)
 
 	// Generate title via AI first (blocking, but fast)
+	log.Info("starting title generation",
+		slog.String("chat_id", req.ChatID),
+		slog.String("model", req.Model),
+		slog.String("base_url", req.BaseURL),
+		slog.Int("message_length", len(req.FirstMessage)))
+
 	title, err := GenerateTitle(ctx, req, apiKey)
 	if err != nil {
-		log.Error("failed to generate title", slog.String("error", err.Error()))
+		log.Error("failed to generate title",
+			slog.String("error", err.Error()),
+			slog.String("chat_id", req.ChatID),
+			slog.String("model", req.Model),
+			slog.String("base_url", req.BaseURL))
 		return
 	}
 
-	log.Debug("title generated", slog.String("title", title))
+	log.Info("title generated successfully",
+		slog.String("title", title),
+		slog.String("chat_id", req.ChatID),
+		slog.String("model", req.Model))
 
 	// Update request with generated title
 	req.FirstMessage = title
