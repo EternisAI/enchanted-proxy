@@ -107,6 +107,7 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 	}
 
 	// GLM-4.6 - Free & Pro - via local/our IPs (3× multiplier)
+	// IMPORTANT: vLLM server expects "zai-org/GLM-4.6" (uppercase GLM)
 	if cfg.EternisInferenceAPIKey != "" {
 		routes["zai-org/glm-4.6"] = ProviderConfig{
 			BaseURL:         "http://127.0.0.1:20001/v1",
@@ -115,7 +116,8 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 			APIType:         APITypeChatCompletions,
 			TokenMultiplier: 3.0,
 		}
-		routes["glm-4.6"] = routes["zai-org/glm-4.6"] // Alias
+		routes["zai-org/GLM-4.6"] = routes["zai-org/glm-4.6"] // Uppercase variant (actual vLLM model name)
+		routes["glm-4.6"] = routes["zai-org/glm-4.6"]         // Lowercase alias
 	}
 
 	// Dolphin Mistral (Venice) - Free & Pro - via GCP self-hosted (0.5× multiplier)
@@ -395,7 +397,8 @@ func (mr *ModelRouter) GetProviders() []string {
 //   - Deep Research sessions (for initial chat title)
 func (mr *ModelRouter) GetTitleGenerationConfig() (*ProviderConfig, error) {
 	// Use GLM 4.6 for title generation (cost-effective, fast)
-	config, exists := mr.routes["zai-org/glm-4.6"]
+	// IMPORTANT: Use uppercase variant "zai-org/GLM-4.6" as that's what vLLM expects
+	config, exists := mr.routes["zai-org/GLM-4.6"]
 	if !exists {
 		return nil, fmt.Errorf("GLM 4.6 not configured for title generation (ETERNIS_INFERENCE_API_KEY missing)")
 	}
