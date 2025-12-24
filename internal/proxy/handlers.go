@@ -496,10 +496,10 @@ func ProxyHandler(
 //  5. If client disconnects, upstream continues reading and saves complete message
 //
 // Key differences from ReverseProxy approach:
-//  - Uses context.Background() instead of request context
-//  - Independent HTTP client not tied to Gin lifecycle
-//  - Direct streaming (chunks visible immediately, not buffered)
-//  - Upstream continues even after ALL clients disconnect
+//   - Uses context.Background() instead of request context
+//   - Independent HTTP client not tied to Gin lifecycle
+//   - Direct streaming (chunks visible immediately, not buffered)
+//   - Upstream continues even after ALL clients disconnect
 func handleStreamingDirect(
 	c *gin.Context,
 	target *url.URL,

@@ -39,9 +39,9 @@ func isValidProProduct(productID string) bool {
 // - Processing webhook events for subscription state changes
 // - Updating entitlements in the database based on subscription status
 type Service struct {
-	queries         pgdb.Querier
-	logger          *logger.Logger
-	weeklyPriceID   string // Weekly subscription price ID (eligible for 3-day free trial)
+	queries       pgdb.Querier
+	logger        *logger.Logger
+	weeklyPriceID string // Weekly subscription price ID (eligible for 3-day free trial)
 }
 
 // NewService creates a new Stripe service instance and configures the Stripe SDK.
