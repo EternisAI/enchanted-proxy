@@ -18,8 +18,7 @@ func NewHandler(service *Service, logger *logger.Logger) *Handler {
 }
 
 type CreateInvoiceRequestBody struct {
-	ProductID   string  `json:"product_id" binding:"required"`
-	ZecPriceUSD float64 `json:"zec_price_usd" binding:"required"`
+	ProductID string `json:"product_id" binding:"required"`
 }
 
 type CreateInvoiceResponseBody struct {
@@ -50,19 +49,14 @@ func (h *Handler) CreateInvoice(c *gin.Context) {
 		return
 	}
 
-	if body.ZecPriceUSD <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid zec_price_usd"})
-		return
-	}
-
-	invoice, err := h.service.CreateInvoice(c.Request.Context(), userID, body.ProductID, body.ZecPriceUSD)
+	invoice, zecPriceUSD, err := h.service.CreateInvoice(c.Request.Context(), userID, body.ProductID)
 	if err != nil {
 		h.logger.Error("failed to create zcash invoice", "error", err.Error(), "user_id", userID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create invoice"})
 		return
 	}
 
-	zecAmount := float64(product.PriceUSD) / body.ZecPriceUSD
+	zecAmount := float64(product.PriceUSD) / zecPriceUSD
 	zatAmount := int64(zecAmount * 100_000_000)
 
 	c.JSON(http.StatusOK, CreateInvoiceResponseBody{

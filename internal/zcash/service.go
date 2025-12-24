@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -16,6 +17,7 @@ import (
 
 const (
 	zcashBackendURL = "http://54.210.176.154:8080"
+	krakenAPIURL    = "https://api.kraken.com/0/public/Ticker?pair=ZECUSD"
 
 	ProductMonthlyPro   = "monthly_pro"
 	ProductLifetimePlus = "lifetime_plus"
@@ -99,10 +101,66 @@ func GetProduct(productID string) *Product {
 	return nil
 }
 
-func (s *Service) CreateInvoice(ctx context.Context, userID, productID string, zecPriceUSD float64) (*CreateInvoiceResponse, error) {
+type KrakenTickerResponse struct {
+	Error  []string                   `json:"error"`
+	Result map[string]KrakenTickerData `json:"result"`
+}
+
+type KrakenTickerData struct {
+	LastTrade []string `json:"c"` // c = last trade closed [price, lot volume]
+}
+
+func (s *Service) GetZecPriceUSD(ctx context.Context) (float64, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", krakenAPIURL, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create kraken request: %w", err)
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("failed to call kraken API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("kraken API returned status %d", resp.StatusCode)
+	}
+
+	var result KrakenTickerResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("failed to decode kraken response: %w", err)
+	}
+
+	if len(result.Error) > 0 {
+		return 0, fmt.Errorf("kraken API error: %s", result.Error[0])
+	}
+
+	tickerData, ok := result.Result["ZECUSD"]
+	if !ok {
+		return 0, fmt.Errorf("ZECUSD pair not found in kraken response")
+	}
+
+	if len(tickerData.LastTrade) == 0 {
+		return 0, fmt.Errorf("no last trade data in kraken response")
+	}
+
+	price, err := strconv.ParseFloat(tickerData.LastTrade[0], 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse price: %w", err)
+	}
+
+	return price, nil
+}
+
+func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (*CreateInvoiceResponse, float64, error) {
 	product := GetProduct(productID)
 	if product == nil {
-		return nil, fmt.Errorf("unknown product: %s", productID)
+		return nil, 0, fmt.Errorf("unknown product: %s", productID)
+	}
+
+	zecPriceUSD, err := s.GetZecPriceUSD(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get ZEC price: %w", err)
 	}
 
 	zecAmount := float64(product.PriceUSD) / zecPriceUSD
@@ -117,31 +175,31 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string, z
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, 0, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", zcashBackendURL+"/invoices", bytes.NewReader(jsonBody))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call zcash backend: %w", err)
+		return nil, 0, fmt.Errorf("failed to call zcash backend: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("zcash backend returned status %d", resp.StatusCode)
+		return nil, 0, fmt.Errorf("zcash backend returned status %d", resp.StatusCode)
 	}
 
 	var result CreateInvoiceResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, 0, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return &result, nil
+	return &result, zecPriceUSD, nil
 }
 
 func (s *Service) GetInvoiceStatus(ctx context.Context, invoiceID string) (*InvoiceStatusResponse, error) {
