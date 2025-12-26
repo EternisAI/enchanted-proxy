@@ -146,6 +146,7 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 		if _, exists := routes[model.Name]; exists {
 			mr.logger.Warn("skipping duplicate model config entry",
 				slog.String("model", model.Name))
+			continue
 		}
 
 		var activeEndpoints []ModelEndpoint
@@ -188,7 +189,7 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 		}
 
 		// Populate routes and alias mapping for the model.
-		// Alias mapping entries are normaized for reliable matching.
+		// Alias mapping entries are normalized for reliable matching.
 		if len(activeEndpoints) > 0 {
 			routes[model.Name] = ModelRoute{
 				ActiveEndpoints: activeEndpoints,
@@ -412,7 +413,7 @@ func (mr *ModelRouter) GetProviders() []string {
 func (mr *ModelRouter) GetTitleGenerationConfig() (*ProviderConfig, error) {
 	// Use GLM 4.6 for title generation (cost-effective, fast)
 	// IMPORTANT: Use uppercase variant "zai-org/GLM-4.6" as that's the "canonical" name.
-	if provider := mr.getModelEndpointProvider("zai-org/GLM-4.6", ""); provider == nil {
+	if provider := mr.getModelEndpointProvider("zai-org/GLM-4.6", ""); provider != nil {
 		return provider, nil
 	} else {
 		return nil, errors.New("could not find a suitable endpoint for GLM 4.6 for title generation")

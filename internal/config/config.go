@@ -272,6 +272,8 @@ func LoadConfig() {
 	log.Printf("Loading config file: %v", configFilePath)
 
 	configFile, err := os.Open(configFilePath)
+	defer configFile.Close()
+
 	if err != nil {
 		log.Fatalf("Failed to open config file: %v", err)
 	}
@@ -279,7 +281,6 @@ func LoadConfig() {
 	if err := loadConfigFile(configFile, AppConfig); err != nil {
 		log.Fatalf("Failed to load config file: %v", err)
 	}
-	configFile.Close()
 
 	// Validate required configs
 	if AppConfig.ModelRouterConfig == nil {

@@ -197,7 +197,7 @@ type ModelConfig struct {
 	// or the Model override in Providers).
 	Aliases []string `yaml:"aliases,omitempty"`
 
-	// TokenMultiplier is the token cost multiplier for this model (0.5× to 50×).
+	// TokenMultiplier is the token cost multiplier for this model (normally 0.5× to 50×).
 	// Defaults to 1.0
 	TokenMultiplier float64 `yaml:"token_multiplier,omitempty"`
 
@@ -206,8 +206,8 @@ type ModelConfig struct {
 	Providers []ModelEndpointProvider `yaml:"providers"`
 }
 
-// Validate performs validartion of a ModelConfig value:
-// - Checks that the name and the lisr of providers are not empty
+// Validate performs validation of a ModelConfig value:
+// - Checks that the name and the list of providers are not empty
 // - Sets the default value of TokenMultiplier (1.0) if not specified
 func (cfg *ModelConfig) Validate() error {
 	if cfg.Name == "" {
