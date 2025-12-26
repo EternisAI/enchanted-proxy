@@ -70,6 +70,7 @@ type ModelRouterConfig struct {
 // Validate performs validation of a ModelRouterConfig value:
 // - Checks that provider and model lists are not empty
 // - Checks that models reference known providers
+// - Checks for duplicates in the lists of providers and models
 func (cfg *ModelRouterConfig) Validate() error {
 	if len(cfg.Providers) == 0 {
 		return errors.New("no providers specified in model router configuration")
@@ -77,6 +78,10 @@ func (cfg *ModelRouterConfig) Validate() error {
 
 	providers := make(map[string]struct{}, len(cfg.Providers))
 	for _, provider := range cfg.Providers {
+		if _, exists := providers[provider.Name]; exists {
+			return fmt.Errorf("duplicate configuration entry for provider %v", provider.Name)
+		}
+
 		providers[provider.Name] = struct{}{}
 	}
 
@@ -84,12 +89,19 @@ func (cfg *ModelRouterConfig) Validate() error {
 		return errors.New("no models specified in model router configuration")
 	}
 
+	models := make(map[string]struct{}, len(cfg.Models))
 	for _, model := range cfg.Models {
 		for _, provider := range model.Providers {
-			if _, ok := providers[provider.Name]; !ok {
+			if _, providerExists := providers[provider.Name]; !providerExists {
 				return fmt.Errorf("unknown provider %v specified for model %v", provider, model)
 			}
 		}
+
+		if _, modelExists := models[model.Name]; modelExists {
+			return fmt.Errorf("duplicate configuration entry for model %v", model.Name)
+		}
+
+		models[model.Name] = struct{}{}
 	}
 
 	return nil

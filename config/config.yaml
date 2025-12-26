@@ -110,13 +110,6 @@ model_router:
     - name: OpenAI
       model: gpt-3.5-turbo
 
-  - name: openai/gpt-3.5-turbo
-    aliases:
-    - gpt-3.5-turbo
-    providers:
-    - name: OpenAI
-      model: gpt-3.5-turbo
-
   - name: openai/o1-preview
     aliases:
     - o1-preview
