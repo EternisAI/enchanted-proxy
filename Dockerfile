@@ -27,6 +27,9 @@ RUN apk --no-cache add ca-certificates tzdata
 
 WORKDIR /root/
 
+# Copy configuration files
+COPY config .
+
 # Copy the binary from builder stage
 COPY --from=builder /app/server .
 
@@ -34,4 +37,4 @@ COPY --from=builder /app/server .
 EXPOSE 8080
 
 # Run the server
-CMD ["./server"] 
+CMD ["./server"]
