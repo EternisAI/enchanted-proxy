@@ -1,8 +1,10 @@
 package routing
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
@@ -32,25 +34,36 @@ import (
 //	router := NewModelRouter(config, logger)
 //	provider, err := router.RouteModel("gpt-4", "mobile")
 //	// provider.BaseURL = "https://api.openai.com/v1"
-//	// provider.APIKey = config.OpenAIAPIKey
+//	// provider.APIKey = os.Getenv("OPENAI_API_KEY")
 type ModelRouter struct {
-	routes map[string]ProviderConfig
-	config *config.Config // Store config for platform-specific keys
-	logger *logger.Logger
+	aliases map[string]string
+	routes  map[string]ModelRoute
+	config  *config.Config // Store config for platform-specific keys
+	logger  *logger.Logger
 }
 
-// APIType identifies which API format to use for a provider.
-type APIType string
+// ModelRoute maintains actual lists of provider endpoints where the requests for this model
+// can be routed.
+type ModelRoute struct {
+	// ActiveEndpoints is the list of ModelEndpoints that are currently active and can accept
+	// requests for this model.
+	ActiveEndpoints []ModelEndpoint
 
-const (
-	// APITypeChatCompletions uses the standard /chat/completions endpoint (OpenAI, Anthropic via OpenRouter, etc.)
-	APITypeChatCompletions APIType = "chat_completions"
+	// InactiveEndpoints is the list of ModelEndpoints that are currently inactive and
+	// should not be used to route requests for this model.
+	// Endpoints may be deactivated by fallback policy or other similar settings.
+	// TODO: Will be used by the fallback policy.
+	InactiveEndpoints []ModelEndpoint
+}
 
-	// APITypeResponses uses OpenAI's stateful /responses endpoint (GPT-5 Pro, GPT-4.5+)
-	APITypeResponses APIType = "responses"
-)
+// ModelEndpoint contains all information necessary to route requests for a specific model to
+// a specific inference API provider, aggregated from the declarative routing configuration.
+type ModelEndpoint struct {
+	Provider ProviderConfig
+	// TODO: Fallback policy configuration will be stored here
+}
 
-// ProviderConfig contains routing information for an AI provider.
+// ProviderConfig contains aggregated routing information for an AI provider.
 type ProviderConfig struct {
 	// BaseURL is the base URL for the provider's API (e.g., "https://api.openai.com/v1")
 	BaseURL string
@@ -61,8 +74,11 @@ type ProviderConfig struct {
 	// Name is a human-readable provider name (e.g., "OpenAI", "Anthropic")
 	Name string
 
+	// Model is the name of the model that the provider expects in the API requests
+	Model string
+
 	// APIType determines which API format to use (chat_completions or responses)
-	APIType APIType
+	APIType config.APIType
 
 	// TokenMultiplier is the cost multiplier for this model (1× to 50×)
 	TokenMultiplier float64
@@ -71,170 +87,127 @@ type ProviderConfig struct {
 // NewModelRouter creates a new model router from configuration.
 //
 // Parameters:
-//   - cfg: Application configuration (contains API keys)
+//   - cfg: Application configuration (contains model router configuration and OpenRouter API keys)
 //   - logger: Logger for routing decisions
 //
 // Returns:
-//   - *ModelRouter: The new router with default routing table
+//   - *ModelRouter: The new router with a populated routing table
 //
-// The router is initialized with default routes for common models.
+// The router is initialized with a routing table populated from the model router configuration
+// which is included in the application configuration.
 // Platform-specific keys (OpenRouter) are resolved at route time.
 func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
-	routes := make(map[string]ProviderConfig)
-
-	// DeepSeek R1 - Free & Pro - via Tinfoil (1× multiplier)
-	if cfg.TinfoilAPIKey != "" {
-		routes["deepseek-r1-0528"] = ProviderConfig{
-			BaseURL:         "https://inference.tinfoil.sh/v1",
-			APIKey:          cfg.TinfoilAPIKey,
-			Name:            "Tinfoil",
-			APIType:         APITypeChatCompletions,
-			TokenMultiplier: 1.0,
-		}
-		routes["deepseek-r1"] = routes["deepseek-r1-0528"] // Alias
-	}
-
-	// Llama 3.3 70B - Free & Pro - via Tinfoil (1× multiplier)
-	if cfg.TinfoilAPIKey != "" {
-		routes["llama3-3-70b"] = ProviderConfig{
-			BaseURL:         "https://inference.tinfoil.sh/v1",
-			APIKey:          cfg.TinfoilAPIKey,
-			Name:            "Tinfoil",
-			APIType:         APITypeChatCompletions,
-			TokenMultiplier: 1.0,
-		}
-		routes["llama-3.3-70b"] = routes["llama3-3-70b"] // Alias
-	}
-
-	// GLM-4.6 - Free & Pro - via local/our IPs (3× multiplier)
-	// IMPORTANT: vLLM server expects "zai-org/GLM-4.6" (uppercase GLM)
-	if cfg.EternisInferenceAPIKey != "" {
-		routes["zai-org/glm-4.6"] = ProviderConfig{
-			BaseURL:         "http://127.0.0.1:20001/v1",
-			APIKey:          cfg.EternisInferenceAPIKey,
-			Name:            "Eternis",
-			APIType:         APITypeChatCompletions,
-			TokenMultiplier: 3.0,
-		}
-		routes["zai-org/GLM-4.6"] = routes["zai-org/glm-4.6"] // Uppercase variant (actual vLLM model name)
-		routes["glm-4.6"] = routes["zai-org/glm-4.6"]         // Lowercase alias
-	}
-
-	// Dolphin Mistral (Venice) - Free & Pro - via GCP self-hosted (0.5× multiplier)
-	// Note: This service doesn't require authentication
-	routes["dolphin-mistral-eternis"] = ProviderConfig{
-		BaseURL:         "http://34.30.193.13:8000/v1",
-		APIKey:          "no-auth-required",
-		Name:            "Eternis",
-		APIType:         APITypeChatCompletions,
-		TokenMultiplier: 0.5,
-	}
-	routes["dolphin-mistral"] = routes["dolphin-mistral-eternis"] // Alias
-
-	// GPT-4.1 - Pro only - via OpenRouter (4× multiplier)
-	if cfg.OpenRouterMobileAPIKey != "" || cfg.OpenRouterDesktopAPIKey != "" {
-		routes["openai/gpt-4.1"] = ProviderConfig{
-			BaseURL:         "https://openrouter.ai/api/v1",
-			APIKey:          "", // Resolved at route time (mobile/desktop)
-			Name:            "OpenRouter",
-			APIType:         APITypeChatCompletions,
-			TokenMultiplier: 4.0,
-		}
-		routes["gpt-4.1"] = routes["openai/gpt-4.1"] // Alias
-	}
-
-	// GPT-5 - Pro only - via OpenRouter (6× multiplier)
-	if cfg.OpenRouterMobileAPIKey != "" || cfg.OpenRouterDesktopAPIKey != "" {
-		routes["openai/gpt-5"] = ProviderConfig{
-			BaseURL:         "https://openrouter.ai/api/v1",
-			APIKey:          "", // Resolved at route time
-			Name:            "OpenRouter",
-			APIType:         APITypeChatCompletions,
-			TokenMultiplier: 6.0,
-		}
-		routes["gpt-5"] = routes["openai/gpt-5"] // Alias
-	}
-
-	// GPT-5 Pro - Pro only - via OpenAI directly (50× multiplier)
-	if cfg.OpenAIAPIKey != "" {
-		routes["gpt-5-pro"] = ProviderConfig{
-			BaseURL:         "https://api.openai.com/v1",
-			APIKey:          cfg.OpenAIAPIKey,
-			Name:            "OpenAI",
-			APIType:         APITypeResponses,
-			TokenMultiplier: 50.0,
-		}
-		routes["openai/gpt-5-pro"] = routes["gpt-5-pro"] // Alias
-	}
-
-	// Legacy OpenAI models - maintain backward compatibility with existing multipliers
-	if cfg.OpenAIAPIKey != "" {
-		routes["gpt-4"] = ProviderConfig{
-			BaseURL:         "https://api.openai.com/v1",
-			APIKey:          cfg.OpenAIAPIKey,
-			Name:            "OpenAI",
-			APIType:         APITypeChatCompletions,
-			TokenMultiplier: 1.0, // Default multiplier for legacy models
-		}
-		routes["gpt-4-turbo"] = ProviderConfig{
-			BaseURL:         "https://api.openai.com/v1",
-			APIKey:          cfg.OpenAIAPIKey,
-			Name:            "OpenAI",
-			APIType:         APITypeChatCompletions,
-			TokenMultiplier: 1.0,
-		}
-		routes["gpt-3.5-turbo"] = ProviderConfig{
-			BaseURL:         "https://api.openai.com/v1",
-			APIKey:          cfg.OpenAIAPIKey,
-			Name:            "OpenAI",
-			APIType:         APITypeChatCompletions,
-			TokenMultiplier: 1.0,
-		}
-		routes["o1-preview"] = ProviderConfig{
-			BaseURL:         "https://api.openai.com/v1",
-			APIKey:          cfg.OpenAIAPIKey,
-			Name:            "OpenAI",
-			APIType:         APITypeChatCompletions,
-			TokenMultiplier: 1.0,
-		}
-		routes["o1-mini"] = ProviderConfig{
-			BaseURL:         "https://api.openai.com/v1",
-			APIKey:          cfg.OpenAIAPIKey,
-			Name:            "OpenAI",
-			APIType:         APITypeChatCompletions,
-			TokenMultiplier: 1.0,
-		}
-		routes["o3-mini"] = ProviderConfig{
-			BaseURL:         "https://api.openai.com/v1",
-			APIKey:          cfg.OpenAIAPIKey,
-			Name:            "OpenAI",
-			APIType:         APITypeChatCompletions,
-			TokenMultiplier: 1.0,
-		}
-	}
-
-	// Fallback: OpenRouter handles unknown models (including Claude via OpenRouter)
-	// API key is resolved at route time based on platform (mobile/desktop)
-	if cfg.OpenRouterMobileAPIKey != "" || cfg.OpenRouterDesktopAPIKey != "" {
-		routes["*"] = ProviderConfig{
-			BaseURL:         "https://openrouter.ai/api/v1",
-			APIKey:          "", // Resolved at route time based on platform
-			Name:            "OpenRouter",
-			APIType:         APITypeChatCompletions,
-			TokenMultiplier: 1.0, // Default multiplier for fallback
-		}
-	}
-
 	router := &ModelRouter{
-		routes: routes,
 		config: cfg,
 		logger: logger,
 	}
 
+	router.RebuildRoutes(cfg.ModelRouterConfig)
+
+	if len(router.routes) == 0 {
+		logger.Error("model router has no model routes")
+		return nil
+	}
+
 	logger.Info("model router initialized",
-		slog.Int("route_count", len(routes)))
+		slog.Int("route_count", len(router.routes)))
 
 	return router
+}
+
+// RebuildRoutes updates the routing table and alias mapping in place by building it from the
+// provided declarative configuration.
+//
+// Parameters:
+//   - cfg: Model Router configuration
+func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
+	if cfg == nil {
+		return
+	}
+
+	// Normally each model has at least one alias, so pre-allocate twice the number of items
+	aliases := make(map[string]string, len(cfg.Models)*2)
+	routes := make(map[string]ModelRoute, len(cfg.Models)*2)
+
+	// Build a map of model providers configs
+	providers := make(map[string]config.ModelProviderConfig, len(cfg.Providers))
+	for _, modelProvider := range cfg.Providers {
+		if _, exists := providers[modelProvider.Name]; exists {
+			mr.logger.Warn("skipping duplicate provider config entry",
+				slog.String("provider", modelProvider.Name))
+			continue
+		}
+		providers[modelProvider.Name] = modelProvider
+	}
+
+	// For every model, build the list of available endpoints, aggregating provider-level and
+	// model-level routing configuration (like BaseURL and model name overrides).
+	for _, model := range cfg.Models {
+		if _, exists := routes[model.Name]; exists {
+			mr.logger.Warn("skipping duplicate model config entry",
+				slog.String("model", model.Name))
+		}
+
+		var activeEndpoints []ModelEndpoint
+
+		for _, endpointProvider := range model.Providers {
+			if modelProvider, exists := providers[endpointProvider.Name]; exists {
+				// Skip providers that do not have an API key properly configured
+				if modelProvider.APIKey == "" && modelProvider.Name != "OpenRouter" {
+					continue
+				}
+
+				// Build an aggregated provider configuration for this endpoint
+				provider := ProviderConfig{
+					BaseURL:         modelProvider.BaseURL,
+					APIKey:          modelProvider.APIKey,
+					Name:            modelProvider.Name,
+					Model:           model.Name,
+					APIType:         endpointProvider.APIType,
+					TokenMultiplier: model.TokenMultiplier,
+				}
+
+				// Override the model name with the one expected by this provider for this model
+				if endpointProvider.Model != "" {
+					provider.Model = endpointProvider.Model
+				}
+
+				// Override the base URL with the one used by this provider for this model
+				if endpointProvider.BaseURL != "" {
+					provider.BaseURL = endpointProvider.BaseURL
+				}
+
+				endpoint := ModelEndpoint{provider}
+				activeEndpoints = append(activeEndpoints, endpoint)
+			} else {
+				mr.logger.Warn("skipping unknown model endpoint provider",
+					slog.String("model", model.Name),
+					slog.String("provider", endpointProvider.Name))
+				continue
+			}
+		}
+
+		// Populate routes and alias mapping for the model.
+		// Alias mapping entries are normaized for reliable matching.
+		if len(activeEndpoints) > 0 {
+			routes[model.Name] = ModelRoute{
+				ActiveEndpoints: activeEndpoints,
+			}
+
+			aliases[strings.ToLower(strings.TrimSpace(model.Name))] = model.Name
+
+			for _, alias := range model.Aliases {
+				aliases[strings.ToLower(strings.TrimSpace(alias))] = model.Name
+			}
+		} else {
+			mr.logger.Warn("skipping model with no configured provider endpoints",
+				slog.String("model", model.Name))
+		}
+	}
+
+	// Update the routing table and alias mappings in place
+	mr.aliases = aliases
+	mr.routes = routes
 }
 
 // RouteModel determines the provider for a given model ID.
@@ -244,8 +217,8 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 //   - platform: Client platform ("mobile", "desktop") - used for OpenRouter key selection
 //
 // Returns:
-//   - *ProviderConfig: Provider configuration (baseURL, API key)
-//   - error: If no provider configured for this model
+//   - *ProviderConfig: Aggregated provider configuration suitable for routing (baseURL, API key)
+//   - error: If no suitable provider found for this model
 //
 // Routing algorithm:
 //  1. Try exact match: routes["gpt-4"]
@@ -264,62 +237,90 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 //	// Returns OpenAI provider (prefix match on "gpt-4")
 func (mr *ModelRouter) RouteModel(modelID string, platform string) (*ProviderConfig, error) {
 	if modelID == "" {
-		return nil, fmt.Errorf("model ID is required")
+		return nil, errors.New("model ID is required")
 	}
 
 	// Normalize model ID (lowercase for comparison)
 	normalizedModel := strings.ToLower(strings.TrimSpace(modelID))
 
 	// Try exact match
-	if config, exists := mr.routes[normalizedModel]; exists {
-		// Make a copy to avoid modifying the original
-		result := config
-		// Resolve platform-specific API key if needed (OpenRouter)
-		if result.Name == "OpenRouter" && result.APIKey == "" {
-			result.APIKey = mr.getOpenRouterAPIKey(platform)
+	if canonicalModel, exists := mr.aliases[normalizedModel]; exists {
+		if provider := mr.getModelEndpointProvider(canonicalModel, platform); provider != nil {
+			mr.logger.Debug("model routed (exact match)",
+				slog.String("model", modelID),
+				slog.String("provider", provider.Name))
+			return provider, nil
 		}
-		mr.logger.Debug("model routed (exact match)",
-			slog.String("model", modelID),
-			slog.String("provider", config.Name))
-		return &result, nil
 	}
 
 	// Try prefix match
 	// e.g., "gpt-4-0125-preview" should match "gpt-4"
-	for prefix, config := range mr.routes {
+	for prefix, canonicalModel := range mr.aliases {
 		if prefix == "*" {
 			continue // Skip wildcard for now
 		}
+
 		if strings.HasPrefix(normalizedModel, prefix) {
-			// Make a copy to avoid modifying the original
-			result := config
-			// Resolve platform-specific API key if needed (OpenRouter)
-			if result.Name == "OpenRouter" && result.APIKey == "" {
-				result.APIKey = mr.getOpenRouterAPIKey(platform)
+			if provider := mr.getModelEndpointProvider(canonicalModel, platform); provider != nil {
+				mr.logger.Debug("model routed (prefix match)",
+					slog.String("model", modelID),
+					slog.String("prefix", prefix),
+					slog.String("provider", provider.Name))
+				return provider, nil
 			}
-			mr.logger.Debug("model routed (prefix match)",
-				slog.String("model", modelID),
-				slog.String("prefix", prefix),
-				slog.String("provider", config.Name))
-			return &result, nil
 		}
 	}
 
 	// Fall back to wildcard (OpenRouter)
-	if fallback, exists := mr.routes["*"]; exists {
-		// Make a copy to avoid modifying the original
-		result := fallback
-		// Resolve platform-specific API key
-		result.APIKey = mr.getOpenRouterAPIKey(platform)
+	if provider := mr.getModelEndpointProvider("*", platform); provider != nil {
 		mr.logger.Info("model routed to fallback provider",
 			slog.String("model", modelID),
-			slog.String("provider", fallback.Name),
+			slog.String("provider", provider.Name),
 			slog.String("platform", platform))
-		return &result, nil
+		return provider, nil
 	}
 
-	// No provider configured
-	return nil, fmt.Errorf("no provider configured for model: %s", modelID)
+	// No suitable endpoint provider found
+	return nil, fmt.Errorf("no suitable endpoint provider found for model: %s", modelID)
+}
+
+// getModelEndpointProvider returns a final aggregated provider configuration that will be used
+// to send requests to this model.
+//
+// Parameters:
+//   - model: The "canonical" name of the model
+//   - platform: Client platform ("mobile", "desktop") - used for OpenRouter key selection
+func (mr *ModelRouter) getModelEndpointProvider(model string, platform string) *ProviderConfig {
+	route, exists := mr.routes[model]
+	if !exists {
+		return nil
+	}
+
+	// TODO: implement fallback logic
+	// For now, just select the first endpoint on the list every time.
+
+	if len(route.ActiveEndpoints) == 0 {
+		return nil
+	}
+
+	endpoint := route.ActiveEndpoints[0]
+	provider := endpoint.Provider
+
+	// For OpenRouter, determine the API key dynamically based on the platform and update in
+	// the selected provider endpoint configuration.
+	// This list of endpoints contains values and we are updating and returning a copy.
+	if provider.Name == "OpenRouter" {
+		apiKey := mr.getOpenRouterAPIKey(platform)
+
+		if apiKey == "" {
+			mr.logger.Warn("no API key configured for OpenRouter")
+			return nil
+		}
+
+		provider.APIKey = apiKey
+	}
+
+	return &provider
 }
 
 // getOpenRouterAPIKey returns the appropriate OpenRouter API key for the platform.
@@ -351,7 +352,7 @@ func (mr *ModelRouter) getOpenRouterAPIKey(platform string) string {
 // Does not include wildcard "*".
 //
 // Returns:
-//   - []string: List of supported model IDs
+//   - []string: List of supported model IDs, sorted for stability of the results
 //
 // Used for:
 //   - Client model selection UI
@@ -359,29 +360,42 @@ func (mr *ModelRouter) getOpenRouterAPIKey(platform string) string {
 //   - Health checks
 func (mr *ModelRouter) GetSupportedModels() []string {
 	models := make([]string, 0, len(mr.routes))
+
 	for model := range mr.routes {
 		if model != "*" {
 			models = append(models, model)
 		}
 	}
+
+	sort.Strings(models)
+
 	return models
 }
 
-// GetProviders returns a list of all configured providers.
+// GetProviders returns a list of all configured providers, sorted for stability of the results.
 // Useful for observability and debugging.
 //
 // Returns:
-//   - []string: List of provider names (e.g., ["OpenAI", "Anthropic", "OpenRouter"])
+//   - []string: List of provider names (e.g., ["Anthropic", "OpenAI", "OpenRouter"])
 func (mr *ModelRouter) GetProviders() []string {
-	providerMap := make(map[string]bool)
-	for _, config := range mr.routes {
-		providerMap[config.Name] = true
+	providerMap := make(map[string]struct{})
+	for _, route := range mr.routes {
+		for _, endpoint := range route.ActiveEndpoints {
+			providerMap[endpoint.Provider.Name] = struct{}{}
+		}
+
+		for _, endpoint := range route.InactiveEndpoints {
+			providerMap[endpoint.Provider.Name] = struct{}{}
+		}
 	}
 
 	providers := make([]string, 0, len(providerMap))
 	for provider := range providerMap {
 		providers = append(providers, provider)
 	}
+
+	sort.Strings(providers)
+
 	return providers
 }
 
@@ -397,13 +411,10 @@ func (mr *ModelRouter) GetProviders() []string {
 //   - Deep Research sessions (for initial chat title)
 func (mr *ModelRouter) GetTitleGenerationConfig() (*ProviderConfig, error) {
 	// Use GLM 4.6 for title generation (cost-effective, fast)
-	// IMPORTANT: Use uppercase variant "zai-org/GLM-4.6" as that's what vLLM expects
-	config, exists := mr.routes["zai-org/GLM-4.6"]
-	if !exists {
-		return nil, fmt.Errorf("GLM 4.6 not configured for title generation (ETERNIS_INFERENCE_API_KEY missing)")
+	// IMPORTANT: Use uppercase variant "zai-org/GLM-4.6" as that's the "canonical" name.
+	if provider := mr.getModelEndpointProvider("zai-org/GLM-4.6", ""); provider == nil {
+		return provider, nil
+	} else {
+		return nil, errors.New("could not find a suitable endpoint for GLM 4.6 for title generation")
 	}
-
-	// Return a copy with the model ID set
-	result := config
-	return &result, nil
 }

@@ -163,6 +163,27 @@ func ProxyHandler(
 			slog.String("api_type", string(provider.APIType)),
 			slog.Float64("multiplier", provider.TokenMultiplier))
 
+		// If the model name in the request body differs from the name expected by the selected
+		// provider, replace with the desired name.
+		// This is required for example if we have fallback of load balancing configured for
+		// providers that use different model names for the same model internally, like
+		// "z-ai/GLM-4.6" for OpenRouter vs "zai-org/GLM-4.6" for NEAR AI, or "openai/gpt-5"
+		// for OpenRouter vs "gpt-5" for OpenAI.
+		if model != provider.Model {
+			var reqBody map[string]interface{}
+			if err := json.Unmarshal(requestBody, &reqBody); err == nil {
+				reqBody["model"] = provider.Model
+				if modifiedBody, err := json.Marshal(reqBody); err == nil {
+					requestBody = modifiedBody
+					c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
+					c.Request.ContentLength = int64(len(requestBody))
+					log.Debug("substituted model name from provider configuration",
+						slog.String("old", model),
+						slog.String("new", provider.Model))
+				}
+			}
+		}
+
 		// For Eternis models (GLM, Dolphin): Add stream_options to enable usage reporting
 		// vLLM and similar servers need explicit flag to include usage in streaming responses
 		if provider.Name == "Eternis" && len(requestBody) > 0 {
@@ -187,7 +208,7 @@ func ProxyHandler(
 		}
 
 		// Route based on API type
-		if provider.APIType == routing.APITypeResponses {
+		if provider.APIType == config.APITypeResponses {
 			// Handle Responses API (GPT-5 Pro, GPT-4.5+)
 			log.Info("routing to Responses API handler",
 				slog.String("model", model),
