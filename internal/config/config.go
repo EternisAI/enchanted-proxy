@@ -272,7 +272,11 @@ func LoadConfig() {
 	log.Printf("Loading config file: %v", configFilePath)
 
 	configFile, err := os.Open(configFilePath)
-	defer configFile.Close()
+	defer func() {
+		if configFile != nil {
+			configFile.Close()
+		}
+	}()
 
 	if err != nil {
 		log.Fatalf("Failed to open config file: %v", err)
