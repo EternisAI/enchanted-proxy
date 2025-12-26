@@ -15,6 +15,7 @@ on:
     - go.mod
     - go.sum
     - cmd/server/**
+    - config/**
     - deploy/**
     - graph/**
     - internal/**

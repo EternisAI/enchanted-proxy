@@ -46,6 +46,8 @@ RUN apt -qq update && \
     apt install -y --no-install-recommends \
         ca-certificates dnsmasq iproute2 netcat-openbsd \
     && apt clean && find /var/lib/apt/lists -type f -size +0 -delete
+COPY config/ /etc/enchanted-proxy/
+ENV CONFIG_FILE=/etc/enchanted-proxy/config.yaml
 COPY deploy/envoy.yaml /etc/envoy/envoy.yaml
 COPY deploy/hosts /etc/hosts.enclave
 COPY deploy/procfusion.toml /etc/procfusion/config.toml

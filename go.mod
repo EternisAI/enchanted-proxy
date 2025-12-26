@@ -8,6 +8,7 @@ require (
 	github.com/99designs/gqlgen v0.17.76
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-chi/chi/v5 v5.2.2
+	github.com/goccy/go-yaml v1.19.1
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
@@ -20,10 +21,14 @@ require (
 	github.com/nats-io/nats.go v1.43.0
 	github.com/pressly/goose/v3 v3.24.0
 	github.com/richzw/appstore v1.37.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/cors v1.11.1
 	github.com/sirupsen/logrus v1.9.3
+	github.com/stripe/stripe-go/v84 v84.0.0
 	github.com/vektah/gqlparser/v2 v2.5.30
 	go.temporal.io/sdk v1.37.0
+	golang.org/x/crypto v0.39.0
+	golang.org/x/oauth2 v0.30.0
 	google.golang.org/api v0.231.0
 	google.golang.org/grpc v1.72.0
 )
@@ -98,7 +103,6 @@ require (
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/robfig/cron v1.2.0 // indirect
-	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/sosodev/duration v1.3.1 // indirect
@@ -106,7 +110,6 @@ require (
 	github.com/spiffe/go-spiffe/v2 v2.5.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
-	github.com/stripe/stripe-go/v84 v84.0.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.11 // indirect
 	github.com/urfave/cli/v2 v2.27.7 // indirect
@@ -126,10 +129,8 @@ require (
 	go.temporal.io/api v1.53.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/arch v0.3.0 // indirect
-	golang.org/x/crypto v0.39.0 // indirect
 	golang.org/x/mod v0.25.0 // indirect
 	golang.org/x/net v0.41.0 // indirect
-	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sync v0.15.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.26.0 // indirect

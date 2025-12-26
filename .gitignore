@@ -48,6 +48,9 @@ oauth-proxy.exe
 server
 server.exe
 
+# Re-include cmd/server directory
+!server/
+
 # Log files
 *.log
 
