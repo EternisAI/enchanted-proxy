@@ -37,6 +37,9 @@ type Config struct {
 	JWTJWKSURL              string
 	FirebaseCredJSON        string
 
+	// Model Router
+	ModelRouterConfig *ModelRouterConfig `yaml:"model_router"`
+
 	// MCP
 	PerplexityAPIKey  string
 	ReplicateAPIToken string
@@ -279,6 +282,10 @@ func LoadConfig() {
 	configFile.Close()
 
 	// Validate required configs
+	if AppConfig.ModelRouterConfig == nil {
+		log.Fatal("Model Router configuration is empty")
+	}
+
 	if AppConfig.GoogleClientID == "" || AppConfig.SlackClientID == "" || AppConfig.TwitterClientID == "" {
 		log.Println("Warning: Some OAuth client IDs are missing. Please check your environment variables.")
 	}
