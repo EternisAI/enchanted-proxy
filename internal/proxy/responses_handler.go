@@ -49,6 +49,7 @@ import (
 //   - messageService: Message storage service
 //   - titleService: Title generation service
 //   - pollingManager: Background polling manager
+//   - modelRouter: Model router for title generation config
 //   - cfg: Application configuration
 //
 // Returns:
@@ -63,6 +64,7 @@ func handleResponsesAPI(
 	messageService *messaging.Service,
 	titleService *title_generation.Service,
 	pollingManager *background.PollingManager,
+	modelRouter *routing.ModelRouter,
 	cfg *config.Config,
 ) error {
 	// Validate required parameters
@@ -154,16 +156,23 @@ func handleResponsesAPI(
 				platform = "mobile"
 			}
 
-			// Queue async title generation (non-blocking)
-			go titleService.QueueTitleGeneration(context.Background(), title_generation.TitleGenerationRequest{
-				UserID:            userID,
-				ChatID:            chatID,
-				FirstMessage:      firstMessage,
-				Model:             model,
-				BaseURL:           provider.BaseURL,
-				Platform:          platform,
-				EncryptionEnabled: encryptionEnabled,
-			}, provider.APIKey)
+			// Use GLM 4.6 for title generation (cost-effective instead of GPT-5 Pro)
+			titleConfig, err := modelRouter.GetTitleGenerationConfig()
+			if err != nil {
+				log.Warn("GLM 4.6 not configured for title generation, skipping",
+					slog.String("error", err.Error()))
+			} else {
+				// Queue async title generation (non-blocking)
+				go titleService.QueueTitleGeneration(context.Background(), title_generation.TitleGenerationRequest{
+					UserID:            userID,
+					ChatID:            chatID,
+					FirstMessage:      firstMessage,
+					Model:             "zai-org/GLM-4.6", // Use GLM 4.6 for cost savings (MUST be uppercase GLM - vLLM is case-sensitive)
+					BaseURL:           titleConfig.BaseURL,
+					Platform:          platform,
+					EncryptionEnabled: encryptionEnabled,
+				}, titleConfig.APIKey)
+			}
 		}
 	}
 

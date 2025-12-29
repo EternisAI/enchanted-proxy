@@ -13,7 +13,7 @@ import (
 type ActiveSession struct {
 	UserID         string
 	ChatID         string
-	RunID          int64                      // Database run ID for token tracking
+	RunID          int64 // Database run ID for token tracking
 	BackendConn    *websocket.Conn
 	Context        context.Context
 	CancelFunc     context.CancelFunc

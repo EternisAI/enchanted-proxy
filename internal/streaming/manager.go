@@ -536,20 +536,20 @@ func (sm *StreamManager) SaveCompletedSession(ctx context.Context, session *Stre
 	// Build message with stop metadata and generation state
 	now := time.Now()
 	msg := messaging.MessageToStore{
-		UserID:            userID,
-		ChatID:            session.chatID,
-		MessageID:         session.messageID,
-		IsFromUser:        false, // AI response
-		Content:           content,
-		IsError:           session.GetError() != nil,
-		EncryptionEnabled: encryptionEnabled,
-		Stopped:           stopped,
-		StoppedBy:         stoppedBy,
-		StopReason:        string(stopReason),
-		Model:             model,
-		GenerationState:   generationState,
+		UserID:                userID,
+		ChatID:                session.chatID,
+		MessageID:             session.messageID,
+		IsFromUser:            false, // AI response
+		Content:               content,
+		IsError:               session.GetError() != nil,
+		EncryptionEnabled:     encryptionEnabled,
+		Stopped:               stopped,
+		StoppedBy:             stoppedBy,
+		StopReason:            string(stopReason),
+		Model:                 model,
+		GenerationState:       generationState,
 		GenerationCompletedAt: &now,
-		GenerationError:   generationError,
+		GenerationError:       generationError,
 	}
 
 	// Store asynchronously

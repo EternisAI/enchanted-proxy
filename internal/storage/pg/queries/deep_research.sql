@@ -44,3 +44,10 @@ SELECT EXISTS(
     WHERE user_id = $1
       AND status = 'active'
 ) as has_active;
+
+-- name: GetDeepResearchRunCountForChat :one
+SELECT COUNT(*) as run_count
+FROM deep_research_runs
+WHERE user_id = $1
+  AND chat_id = $2
+  AND status IN ('completed', 'active');

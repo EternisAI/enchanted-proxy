@@ -74,11 +74,11 @@ func (s *Service) AttachAppStoreSubscription(ctx context.Context, userID string,
 
 	provider := "apple"
 	if err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
-		UserID:                 userID,
-		SubscriptionTier:       tier,
-		SubscriptionExpiresAt:  expiresAt,
-		SubscriptionProvider:   provider,
-		StripeCustomerID:       nil, // Don't set for Apple subscriptions
+		UserID:                userID,
+		SubscriptionTier:      tier,
+		SubscriptionExpiresAt: expiresAt,
+		SubscriptionProvider:  provider,
+		StripeCustomerID:      nil, // Don't set for Apple subscriptions
 	}); err != nil {
 		return nil, time.Time{}, err
 	}

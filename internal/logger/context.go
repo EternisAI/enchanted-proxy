@@ -16,6 +16,11 @@ func WithUserID(ctx context.Context, userID string) context.Context {
 	return context.WithValue(ctx, ContextKeyUserID, userID)
 }
 
+// WithChatID adds a chat ID to the context.
+func WithChatID(ctx context.Context, chatID string) context.Context {
+	return context.WithValue(ctx, ContextKeyChatID, chatID)
+}
+
 // WithOperation adds an operation name to the context.
 func WithOperation(ctx context.Context, operation string) context.Context {
 	return context.WithValue(ctx, ContextKeyOperation, operation)

@@ -28,6 +28,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/mcp"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
+	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/oauth"
 	"github.com/eternisai/enchanted-proxy/internal/proxy"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
@@ -114,7 +115,7 @@ func main() {
 	var firebaseClient *auth.FirebaseClient
 
 	if config.AppConfig.FirebaseCredJSON != "" {
-		firebaseClient, err = auth.NewFirebaseClient(context.Background(), config.AppConfig.FirebaseProjectID, config.AppConfig.FirebaseCredJSON)
+		firebaseClient, err = auth.NewFirebaseClient(context.Background(), config.AppConfig.FirebaseProjectID, config.AppConfig.FirebaseCredJSON, logger.WithComponent("firebase"))
 		if err != nil {
 			log.Error("failed to initialize firebase client", slog.String("error", err.Error()))
 			os.Exit(1)
@@ -197,6 +198,24 @@ func main() {
 		log.Info("title generation service disabled (requires message storage)")
 	}
 
+	// Initialize push notification service
+	var notificationService *notifications.Service
+	if config.AppConfig.PushNotificationsEnabled && firebaseClient != nil {
+		notificationService = notifications.NewService(
+			firebaseClient.GetMessagingClient(),
+			firebaseClient.GetFirestoreClient(),
+			logger.WithComponent("push-notifications"),
+			true,
+		)
+		log.Info("push notification service initialized")
+	} else {
+		if !config.AppConfig.PushNotificationsEnabled {
+			log.Info("push notifications disabled by configuration")
+		} else {
+			log.Warn("firebase client not available - push notifications will not work")
+		}
+	}
+
 	// Initialize tool system
 	toolRegistry := tools.NewRegistry()
 	exaSearchTool := tools.NewExaSearchTool(searchService, logger.WithComponent("exa-search-tool"))
@@ -204,27 +223,34 @@ func main() {
 		log.Error("failed to register exa search tool", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
+	scheduledTasksTool := tools.NewScheduledTasksTool(taskService, logger.WithComponent("scheduled-tasks-tool"))
+	if err := toolRegistry.Register(scheduledTasksTool); err != nil {
+		log.Error("failed to register scheduled tasks tool", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 	log.Info("tool system initialized", slog.Int("registered_tools", len(toolRegistry.List())))
 
 	// Initialize stream manager for broadcast streaming
+	// CRITICAL: Always create streamManager to ensure streaming continues after client disconnect
+	// StreamManager can work with nil messageService (storage will be disabled but streaming works)
 	var streamManager *streaming.StreamManager
-	if messageService != nil {
-		streamManager = streaming.NewStreamManager(messageService, logger.WithComponent("streaming"))
-		log.Info("stream manager initialized")
+	streamManager = streaming.NewStreamManager(messageService, logger.WithComponent("streaming"))
+	log.Info("stream manager initialized",
+		slog.Bool("message_storage_enabled", config.AppConfig.MessageStorageEnabled),
+		slog.Bool("message_service_available", messageService != nil),
+		slog.Bool("firebase_credentials_configured", config.AppConfig.FirebaseCredJSON != ""),
+		slog.Bool("storage_will_work", messageService != nil))
 
-		// Initialize tool executor for tool call execution
-		toolExecutor := streaming.NewToolExecutor(
-			toolRegistry,
-			logger.WithComponent("tool-executor"),
-		)
-		streamManager.SetToolExecutor(toolExecutor)
-		log.Info("tool executor initialized")
+	// Initialize tool executor for tool call execution
+	toolExecutor := streaming.NewToolExecutor(
+		toolRegistry,
+		logger.WithComponent("tool-executor"),
+	)
+	streamManager.SetToolExecutor(toolExecutor)
+	log.Info("tool executor initialized")
 
-		// Ensure cleanup on shutdown
-		defer streamManager.Shutdown()
-	} else {
-		log.Info("stream manager disabled (requires message storage)")
-	}
+	// Ensure cleanup on shutdown
+	defer streamManager.Shutdown()
 
 	// Initialize background polling manager for GPT-5 Pro
 	var pollingManager *background.PollingManager
@@ -232,6 +258,7 @@ func main() {
 		pollingManager = background.NewPollingManager(
 			messageService,
 			requestTrackingService,
+			notificationService,
 			logger.WithComponent("polling"),
 			config.AppConfig,
 		)
@@ -342,6 +369,7 @@ func main() {
 		requestTrackingService: requestTrackingService,
 		messageService:         messageService,
 		titleService:           titleService,
+		notificationService:    notificationService,
 		streamManager:          streamManager,
 		pollingManager:         pollingManager,
 		modelRouter:            modelRouter,
@@ -462,6 +490,7 @@ type restServerInput struct {
 	requestTrackingService *request_tracking.Service
 	messageService         *messaging.Service
 	titleService           *title_generation.Service
+	notificationService    *notifications.Service
 	streamManager          *streaming.StreamManager
 	pollingManager         *background.PollingManager
 	modelRouter            *routing.ModelRouter
@@ -572,9 +601,9 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		}
 
 		// Deep Research endpoints (protected)
-		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled))    // POST API to start deep research
-		api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled)) // POST API to submit clarification response
-		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled))              // WebSocket proxy for deep research
+		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled, input.notificationService, input.titleService, input.modelRouter)) // POST API to start deep research
+		api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled, input.notificationService))                                    // POST API to submit clarification response
+		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled, input.notificationService))                                                 // WebSocket proxy for deep research
 
 		// Stream Control API routes (protected)
 		chats := api.Group("/chats")
@@ -591,9 +620,9 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 			{
 				keyShare := encryption.Group("/key-share")
 				{
-					keyShare.POST("/session", input.keyshareHandler.CreateSession)                                                                                                                                                                  // POST /api/v1/encryption/key-share/session
-					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)                                                                                                                                                           // POST /api/v1/encryption/key-share/session/:sessionId
-					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen)                                                                                                                                               // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
+					keyShare.POST("/session", input.keyshareHandler.CreateSession)                    // POST /api/v1/encryption/key-share/session
+					keyShare.POST("/session/:sessionId", input.keyshareHandler.SubmitKey)             // POST /api/v1/encryption/key-share/session/:sessionId
+					keyShare.GET("/session/:sessionId/listen", input.keyshareHandler.WebSocketListen) // WebSocket /api/v1/encryption/key-share/session/:sessionId/listen
 				}
 			}
 		}

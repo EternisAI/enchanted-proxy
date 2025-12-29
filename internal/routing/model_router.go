@@ -107,6 +107,7 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 	}
 
 	// GLM-4.6 - Free & Pro - via local/our IPs (3× multiplier)
+	// IMPORTANT: vLLM server expects "zai-org/GLM-4.6" (uppercase GLM)
 	if cfg.EternisInferenceAPIKey != "" {
 		routes["zai-org/glm-4.6"] = ProviderConfig{
 			BaseURL:         "http://127.0.0.1:20001/v1",
@@ -115,7 +116,8 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 			APIType:         APITypeChatCompletions,
 			TokenMultiplier: 3.0,
 		}
-		routes["glm-4.6"] = routes["zai-org/glm-4.6"] // Alias
+		routes["zai-org/GLM-4.6"] = routes["zai-org/glm-4.6"] // Uppercase variant (actual vLLM model name)
+		routes["glm-4.6"] = routes["zai-org/glm-4.6"]         // Lowercase alias
 	}
 
 	// Dolphin Mistral (Venice) - Free & Pro - via GCP self-hosted (0.5× multiplier)
@@ -381,4 +383,27 @@ func (mr *ModelRouter) GetProviders() []string {
 		providers = append(providers, provider)
 	}
 	return providers
+}
+
+// GetTitleGenerationConfig returns the provider configuration for title generation.
+// Uses GLM 4.6 as the default model for cost-effective title generation.
+//
+// Returns:
+//   - *ProviderConfig: GLM 4.6 provider config (model, baseURL, API key)
+//   - error: If GLM 4.6 is not configured
+//
+// Used by:
+//   - GPT-5 Pro responses (instead of expensive GPT-5 Pro for titles)
+//   - Deep Research sessions (for initial chat title)
+func (mr *ModelRouter) GetTitleGenerationConfig() (*ProviderConfig, error) {
+	// Use GLM 4.6 for title generation (cost-effective, fast)
+	// IMPORTANT: Use uppercase variant "zai-org/GLM-4.6" as that's what vLLM expects
+	config, exists := mr.routes["zai-org/GLM-4.6"]
+	if !exists {
+		return nil, fmt.Errorf("GLM 4.6 not configured for title generation (ETERNIS_INFERENCE_API_KEY missing)")
+	}
+
+	// Return a copy with the model ID set
+	result := config
+	return &result, nil
 }

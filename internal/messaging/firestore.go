@@ -284,20 +284,36 @@ func (f *FirestoreClient) SaveChatTitle(ctx context.Context, userID, chatID stri
 		)
 	}
 
-	_, err := docRef.Update(ctx, updates)
+	// Retry logic to handle race condition where chat document is being created by client
+	// Try up to 5 times with exponential backoff (max ~7 seconds total wait)
+	maxRetries := 5
 
-	if err != nil {
-		// If chat document doesn't exist, this is expected - client hasn't created it yet
-		// Log as info (not error) and return nil for graceful handling
-		if status.Code(err) == codes.NotFound {
-			// Chat document doesn't exist yet - client will create it later
-			// Title will need to be set again or client will generate it
-			return status.Errorf(codes.FailedPrecondition, "chat document not found - client must create chat before title can be saved user=%s chat=%s", userID, chatID)
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		_, err := docRef.Update(ctx, updates)
+
+		if err == nil {
+			// Success!
+			return nil
 		}
+
+		// Only retry on NotFound errors (race condition)
+		if status.Code(err) == codes.NotFound {
+			if attempt < maxRetries {
+				// Exponential backoff: 200ms, 800ms, 1800ms, 3200ms (~6s total)
+				backoffDuration := time.Duration(200*attempt*attempt) * time.Millisecond
+				time.Sleep(backoffDuration)
+				continue
+			}
+			// Final attempt failed - document still doesn't exist
+			return status.Errorf(codes.FailedPrecondition, "chat document not found after %d retries - client must create chat before title can be saved user=%s chat=%s", maxRetries, userID, chatID)
+		}
+
+		// Non-retryable error
 		return status.Errorf(codes.Internal, "failed to save title user=%s chat=%s: %v", userID, chatID, err)
 	}
 
-	return nil
+	// Should never reach here - all paths return above
+	return status.Errorf(codes.Internal, "unexpected code path in SaveChatTitle user=%s chat=%s", userID, chatID)
 }
 
 // VerifyChatOwnership checks if a user owns a specific chat

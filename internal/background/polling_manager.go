@@ -10,6 +10,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
+	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"log/slog"
 )
@@ -24,31 +25,34 @@ import (
 //
 // Thread-safety: All methods are thread-safe.
 type PollingManager struct {
-	workers         map[string]context.CancelFunc // response_id → cancel function
-	workersMu       sync.RWMutex
-	messageService  *messaging.Service
-	trackingService *request_tracking.Service
-	logger          *logger.Logger
-	cfg             *config.Config
-	shutdown        chan struct{}
-	wg              sync.WaitGroup
-	activeCount     atomic.Int32
+	workers             map[string]context.CancelFunc // response_id → cancel function
+	workersMu           sync.RWMutex
+	messageService      *messaging.Service
+	trackingService     *request_tracking.Service
+	notificationService *notifications.Service
+	logger              *logger.Logger
+	cfg                 *config.Config
+	shutdown            chan struct{}
+	wg                  sync.WaitGroup
+	activeCount         atomic.Int32
 }
 
 // NewPollingManager creates a new polling manager.
 func NewPollingManager(
 	messageService *messaging.Service,
 	trackingService *request_tracking.Service,
+	notificationService *notifications.Service,
 	logger *logger.Logger,
 	cfg *config.Config,
 ) *PollingManager {
 	return &PollingManager{
-		workers:         make(map[string]context.CancelFunc),
-		messageService:  messageService,
-		trackingService: trackingService,
-		logger:          logger.WithComponent("polling_manager"),
-		cfg:             cfg,
-		shutdown:        make(chan struct{}),
+		workers:             make(map[string]context.CancelFunc),
+		messageService:      messageService,
+		trackingService:     trackingService,
+		notificationService: notificationService,
+		logger:              logger.WithComponent("polling_manager"),
+		cfg:                 cfg,
+		shutdown:            make(chan struct{}),
 	}
 }
 
@@ -123,8 +127,8 @@ func (pm *PollingManager) runWorker(ctx context.Context, job PollingJob, apiKey,
 	// Create OpenAI client for this worker
 	openAIClient := NewOpenAIClient(apiKey, baseURL, pm.logger)
 
-	// Create worker with tracking service and multiplier
-	worker := NewPollingWorker(job, openAIClient, pm.messageService, pm.trackingService, pm.logger, pm.cfg, tokenMultiplier)
+	// Create worker with tracking service, notification service, and multiplier
+	worker := NewPollingWorker(job, openAIClient, pm.messageService, pm.trackingService, pm.notificationService, pm.logger, pm.cfg, tokenMultiplier)
 
 	// Run worker (blocks until done)
 	if err := worker.Run(ctx); err != nil {

@@ -39,8 +39,9 @@ func isValidProProduct(productID string) bool {
 // - Processing webhook events for subscription state changes
 // - Updating entitlements in the database based on subscription status
 type Service struct {
-	queries pgdb.Querier
-	logger  *logger.Logger
+	queries       pgdb.Querier
+	logger        *logger.Logger
+	weeklyPriceID string // Weekly subscription price ID (eligible for 3-day free trial)
 }
 
 // NewService creates a new Stripe service instance and configures the Stripe SDK.
@@ -70,17 +71,27 @@ func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
 		log.Info("Stripe API key configured", "key_prefix", prefix, "key_length", len(apiKey))
 	}
 
+	// Get weekly price ID from config
+	weeklyPriceID := config.AppConfig.StripeWeeklyPriceID
+	if weeklyPriceID != "" {
+		log.Info("Stripe weekly price configured (3-day trial enabled)", "price_id", weeklyPriceID)
+	} else {
+		log.Info("No weekly price configured - all subscriptions will have no trial period")
+	}
+
 	stripe.Key = apiKey
 	return &Service{
-		queries: queries,
-		logger:  log,
+		queries:       queries,
+		logger:        log,
+		weeklyPriceID: weeklyPriceID,
 	}
 }
 
 // CreateCheckoutSession generates a Stripe Checkout Session URL for Pro subscription purchase.
 // The session includes:
-// - 3-day free trial with payment method required upfront
-// - Automatic subscription creation after trial
+// - 3-day free trial for weekly subscriptions only (payment method required upfront)
+// - No trial for yearly/other subscriptions
+// - Automatic subscription creation after trial (or immediately for non-trial)
 // - Firebase user ID stored in subscription metadata for webhook processing
 // - Dynamic success/cancel URLs based on the request origin
 //
@@ -106,6 +117,23 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, userID string, pric
 	successURL := origin + "/?session_id={CHECKOUT_SESSION_ID}"
 	cancelURL := origin + "/pricing?canceled=true"
 
+	// Build subscription data params
+	subscriptionData := &stripe.CheckoutSessionSubscriptionDataParams{
+		Metadata: map[string]string{
+			"firebase_user_id": userID,
+		},
+	}
+
+	// Apply 3-day free trial only for weekly subscriptions
+	if s.weeklyPriceID != "" && priceID == s.weeklyPriceID {
+		subscriptionData.TrialPeriodDays = stripe.Int64(3)
+		subscriptionData.TrialSettings = &stripe.CheckoutSessionSubscriptionDataTrialSettingsParams{
+			EndBehavior: &stripe.CheckoutSessionSubscriptionDataTrialSettingsEndBehaviorParams{
+				MissingPaymentMethod: stripe.String("cancel"),
+			},
+		}
+	}
+
 	params := &stripe.CheckoutSessionParams{
 		Mode: stripe.String(string(stripe.CheckoutSessionModeSubscription)),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
@@ -114,19 +142,9 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, userID string, pric
 				Quantity: stripe.Int64(1),
 			},
 		},
-		SuccessURL: stripe.String(successURL),
-		CancelURL:  stripe.String(cancelURL),
-		SubscriptionData: &stripe.CheckoutSessionSubscriptionDataParams{
-			TrialPeriodDays: stripe.Int64(3), // 3-day free trial
-			TrialSettings: &stripe.CheckoutSessionSubscriptionDataTrialSettingsParams{
-				EndBehavior: &stripe.CheckoutSessionSubscriptionDataTrialSettingsEndBehaviorParams{
-					MissingPaymentMethod: stripe.String("cancel"),
-				},
-			},
-			Metadata: map[string]string{
-				"firebase_user_id": userID,
-			},
-		},
+		SuccessURL:       stripe.String(successURL),
+		CancelURL:        stripe.String(cancelURL),
+		SubscriptionData: subscriptionData,
 	}
 
 	sess, err := session.New(params)
@@ -138,6 +156,7 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, userID string, pric
 		"user_id", userID,
 		"price_id", priceID,
 		"session_id", sess.ID,
+		"has_trial", s.weeklyPriceID != "" && priceID == s.weeklyPriceID,
 		"origin", origin,
 		"success_url", successURL,
 		"cancel_url", cancelURL)
@@ -305,11 +324,11 @@ func (s *Service) handleCheckoutCompleted(ctx context.Context, event stripe.Even
 	provider := "stripe"
 	tier := "pro" // Activating subscription
 	if err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
-		UserID:                 userID,
-		SubscriptionTier:       tier,
-		SubscriptionExpiresAt:  sql.NullTime{Time: expiresAt, Valid: true},
-		SubscriptionProvider:   provider,
-		StripeCustomerID:       &customerID,
+		UserID:                userID,
+		SubscriptionTier:      tier,
+		SubscriptionExpiresAt: sql.NullTime{Time: expiresAt, Valid: true},
+		SubscriptionProvider:  provider,
+		StripeCustomerID:      &customerID,
 	}); err != nil {
 		return fmt.Errorf("failed to upsert entitlement: %w", err)
 	}
@@ -374,11 +393,11 @@ func (s *Service) handleSubscriptionDeleted(ctx context.Context, event stripe.Ev
 	provider := "stripe"
 	tier := "free" // Revoking subscription
 	if err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
-		UserID:                 userID,
-		SubscriptionTier:       tier,
-		SubscriptionExpiresAt:  sql.NullTime{Valid: false},
-		SubscriptionProvider:   provider,
-		StripeCustomerID:       nil, // Don't overwrite existing customer ID
+		UserID:                userID,
+		SubscriptionTier:      tier,
+		SubscriptionExpiresAt: sql.NullTime{Valid: false},
+		SubscriptionProvider:  provider,
+		StripeCustomerID:      nil, // Don't overwrite existing customer ID
 	}); err != nil {
 		return fmt.Errorf("failed to revoke entitlement: %w", err)
 	}
@@ -483,11 +502,11 @@ func (s *Service) handleSubscriptionUpdated(ctx context.Context, event stripe.Ev
 		tier = "pro"
 	}
 	if err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
-		UserID:                 userID,
-		SubscriptionTier:       tier,
-		SubscriptionExpiresAt:  proExpiresAt,
-		SubscriptionProvider:   provider,
-		StripeCustomerID:       nil, // Don't overwrite existing customer ID
+		UserID:                userID,
+		SubscriptionTier:      tier,
+		SubscriptionExpiresAt: proExpiresAt,
+		SubscriptionProvider:  provider,
+		StripeCustomerID:      nil, // Don't overwrite existing customer ID
 	}); err != nil {
 		return fmt.Errorf("failed to update entitlement: %w", err)
 	}

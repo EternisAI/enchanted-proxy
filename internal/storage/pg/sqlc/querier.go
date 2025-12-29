@@ -26,6 +26,7 @@ type Querier interface {
 	GetActiveDeepResearchRun(ctx context.Context, arg GetActiveDeepResearchRunParams) (GetActiveDeepResearchRunRow, error)
 	GetAllActiveTasks(ctx context.Context) ([]Task, error)
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
+	GetDeepResearchRunCountForChat(ctx context.Context, arg GetDeepResearchRunCountForChatParams) (int64, error)
 	GetEntitlement(ctx context.Context, userID string) (GetEntitlementRow, error)
 	GetInviteCodeByCodeHash(ctx context.Context, codeHash string) (InviteCode, error)
 	GetInviteCodeByID(ctx context.Context, id int64) (InviteCode, error)

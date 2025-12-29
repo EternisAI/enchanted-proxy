@@ -101,9 +101,9 @@ func (s *Service) processLogRequest(ctx context.Context, info RequestInfo) {
 			TotalTokens:      totalTokens,
 			PlanTokens:       sql.NullInt32{Int32: int32(*info.PlanTokens), Valid: true},
 			// Note: TokenMultiplier uses string formatting because sqlc generates sql.NullString
-		// for NUMERIC(8,2) columns. PostgreSQL converts strings to NUMERIC on insert.
-		// This is standard sqlc behavior for NUMERIC types.
-		TokenMultiplier: sql.NullString{String: fmt.Sprintf("%.2f", *info.Multiplier), Valid: true},
+			// for NUMERIC(8,2) columns. PostgreSQL converts strings to NUMERIC on insert.
+			// This is standard sqlc behavior for NUMERIC types.
+			TokenMultiplier: sql.NullString{String: fmt.Sprintf("%.2f", *info.Multiplier), Valid: true},
 		}
 
 		if err := s.queries.CreateRequestLogWithPlanTokens(ctx, params); err != nil {

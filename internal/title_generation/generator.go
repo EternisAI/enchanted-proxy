@@ -27,8 +27,60 @@ PRIORITIES:
 1. RULES
 2. USER'S REQUEST`
 
-// GenerateTitle calls AI to generate a title from the first message
+// isRetryableError checks if an error is transient and worth retrying
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	// Retry on network errors, timeouts, 5xx errors, rate limits
+	return strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "timed out") ||
+		strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "EOF") ||
+		strings.Contains(errStr, "503") ||
+		strings.Contains(errStr, "502") ||
+		strings.Contains(errStr, "504") ||
+		strings.Contains(errStr, "429") || // Rate limit
+		strings.Contains(errStr, "500")
+}
+
+// GenerateTitle calls AI to generate a title from the first message with retry logic
 func GenerateTitle(ctx context.Context, req TitleGenerationRequest, apiKey string) (string, error) {
+	maxRetries := 3
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		title, err := generateTitleAttempt(ctx, req, apiKey)
+		if err == nil {
+			return title, nil
+		}
+
+		lastErr = err
+
+		// Only retry on transient errors
+		if isRetryableError(err) && attempt < maxRetries {
+			// Exponential backoff: 1s, 2s
+			backoffDuration := time.Duration(attempt) * time.Second
+			select {
+			case <-time.After(backoffDuration):
+				continue
+			case <-ctx.Done():
+				return "", fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+			}
+		}
+
+		// Non-retryable error or final attempt
+		break
+	}
+
+	return "", lastErr
+}
+
+// generateTitleAttempt is a single attempt to generate a title
+func generateTitleAttempt(ctx context.Context, req TitleGenerationRequest, apiKey string) (string, error) {
 	// Build OpenAI-compatible request
 	payload := map[string]interface{}{
 		"model": req.Model,
@@ -47,7 +99,8 @@ func GenerateTitle(ctx context.Context, req TitleGenerationRequest, apiKey strin
 	}
 
 	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", req.BaseURL+"/chat/completions", bytes.NewReader(body))
+	url := req.BaseURL + "/chat/completions"
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -59,13 +112,18 @@ func GenerateTitle(ctx context.Context, req TitleGenerationRequest, apiKey strin
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("failed to call AI: %w", err)
+		return "", fmt.Errorf("failed to call AI at %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
+	// Read response body for debugging
+	bodyBytes, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return "", fmt.Errorf("failed to read response body: %w", readErr)
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("AI returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", fmt.Errorf("AI returned status %d: %s (url: %s, model: %s)", resp.StatusCode, string(bodyBytes), url, req.Model)
 	}
 
 	// Parse response
@@ -77,12 +135,12 @@ func GenerateTitle(ctx context.Context, req TitleGenerationRequest, apiKey strin
 		} `json:"choices"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w (response: %s)", err, string(bodyBytes))
 	}
 
 	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("no choices in response")
+		return "", fmt.Errorf("no choices in response (response: %s)", string(bodyBytes))
 	}
 
 	title := strings.TrimSpace(result.Choices[0].Message.Content)

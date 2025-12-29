@@ -48,6 +48,7 @@ func NewAdapter() *Adapter {
 //  7. Transform "max_tokens" to "max_output_tokens" (legacy parameter support)
 //  8. Add "store": true to enable server-side state persistence
 //  9. Add "background": true to enable polling mode (avoids timeout issues)
+//
 // 10. Add "previous_response_id" if continuing conversation
 // 11. Set "reasoning.effort" to "high" (default for GPT-5 Pro, if not provided)
 // 12. Keep all other supported parameters (model, etc.)

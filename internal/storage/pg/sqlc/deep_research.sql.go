@@ -71,6 +71,26 @@ func (q *Queries) GetActiveDeepResearchRun(ctx context.Context, arg GetActiveDee
 	return i, err
 }
 
+const getDeepResearchRunCountForChat = `-- name: GetDeepResearchRunCountForChat :one
+SELECT COUNT(*) as run_count
+FROM deep_research_runs
+WHERE user_id = $1
+  AND chat_id = $2
+  AND status IN ('completed', 'active')
+`
+
+type GetDeepResearchRunCountForChatParams struct {
+	UserID string `json:"userId"`
+	ChatID string `json:"chatId"`
+}
+
+func (q *Queries) GetDeepResearchRunCountForChat(ctx context.Context, arg GetDeepResearchRunCountForChatParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getDeepResearchRunCountForChat, arg.UserID, arg.ChatID)
+	var run_count int64
+	err := row.Scan(&run_count)
+	return run_count, err
+}
+
 const getUserDeepResearchRunsLifetime = `-- name: GetUserDeepResearchRunsLifetime :one
 SELECT COUNT(*) as run_count
 FROM deep_research_runs

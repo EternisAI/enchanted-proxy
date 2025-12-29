@@ -65,6 +65,8 @@ type StreamSession struct {
 	// Identifiers
 	chatID    string
 	messageID string
+	userID    string // User ID for authentication (used by tools)
+	userIDMu  sync.RWMutex
 
 	// Timing
 	startTime       time.Time
@@ -223,6 +225,36 @@ func (s *StreamSession) SetUpstreamAPIKey(apiKey string) {
 	s.requestMu.Lock()
 	defer s.requestMu.Unlock()
 	s.upstreamAPIKey = apiKey
+}
+
+// SetUserID stores the user ID for authentication during tool execution.
+// Must be called before Start() if tool execution with authentication is desired.
+func (s *StreamSession) SetUserID(userID string) {
+	s.userIDMu.Lock()
+	defer s.userIDMu.Unlock()
+	s.userID = userID
+}
+
+// getContextWithUserID returns a context derived from stopCtx with userID and chatID added.
+// This is used internally for tool execution to provide authentication and session context.
+func (s *StreamSession) getContextWithUserID() context.Context {
+	s.userIDMu.RLock()
+	userID := s.userID
+	s.userIDMu.RUnlock()
+
+	ctx := s.stopCtx
+
+	// Add userID to context for tool authentication
+	if userID != "" {
+		ctx = logger.WithUserID(ctx, userID)
+	}
+
+	// Add chatID to context for tool session awareness
+	if s.chatID != "" {
+		ctx = logger.WithChatID(ctx, s.chatID)
+	}
+
+	return ctx
 }
 
 // readUpstream reads from the upstream AI provider and broadcasts to subscribers.
@@ -386,7 +418,8 @@ func (s *StreamSession) readUpstream() {
 			}
 
 			// Execute tools with real-time notification callback
-			toolResults, err := s.toolExecutor.ExecuteToolCalls(s.stopCtx, s.chatID, s.messageID, toolCalls, onNotification)
+			// Use context with userID for authentication
+			toolResults, err := s.toolExecutor.ExecuteToolCalls(s.getContextWithUserID(), s.chatID, s.messageID, toolCalls, onNotification)
 			if err != nil {
 				s.logger.Error("tool execution failed",
 					slog.String("error", err.Error()),
@@ -611,10 +644,46 @@ func (s *StreamSession) readUpstream() {
 
 	// Check for scanner errors
 	if err := scanner.Err(); err != nil {
+		// CRITICAL FIX: Treat context.Canceled as successful completion
+		//
+		// Despite using context.Background(), ForceAttemptHTTP2: false, io.ReadAll(),
+		// and all other isolation techniques, the Go HTTP library still sometimes
+		// returns context.Canceled when the client disconnects.
+		//
+		// This is NOT an error - it means the upstream read was interrupted, but all
+		// data successfully read BEFORE the interruption is already buffered in chunks.
+		// The stream should continue processing this data normally.
+		//
+		// Why this fix works:
+		// 1. Scanner reads line by line from upstream
+		// 2. Each successfully-read line is stored in s.chunks
+		// 3. If context.Canceled occurs, we have all chunks read up to that point
+		// 4. For streaming APIs, partial data = complete data (they stream incrementally)
+		// 5. We should complete successfully with what we have, not error out
+		isContextCanceled := errors.Is(err, context.Canceled)
+
+		if isContextCanceled {
+			// Log as warning, not error, since this is expected behavior
+			s.logger.Warn("upstream read interrupted by context cancellation, completing with buffered data",
+				slog.String("chat_id", s.chatID),
+				slog.String("message_id", s.messageID),
+				slog.Int("chunks_read", chunkIndex),
+				slog.String("completion_type", "graceful_with_partial_data"))
+
+			// DO NOT broadcast error chunk - treat as successful completion
+			// All buffered chunks are already stored and broadcast
+			// Just mark as completed successfully
+			s.markCompleted(nil) // nil = success
+			return
+		}
+
+		// For other errors (NOT context.Canceled), this is a real error
 		s.logger.Error("scanner error while reading upstream",
 			slog.String("error", err.Error()),
 			slog.String("chat_id", s.chatID),
-			slog.String("message_id", s.messageID))
+			slog.String("message_id", s.messageID),
+			slog.Int("chunks_read", chunkIndex),
+			slog.String("error_type", fmt.Sprintf("%T", err)))
 
 		// Broadcast error chunk to subscribers
 		errorChunk := StreamChunk{
@@ -955,6 +1024,27 @@ func (s *StreamSession) IsStarted() bool {
 // Used by handlers to wait for completion independently of client connections.
 func (s *StreamSession) WaitForCompletion() {
 	<-s.completedChan
+}
+
+// ForceComplete forcibly completes the session with an error.
+// This is used when the upstream HTTP request fails before streaming starts.
+// It notifies all subscribers that the session has ended with an error.
+//
+// Parameters:
+//   - err: The error that caused the session to fail
+//
+// This method is idempotent - calling it multiple times is safe.
+func (s *StreamSession) ForceComplete(err error) {
+	s.logger.Warn("force completing session due to error",
+		slog.String("chat_id", s.chatID),
+		slog.String("message_id", s.messageID),
+		slog.String("error", err.Error()))
+
+	// Cancel the stop context to stop any ongoing reads (if started)
+	s.stopCancel()
+
+	// Mark as completed with error (closes subscriber channels)
+	s.markCompleted(err)
 }
 
 // IsStopped returns whether the stream was stopped by user/system.

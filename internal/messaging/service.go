@@ -259,16 +259,46 @@ func (s *Service) StoreMessageAsync(ctx context.Context, msg MessageToStore) err
 		return fmt.Errorf("service is shutting down")
 	}
 
+	// Wait up to 5 seconds for queue space (no silent drops)
 	select {
 	case s.messageChan <- msg:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
-	default:
-		s.logger.Warn("message queue is full, dropping message",
+	case <-time.After(5 * time.Second):
+		// Queue blocked for 5 seconds - this indicates a serious problem
+		// Check once more if shutting down before blocking
+		if s.closed.Load() {
+			s.logger.Warn("service is shutting down, cannot queue after timeout",
+				slog.String("user_id", msg.UserID),
+				slog.String("chat_id", msg.ChatID))
+			return fmt.Errorf("service is shutting down")
+		}
+
+		// Log as error and try one more time with limited timeout
+		s.logger.Error("message queue blocked for 5s, attempting blocking queue",
 			slog.String("user_id", msg.UserID),
-			slog.String("chat_id", msg.ChatID))
-		return fmt.Errorf("message queue is full")
+			slog.String("chat_id", msg.ChatID),
+			slog.Int("queue_size", len(s.messageChan)))
+
+		// Final attempt: blocking send with 30s max timeout (prevents goroutine leak)
+		select {
+		case s.messageChan <- msg:
+			s.logger.Info("message queued after blocking",
+				slog.String("user_id", msg.UserID),
+				slog.String("chat_id", msg.ChatID))
+			return nil
+		case <-ctx.Done():
+			s.logger.Error("context cancelled during blocking queue attempt",
+				slog.String("user_id", msg.UserID),
+				slog.String("chat_id", msg.ChatID))
+			return ctx.Err()
+		case <-time.After(30 * time.Second):
+			s.logger.Error("message queue blocked for 35s total, giving up",
+				slog.String("user_id", msg.UserID),
+				slog.String("chat_id", msg.ChatID))
+			return fmt.Errorf("message queue blocked for 35s total, giving up")
+		}
 	}
 }
 

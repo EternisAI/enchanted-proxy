@@ -65,4 +65,4 @@ tests/
 __pycache__/
 
 # Deep research session files (deprecated, now using database)
-deepr_sessions/
+deepr_sessions/.env.test

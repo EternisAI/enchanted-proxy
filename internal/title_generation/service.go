@@ -222,25 +222,69 @@ func (s *Service) QueueTitleGeneration(ctx context.Context, req TitleGenerationR
 	log := s.logger.WithContext(ctx)
 
 	// Generate title via AI first (blocking, but fast)
+	log.Info("starting title generation",
+		slog.String("chat_id", req.ChatID),
+		slog.String("model", req.Model),
+		slog.String("base_url", req.BaseURL),
+		slog.Int("message_length", len(req.FirstMessage)))
+
 	title, err := GenerateTitle(ctx, req, apiKey)
 	if err != nil {
-		log.Error("failed to generate title", slog.String("error", err.Error()))
+		log.Error("failed to generate title",
+			slog.String("error", err.Error()),
+			slog.String("chat_id", req.ChatID),
+			slog.String("model", req.Model),
+			slog.String("base_url", req.BaseURL))
 		return
 	}
 
-	log.Debug("title generated", slog.String("title", title))
+	log.Info("title generated successfully",
+		slog.String("title", title),
+		slog.String("chat_id", req.ChatID),
+		slog.String("model", req.Model))
 
 	// Update request with generated title
 	req.FirstMessage = title
 
+	// Check again if service is shutting down (after AI call which could take time)
+	// Prevents panic from sending to closed channel
+	if s.closed.Load() {
+		log.Warn("service is shutting down after title generation, cannot queue",
+			slog.String("chat_id", req.ChatID))
+		return
+	}
+
 	// Queue for encryption and storage
+	// Wait up to 5 seconds for queue space (no silent drops)
 	select {
 	case s.titleChan <- req:
 		log.Debug("title generation queued", slog.String("chat_id", req.ChatID))
 	case <-ctx.Done():
 		log.Warn("context cancelled, cannot queue title generation")
-	default:
-		log.Warn("title generation queue full, dropping request", slog.String("chat_id", req.ChatID))
+	case <-time.After(5 * time.Second):
+		// Queue blocked for 5 seconds - this indicates a serious problem
+		// Check once more if shutting down before blocking
+		if s.closed.Load() {
+			log.Warn("service is shutting down, cannot queue after timeout",
+				slog.String("chat_id", req.ChatID))
+			return
+		}
+
+		// Log as error and try one more time with limited timeout
+		log.Error("title generation queue blocked for 5s, attempting blocking queue",
+			slog.String("chat_id", req.ChatID),
+			slog.Int("queue_size", len(s.titleChan)))
+
+		// Final attempt: blocking send with 30s max timeout (prevents goroutine leak)
+		select {
+		case s.titleChan <- req:
+			log.Info("title generation queued after blocking", slog.String("chat_id", req.ChatID))
+		case <-ctx.Done():
+			log.Error("context cancelled during blocking queue attempt", slog.String("chat_id", req.ChatID))
+		case <-time.After(30 * time.Second):
+			log.Error("title generation queue blocked for 35s total, giving up",
+				slog.String("chat_id", req.ChatID))
+		}
 	}
 }
 

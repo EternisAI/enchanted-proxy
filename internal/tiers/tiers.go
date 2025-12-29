@@ -73,10 +73,10 @@ var Configs = map[Tier]Config{
 		// Includes all known aliases to prevent blocking users
 		// Free tier can only use: DeepSeek R1, Llama 3.3 70B, GLM-4.6, Dolphin Mistral (uncensored)
 		AllowedModels: []string{
-			"deepseek-r1-0528", "deepseek-r1",                      // DeepSeek R1 (1×)
-			"llama3-3-70b", "llama-3.3-70b",                         // Llama 3.3 70B (1×)
-			"zai-org/GLM-4.6", "glm-4.6",                            // GLM-4.6 (3×)
-			"dolphin-mistral-eternis", "dolphin-mistral",            // Dolphin Mistral (0.5×, uncensored)
+			"deepseek-r1-0528", "deepseek-r1", // DeepSeek R1 (1×)
+			"llama3-3-70b", "llama-3.3-70b", // Llama 3.3 70B (1×)
+			"zai-org/GLM-4.6", "glm-4.6", // GLM-4.6 (3×)
+			"dolphin-mistral-eternis", "dolphin-mistral", // Dolphin Mistral (0.5×, uncensored)
 		},
 		DeepResearchDailyRuns:         0, // Not available daily
 		DeepResearchLifetimeRuns:      1, // 1 lifetime run
@@ -103,8 +103,8 @@ var Configs = map[Tier]Config{
 	TierPro: {
 		Name:                          "pro",
 		DisplayName:                   "Pro",
-		MonthlyPlanTokens:             0,      // No monthly limit
-		WeeklyPlanTokens:              0,      // No weekly limit
+		MonthlyPlanTokens:             0, // No monthly limit
+		WeeklyPlanTokens:              0, // No weekly limit
 		DailyPlanTokens:               500_000,
 		AllowedModels:                 []string{}, // Empty = all models allowed
 		DeepResearchDailyRuns:         10,

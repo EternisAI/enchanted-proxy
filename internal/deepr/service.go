@@ -14,6 +14,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
+	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
@@ -32,6 +33,7 @@ type Service struct {
 	firestoreClient              *messaging.FirestoreClient
 	deepResearchRateLimitEnabled bool
 	queries                      pgdb.Querier // For tier-based quota enforcement
+	notificationService          *notifications.Service
 }
 
 // mapEventTypeToState maps event types from deep research server to session states.
@@ -250,7 +252,7 @@ func (s *Service) validateFreemiumAccess(ctx context.Context, userID, chatID str
 }
 
 // NewService creates a new deep research service with database storage.
-func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool) *Service {
+func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool, notificationService *notifications.Service) *Service {
 	var encryptionService *messaging.EncryptionService
 	var firestoreClient *messaging.FirestoreClient
 
@@ -269,6 +271,7 @@ func NewService(logger *logger.Logger, trackingService *request_tracking.Service
 		encryptionService:            encryptionService,
 		firestoreClient:              firestoreClient,
 		deepResearchRateLimitEnabled: deepResearchRateLimitEnabled,
+		notificationService:          notificationService,
 	}
 }
 
@@ -586,6 +589,22 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 				// Mark as successful if research completed without error
 				if msg.Type == "research_complete" {
 					completedSuccessfully = true
+
+					// Send push notification for successful completion
+					if s.notificationService != nil {
+						go func() {
+							// Use background context to ensure notification sends even if session context is cancelled
+							notifyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+							defer cancel()
+
+							if err := s.notificationService.SendDeepResearchCompletionNotification(notifyCtx, userID, chatID); err != nil {
+								log.Error("failed to send deep research completion notification",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("error", err.Error()))
+							}
+						}()
+					}
 				}
 
 				return
@@ -840,12 +859,23 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 	// Listen for new messages from backend (they'll be broadcast to all clients)
 	done := make(chan struct{})
 
+	// Get the session to access its context
+	session, exists := s.sessionManager.GetSession(userID, chatID)
+	if !exists || session == nil {
+		log.Error("session not found after reconnection",
+			slog.String("user_id", userID),
+			slog.String("chat_id", chatID))
+		clientConn.Close()
+		return
+	}
+
 	// Listen for messages from this client
+	// Use session context so client can disconnect without terminating the backend session
 	go func() {
 		defer close(done)
 		for {
 			select {
-			case <-ctx.Done():
+			case <-session.Context.Done():
 				return
 			default:
 				_, message, err := clientConn.ReadMessage()
@@ -867,7 +897,7 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 					slog.Int("message_size", len(message)))
 
 				// Check if message can be forwarded based on session state
-				canForward, currentState, err := s.canForwardMessage(ctx, userID, chatID)
+				canForward, currentState, err := s.canForwardMessage(session.Context, userID, chatID)
 				if err != nil {
 					log.Error("failed to check if message can be forwarded",
 						slog.String("user_id", userID),
@@ -909,8 +939,8 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 }
 
 // handleClientMessages handles forwarding messages from a client to the backend.
-func (s *Service) handleClientMessages(ctx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
-	log := s.logger.WithContext(ctx).WithComponent("deepr")
+func (s *Service) handleClientMessages(sessionCtx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
+	log := s.logger.WithContext(sessionCtx).WithComponent("deepr")
 
 	log.Info("client message handler started",
 		slog.String("user_id", userID),
@@ -920,8 +950,8 @@ func (s *Service) handleClientMessages(ctx context.Context, clientConn *websocke
 	messageCount := 0
 	for {
 		select {
-		case <-ctx.Done():
-			log.Info("client message handler stopped - context canceled",
+		case <-sessionCtx.Done():
+			log.Info("client message handler stopped - session ended",
 				slog.String("user_id", userID),
 				slog.String("chat_id", chatID),
 				slog.String("client_id", clientID),
@@ -955,7 +985,7 @@ func (s *Service) handleClientMessages(ctx context.Context, clientConn *websocke
 				slog.Int("message_number", messageCount))
 
 			// Check if message can be forwarded based on session state
-			canForward, currentState, err := s.canForwardMessage(ctx, userID, chatID)
+			canForward, currentState, err := s.canForwardMessage(sessionCtx, userID, chatID)
 			if err != nil {
 				log.Error("failed to check if message can be forwarded",
 					slog.String("user_id", userID),
@@ -1144,7 +1174,8 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 	s.sessionManager.AddClientConnection(userID, chatID, clientID, clientConn)
 
 	// Handle messages from this client to backend in a separate goroutine
-	go s.handleClientMessages(ctx, clientConn, userID, chatID, clientID)
+	// Use session context so client can disconnect without terminating the session
+	go s.handleClientMessages(sessionCtx, clientConn, userID, chatID, clientID)
 
 	log.Info("session established, starting message processing",
 		slog.String("user_id", userID),
@@ -1369,6 +1400,22 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 
 					// Mark as successful for defer completion
 					completedSuccessfully = true
+
+					// Send push notification for successful completion
+					if s.notificationService != nil {
+						go func() {
+							// Use background context to ensure notification sends even if session context is cancelled
+							notifyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+							defer cancel()
+
+							if err := s.notificationService.SendDeepResearchCompletionNotification(notifyCtx, userID, chatID); err != nil {
+								log.Error("failed to send deep research completion notification",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("error", err.Error()))
+							}
+						}()
+					}
 				}
 
 				// Check if session is complete
@@ -1488,6 +1535,25 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 								slog.String("user_id", userID),
 								slog.String("chat_id", chatID))
 						}
+					}
+
+					// Mark as successful for defer completion
+					completedSuccessfully = true
+
+					// Send push notification for successful completion
+					if s.notificationService != nil {
+						go func() {
+							// Use background context to ensure notification sends even if session context is cancelled
+							notifyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+							defer cancel()
+
+							if err := s.notificationService.SendDeepResearchCompletionNotification(notifyCtx, userID, chatID); err != nil {
+								log.Error("failed to send deep research completion notification",
+									slog.String("user_id", userID),
+									slog.String("chat_id", chatID),
+									slog.String("error", err.Error()))
+							}
+						}()
 					}
 				}
 
