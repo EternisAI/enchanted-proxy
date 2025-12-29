@@ -60,6 +60,8 @@ egress:
   - 3.227.209.82
   - 18.213.155.45
   - 18.214.78.123
+  # db.zwcxttrzlaxtbyitpaip.supabase.co
+  - 3.151.95.224
   # Firestore (used by deepresearch user tracking)
   - firestore.googleapis.com
   # Firebase Cloud Messaging (push notifications)
