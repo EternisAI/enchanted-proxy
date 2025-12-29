@@ -37,8 +37,8 @@ import (
 //	// provider.APIKey = os.Getenv("OPENAI_API_KEY")
 type ModelRouter struct {
 	aliases map[string]string
+	apiKeys map[string]map[string]string // Store platform-specific keys for API providers
 	routes  map[string]ModelRoute
-	config  *config.Config // Store config for platform-specific keys
 	logger  *logger.Logger
 }
 
@@ -98,9 +98,17 @@ type ProviderConfig struct {
 // Platform-specific keys (OpenRouter) are resolved at route time.
 func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 	router := &ModelRouter{
-		config: cfg,
 		logger: logger,
 	}
+
+	apiKeys := map[string]map[string]string{
+		"OpenRouter": map[string]string{
+			"mobile":  cfg.OpenRouterMobileAPIKey,
+			"desktop": cfg.OpenRouterDesktopAPIKey,
+		},
+	}
+
+	router.apiKeys = apiKeys
 
 	router.RebuildRoutes(cfg.ModelRouterConfig)
 
@@ -328,26 +336,26 @@ func (mr *ModelRouter) getModelEndpointProvider(model string, platform string) *
 // getOpenRouterAPIKey returns the appropriate OpenRouter API key for the platform.
 // Falls back to the other platform's key if the requested platform key is not configured.
 func (mr *ModelRouter) getOpenRouterAPIKey(platform string) string {
-	switch platform {
-	case "mobile":
-		if mr.config.OpenRouterMobileAPIKey != "" {
-			return mr.config.OpenRouterMobileAPIKey
+	if apiKeys, providerExists := mr.apiKeys["OpenRouter"]; providerExists {
+		// Try resolving the key for the target platform
+		if key := apiKeys[platform]; key != "" {
+			return key
 		}
-		// Fall back to desktop key
-		return mr.config.OpenRouterDesktopAPIKey
-	case "desktop":
-		if mr.config.OpenRouterDesktopAPIKey != "" {
-			return mr.config.OpenRouterDesktopAPIKey
+
+		// Try falling back to the default (mobile) platform key
+		if key := apiKeys["mobile"]; key != "" {
+			return key
 		}
-		// Fall back to mobile key
-		return mr.config.OpenRouterMobileAPIKey
-	default:
-		// Default to mobile if platform not specified
-		if mr.config.OpenRouterMobileAPIKey != "" {
-			return mr.config.OpenRouterMobileAPIKey
+
+		// Last resort - return whatever key is configured, if any
+		for _, key := range apiKeys {
+			if key != "" {
+				return key
+			}
 		}
-		return mr.config.OpenRouterDesktopAPIKey
 	}
+
+	return ""
 }
 
 // GetSupportedModels returns a list of explicitly configured models.

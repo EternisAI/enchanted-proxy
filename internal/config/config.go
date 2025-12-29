@@ -282,7 +282,7 @@ func LoadConfig() {
 		log.Fatalf("Failed to open config file: %v", err)
 	}
 
-	if err := loadConfigFile(configFile, AppConfig); err != nil {
+	if err := LoadConfigFile(configFile, AppConfig); err != nil {
 		log.Fatalf("Failed to load config file: %v", err)
 	}
 
@@ -384,7 +384,7 @@ func getEnvAsInt(key string, defaultValue int) int {
 	return defaultValue
 }
 
-func loadConfigFile(reader io.Reader, config *Config) error {
+func LoadConfigFile(reader io.Reader, config *Config) error {
 	decoder := yaml.NewDecoder(reader)
 
 	if err := decoder.Decode(config); err != nil {
