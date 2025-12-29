@@ -274,6 +274,7 @@ func (mr *ModelRouter) RouteModel(modelID string, platform string) (*ProviderCon
 
 	// Fall back to wildcard (OpenRouter)
 	if provider := mr.getModelEndpointProvider("*", platform); provider != nil {
+		provider.Model = modelID
 		mr.logger.Info("model routed to fallback provider",
 			slog.String("model", modelID),
 			slog.String("provider", provider.Name),
