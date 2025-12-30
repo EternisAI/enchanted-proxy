@@ -54,10 +54,6 @@ egress:
   - flow.deepr.freysa.ai
   # Self-hosted Venice (GCP)
   - 34.30.193.13
-  # ZCash payment backend
-  - 54.210.176.154
-  # Kraken API (ZEC/USD price)
-  - api.kraken.com
   # aws-0-us-east-2.pooler.supabase.com
   - 3.13.175.194
   - 3.139.14.59
