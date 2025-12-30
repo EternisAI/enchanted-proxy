@@ -2,6 +2,7 @@ package zcash
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -79,6 +80,12 @@ func (h *Handler) GetInvoiceStatus(c *gin.Context) {
 	userID, ok := auth.GetUserID(c)
 	if !ok || userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	parts := strings.Split(invoiceID, "_")
+	if len(parts) == 0 || parts[0] != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
