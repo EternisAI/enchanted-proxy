@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -175,7 +176,7 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 	zecAmount := priceUSD / zecPriceUSD
 	zatAmount := int64(zecAmount * 100_000_000)
 
-	invoiceID := fmt.Sprintf("%s_%s_%d", userID, productID, time.Now().Unix())
+	invoiceID := fmt.Sprintf("%s__%s__%d", userID, productID, time.Now().Unix())
 
 	reqBody := CreateInvoiceRequest{
 		InvoiceID:   invoiceID,
@@ -305,14 +306,13 @@ type invoiceParts struct {
 }
 
 func parseInvoiceID(invoiceID string) *invoiceParts {
-	var userID, productID, timestamp string
-	n, _ := fmt.Sscanf(invoiceID, "%[^_]_%[^_]_%s", &userID, &productID, &timestamp)
-	if n != 3 {
+	parts := strings.SplitN(invoiceID, "__", 3)
+	if len(parts) != 3 {
 		return nil
 	}
 	return &invoiceParts{
-		userID:    userID,
-		productID: productID,
-		timestamp: timestamp,
+		userID:    parts[0],
+		productID: parts[1],
+		timestamp: parts[2],
 	}
 }
