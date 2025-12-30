@@ -152,11 +152,19 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, userID string, pric
 		return "", fmt.Errorf("failed to create checkout session: %w", err)
 	}
 
+	// Debug: log what Stripe actually created
+	var trialEnd *int64
+	if sess.Subscription != nil && sess.Subscription.TrialEnd > 0 {
+		trialEnd = &sess.Subscription.TrialEnd
+	}
+
 	s.logger.Info("checkout session created",
 		"user_id", userID,
 		"price_id", priceID,
 		"session_id", sess.ID,
 		"has_trial", s.weeklyPriceID != "" && priceID == s.weeklyPriceID,
+		"stripe_trial_end", trialEnd,
+		"subscription_id", sess.Subscription,
 		"origin", origin,
 		"success_url", successURL,
 		"cancel_url", cancelURL)
