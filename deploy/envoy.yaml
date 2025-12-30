@@ -157,6 +157,20 @@ static_resources:
           access_log: *access_log_tcp
           access_log_options:
             flush_access_log_on_connected: true
+  - name: internal_zcash_backend
+    internal_listener: {}
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.tcp_proxy
+        typed_config:
+          '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+          stat_prefix: tcp_proxy
+          cluster: enclaver_odyn_egress
+          tunneling_config:
+            hostname: zcash.eternisai.net:443
+          access_log: *access_log_tcp
+          access_log_options:
+            flush_access_log_on_connected: true
   - name: egress_glm-46
     address:
       socket_address:
@@ -234,6 +248,39 @@ static_resources:
                   prefix: /
                 route:
                   cluster: internal_glm-46
+                  timeout: 0s
+                  retry_policy:
+                    retry_on: gateway-error
+                    num_retries: 2
+  - name: egress_zcash_backend
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 20002
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: http_proxy
+          stream_idle_timeout: 900s
+          access_log: *access_log_http
+          http_filters:
+          - name: envoy.filters.http.router
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+          route_config:
+            name: main
+            virtual_hosts:
+            - name: default
+              domains:
+              - '*'
+              routes:
+              - name: default
+                match:
+                  prefix: /
+                route:
+                  cluster: internal_zcash_backend
                   timeout: 0s
                   retry_policy:
                     retry_on: gateway-error
@@ -425,7 +472,7 @@ static_resources:
               socket_address:
                 address: 127.0.0.1
                 port_value: 9901
-  # internal inference endpoints
+  # internal endpoints
   - name: internal_glm-46
     load_assignment:
       cluster_name: internal_glm-46
@@ -461,6 +508,26 @@ static_resources:
         '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
         explicit_http_config:
           http2_protocol_options: {}
+  - name: internal_zcash_backend
+    load_assignment:
+      cluster_name: internal_zcash_backend
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              envoy_internal_address:
+                server_listener_name: internal_zcash_backend
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+        sni: zcash.eternisai.net
+        common_tls_context:
+          validation_context:
+            trusted_ca:
+              filename: /etc/ssl/certs/eternis/llm-ca.pem
+            watched_directory:
+              path: /etc/ssl/certs/eternis
     transport_socket:
       name: envoy.transport_sockets.tls
       typed_config:

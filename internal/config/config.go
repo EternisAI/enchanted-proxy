@@ -119,6 +119,9 @@ type Config struct {
 
 	// Push Notifications
 	PushNotificationsEnabled bool // Enable/disable FCM push notifications for task completions (default: true)
+
+	// ZCash Backend
+	ZCashBackendAPIKey string
 }
 
 var AppConfig *Config
@@ -260,6 +263,9 @@ func LoadConfig() {
 
 		// Push Notifications
 		PushNotificationsEnabled: getEnvOrDefault("PUSH_NOTIFICATIONS_ENABLED", "true") == "true",
+
+		// ZCash Backend
+		ZCashBackendAPIKey: getEnvOrDefault("ZCASH_BACKEND_API_KEY", ""),
 	}
 
 	// Load settings from a configuration file.
@@ -321,6 +327,10 @@ func LoadConfig() {
 
 	if AppConfig.TelegramToken != "" {
 		log.Println("Telegram service enabled with token")
+	}
+
+	if AppConfig.ZCashBackendAPIKey == "" {
+		log.Println("Warning: ZCash Backend API key is missing. Please set PERPLEXITY_API_KEY environment variable.")
 	}
 
 	if AppConfig.AppStoreAPIKeyP8 == "" || AppConfig.AppStoreAPIKeyID == "" || AppConfig.AppStoreBundleID == "" || AppConfig.AppStoreIssuerID == "" {
