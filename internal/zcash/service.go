@@ -5,19 +5,21 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
 )
 
 const (
-	zcashBackendURL = "http://54.210.176.154:8080"
+	zcashBackendURL = "http://127.0.0.1:20002"
 	krakenAPIURL    = "https://api.kraken.com/0/public/Ticker?pair=ZECUSD"
 
 	ProductMonthlyPro   = "monthly_pro"
@@ -109,7 +111,7 @@ func (s *Service) GetProduct(productID string) *Product {
 }
 
 type KrakenTickerResponse struct {
-	Error  []string                   `json:"error"`
+	Error  []string                    `json:"error"`
 	Result map[string]KrakenTickerData `json:"result"`
 }
 
@@ -161,6 +163,11 @@ func (s *Service) GetZecPriceUSD(ctx context.Context) (float64, error) {
 }
 
 func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (*CreateInvoiceResponse, float64, error) {
+	apiKey := config.AppConfig.ZCashBackendAPIKey
+	if apiKey == "" {
+		return nil, 0, errors.New("zcash backend API key not configured")
+	}
+
 	product := s.GetProduct(productID)
 	if product == nil {
 		return nil, 0, fmt.Errorf("unknown product: %s", productID)
@@ -193,6 +200,7 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -213,10 +221,16 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 }
 
 func (s *Service) GetInvoiceStatus(ctx context.Context, invoiceID string) (*InvoiceStatusResponse, error) {
+	apiKey := config.AppConfig.ZCashBackendAPIKey
+	if apiKey == "" {
+		return nil, errors.New("zcash backend API key not configured")
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", zcashBackendURL+"/invoices/"+invoiceID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
