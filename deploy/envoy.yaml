@@ -490,6 +490,24 @@ static_resources:
         '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
         explicit_http_config:
           http2_protocol_options: {}
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+        sni: cloud-api.near.ai
+        common_tls_context:
+          # Negotiate HTTP/2 via ALPN
+          alpn_protocols: ["h2", "http/1.1"]
+          tls_params:
+            tls_minimum_protocol_version: TLSv1_3
+            tls_maximum_protocol_version: TLSv1_3
+            ecdh_curves:
+            - X25519
+            - P-256
+            - P-384
+          validation_context:
+            trusted_ca:
+              filename: /etc/ssl/certs/ca-certificates.crt
   - name: internal_zcash_backend
     load_assignment:
       cluster_name: internal_zcash_backend
@@ -510,24 +528,6 @@ static_resources:
               filename: /etc/ssl/certs/eternis/llm-ca.pem
             watched_directory:
               path: /etc/ssl/certs/eternis
-    transport_socket:
-      name: envoy.transport_sockets.tls
-      typed_config:
-        '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
-        sni: cloud-api.near.ai
-        common_tls_context:
-          # Negotiate HTTP/2 via ALPN
-          alpn_protocols: ["h2", "http/1.1"]
-          tls_params:
-            tls_minimum_protocol_version: TLSv1_3
-            tls_maximum_protocol_version: TLSv1_3
-            ecdh_curves:
-            - X25519
-            - P-256
-            - P-384
-          validation_context:
-            trusted_ca:
-              filename: /etc/ssl/certs/ca-certificates.crt
   # transparent proxy endpoint
   - name: enclaver_odyn_egress
     connect_timeout: 1s
