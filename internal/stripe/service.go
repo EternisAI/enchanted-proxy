@@ -125,6 +125,13 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, userID string, pric
 	}
 
 	// Apply 3-day free trial only for weekly subscriptions
+	s.logger.Info("trial check",
+		"weekly_price_id", s.weeklyPriceID,
+		"weekly_price_id_len", len(s.weeklyPriceID),
+		"request_price_id", priceID,
+		"request_price_id_len", len(priceID),
+		"match", priceID == s.weeklyPriceID)
+
 	if s.weeklyPriceID != "" && priceID == s.weeklyPriceID {
 		subscriptionData.TrialPeriodDays = stripe.Int64(3)
 		subscriptionData.TrialSettings = &stripe.CheckoutSessionSubscriptionDataTrialSettingsParams{
