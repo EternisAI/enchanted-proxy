@@ -71,3 +71,6 @@ sql:
             go_type:
               type: "string"
               pointer: true
+          - db_type: "vector"
+            go_type:
+              type: "any"

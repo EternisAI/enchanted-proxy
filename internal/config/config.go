@@ -122,6 +122,12 @@ type Config struct {
 
 	// ZCash Backend
 	ZCashBackendAPIKey string
+
+	// Linear (Problem Reports)
+	LinearAPIKey    string
+	LinearTeamID    string
+	LinearProjectID string
+	LinearLabelID   string
 }
 
 var AppConfig *Config
@@ -266,6 +272,12 @@ func LoadConfig() {
 
 		// ZCash Backend
 		ZCashBackendAPIKey: getEnvOrDefault("ZCASH_BACKEND_API_KEY", ""),
+
+		// Linear (Problem Reports)
+		LinearAPIKey:    getEnvOrDefault("LINEAR_API_KEY", ""),
+		LinearTeamID:    getEnvOrDefault("LINEAR_TEAM_ID", ""),
+		LinearProjectID: getEnvOrDefault("LINEAR_PROJECT_ID", ""),
+		LinearLabelID:   getEnvOrDefault("LINEAR_LABEL_ID", ""),
 	}
 
 	// Load settings from a configuration file.

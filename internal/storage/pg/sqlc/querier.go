@@ -14,8 +14,10 @@ type Querier interface {
 	AtomicUseInviteCode(ctx context.Context, arg AtomicUseInviteCodeParams) error
 	CompleteDeepResearchRun(ctx context.Context, arg CompleteDeepResearchRunParams) error
 	CountInviteCodesByRedeemedBy(ctx context.Context, redeemedBy *string) (int64, error)
+	CountProblemReportsByUserID(ctx context.Context, userID string) (int64, error)
 	CreateDeepResearchRun(ctx context.Context, arg CreateDeepResearchRunParams) (int64, error)
 	CreateInviteCode(ctx context.Context, arg CreateInviteCodeParams) (InviteCode, error)
+	CreateProblemReport(ctx context.Context, arg CreateProblemReportParams) (ProblemReport, error)
 	CreateRequestLog(ctx context.Context, arg CreateRequestLogParams) error
 	CreateRequestLogWithPlanTokens(ctx context.Context, arg CreateRequestLogWithPlanTokensParams) error
 	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
@@ -23,6 +25,7 @@ type Querier interface {
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	DeleteTask(ctx context.Context, arg DeleteTaskParams) (sql.Result, error)
 	DeleteTelegramChat(ctx context.Context, chatID int64) error
+	FindSimilarProblemReports(ctx context.Context, dollar_1 any) ([]FindSimilarProblemReportsRow, error)
 	GetActiveDeepResearchRun(ctx context.Context, arg GetActiveDeepResearchRunParams) (GetActiveDeepResearchRunRow, error)
 	GetAllActiveTasks(ctx context.Context) ([]Task, error)
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
@@ -30,6 +33,8 @@ type Querier interface {
 	GetEntitlement(ctx context.Context, userID string) (GetEntitlementRow, error)
 	GetInviteCodeByCodeHash(ctx context.Context, codeHash string) (InviteCode, error)
 	GetInviteCodeByID(ctx context.Context, id int64) (InviteCode, error)
+	GetParentProblemReport(ctx context.Context, id string) (ProblemReport, error)
+	GetProblemReportByID(ctx context.Context, id string) (ProblemReport, error)
 	GetSessionMessageCount(ctx context.Context, sessionID string) (int64, error)
 	GetSessionMessages(ctx context.Context, sessionID string) ([]DeepResearchMessage, error)
 	GetStripeCustomerID(ctx context.Context, userID string) (*string, error)
@@ -69,6 +74,7 @@ type Querier interface {
 	UpdateDeepResearchRunTokens(ctx context.Context, arg UpdateDeepResearchRunTokensParams) error
 	UpdateInviteCodeActive(ctx context.Context, arg UpdateInviteCodeActiveParams) error
 	UpdateInviteCodeUsage(ctx context.Context, arg UpdateInviteCodeUsageParams) error
+	UpdateProblemReportTicketID(ctx context.Context, arg UpdateProblemReportTicketIDParams) error
 	UpdateTaskStatus(ctx context.Context, arg UpdateTaskStatusParams) error
 	UpsertEntitlement(ctx context.Context, arg UpsertEntitlementParams) error
 	UpsertEntitlementWithTier(ctx context.Context, arg UpsertEntitlementWithTierParams) error
