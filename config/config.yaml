@@ -41,12 +41,12 @@ model_router:
     - name: Tinfoil
       model: llama3-3-70b
 
-  # GLM-4.6 - Free & Pro - via local/our IPs, fallback to NEAR AI (3× multiplier)
+  # GLM-4.6 - Free & Pro - via local/our IPs, fallback to NEAR AI (0.6× multiplier)
   - name: zai-org/GLM-4.6
     aliases:
     - z-ai/glm-4.6
     - glm-4.6
-    token_multiplier: 3.0
+    token_multiplier: 0.6
     providers:
     - name: Eternis
       base_url: http://127.0.0.1:20001/v1

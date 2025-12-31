@@ -17,7 +17,7 @@
 |-------|-------------|------------|----------|-------|
 | **DeepSeek R1** (`deepseek-r1`) | Free, Pro | **1×** | Tinfoil | |
 | **Llama 3.3 70B** (`llama-3.3-70b`) | Free, Pro | **1×** | Tinfoil | |
-| **GLM-4.6** (`glm-4.6`) | Free, Pro | **3×** | Eternis | Self-hosted |
+| **GLM-4.6** (`glm-4.6`) | Free, Pro | **0.6×** | Eternis | Self-hosted |
 | **Dolphin Mistral** (`dolphin-mistral`) | Free, Pro | **0.5×** | Eternis | Uncensored, self-hosted |
 | **GPT-4.1** (`gpt-4.1`) | Pro | **4×** | OpenRouter | |
 | **GPT-5** (`gpt-5`) | Pro | **6×** | OpenRouter | |
@@ -30,7 +30,7 @@
 Plan tokens = Raw tokens × Multiplier
 
 **Examples**:
-- A 1,000 token request to GLM-4.6 (3× multiplier) counts as **3,000 plan tokens** against your quota.
+- A 1,000 token request to GLM-4.6 (0.6× multiplier) counts as **600 plan tokens** against your quota.
 - A 1,000 token request to Dolphin Mistral (0.5× multiplier) counts as **500 plan tokens** against your quota.
 
 ## Deep Research
@@ -42,7 +42,7 @@ Plan tokens = Raw tokens × Multiplier
 | **Token Cap/Run** | 8,000 | 10,000 | |
 | **Max Active Sessions** | 1 | 1 | |
 
-> **Note**: Deep research uses GLM-4.6 (3× multiplier). Token cap applies to plan tokens.
+> **Note**: Deep research uses GLM-4.6 (0.6× multiplier). Token cap applies to plan tokens.
 
 ## Features
 
@@ -70,13 +70,13 @@ Plan tokens = Raw tokens × Multiplier
 #### Free Tier Usage
 - **20k monthly quota**: ~20 conversations (1k tokens each) with DeepSeek R1 (1×)
 - **OR**: ~40 conversations with Dolphin Mistral (0.5× multiplier, uncensored!)
-- **OR**: ~6 conversations with GLM-4.6 (3× multiplier)
+- **OR**: ~33 conversations with GLM-4.6 (0.6× multiplier)
 - **Plus**: 1 deep research run (up to 8k plan tokens)
 
 #### Pro Tier Usage
 - **500k daily quota**: ~500 conversations (1k tokens each) with DeepSeek R1 (1×)
 - **OR**: ~1,000 conversations with Dolphin Mistral (0.5×) - uncensored model is cost-efficient!
-- **OR**: ~167 conversations with GLM-4.6 (3×)
+- **OR**: ~833 conversations with GLM-4.6 (0.6×)
 - **OR**: ~10 conversations with GPT-5 Pro (50×)
 - **Plus**: 10 deep research runs/day (up to 10k plan tokens each)
 
