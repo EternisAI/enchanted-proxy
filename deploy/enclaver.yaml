@@ -68,6 +68,8 @@ egress:
   - firestore.googleapis.com
   # Firebase Cloud Messaging (push notifications)
   - fcm.googleapis.com
+  # Linear API (problem reports)
+  - api.linear.app
 env:
 - APPSTORE_API_KEY_ID
 - APPSTORE_API_KEY_P8
@@ -94,6 +96,10 @@ env:
 - GOOGLE_CLIENT_ID
 - GOOGLE_CLIENT_SECRET
 - JWT_JWKS_URL
+- LINEAR_API_KEY
+- LINEAR_LABEL_ID
+- LINEAR_PROJECT_ID
+- LINEAR_TEAM_ID
 - LOG_FORMAT
 - LOG_LEVEL
 - MESSAGE_STORAGE_BUFFER_SIZE

@@ -60,6 +60,28 @@ type InviteCode struct {
 	DeletedAt  *time.Time `json:"deletedAt"`
 }
 
+type ProblemReport struct {
+	ID                     string        `json:"id"`
+	UserID                 string        `json:"userId"`
+	ProblemDescription     string        `json:"problemDescription"`
+	DeviceModel            *string       `json:"deviceModel"`
+	DeviceName             *string       `json:"deviceName"`
+	SystemName             *string       `json:"systemName"`
+	SystemVersion          *string       `json:"systemVersion"`
+	AppVersion             *string       `json:"appVersion"`
+	BuildNumber            *string       `json:"buildNumber"`
+	Locale                 *string       `json:"locale"`
+	Timezone               *string       `json:"timezone"`
+	TotalCapacityBytes     sql.NullInt64 `json:"totalCapacityBytes"`
+	AvailableCapacityBytes sql.NullInt64 `json:"availableCapacityBytes"`
+	UsedCapacityBytes      sql.NullInt64 `json:"usedCapacityBytes"`
+	SubscriptionTier       *string       `json:"subscriptionTier"`
+	ContactEmail           *string       `json:"contactEmail"`
+	TicketID               *string       `json:"ticketId"`
+	CreatedAt              time.Time     `json:"createdAt"`
+	UpdatedAt              time.Time     `json:"updatedAt"`
+}
+
 type RequestLog struct {
 	ID               int64          `json:"id"`
 	UserID           string         `json:"userId"`
