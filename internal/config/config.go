@@ -2,11 +2,13 @@ package config
 
 import (
 	"crypto/sha256"
+	"io"
 	"log"
 	"os"
 	"strconv"
 	"strings"
 
+	"github.com/goccy/go-yaml"
 	"github.com/joho/godotenv"
 )
 
@@ -34,6 +36,9 @@ type Config struct {
 	ValidatorType           string // "jwk" or "firebase"
 	JWTJWKSURL              string
 	FirebaseCredJSON        string
+
+	// Model Router
+	ModelRouterConfig *ModelRouterConfig `yaml:"model_router"`
 
 	// MCP
 	PerplexityAPIKey  string
@@ -114,6 +119,9 @@ type Config struct {
 
 	// Push Notifications
 	PushNotificationsEnabled bool // Enable/disable FCM push notifications for task completions (default: true)
+
+	// ZCash Backend
+	ZCashBackendAPIKey string
 }
 
 var AppConfig *Config
@@ -255,9 +263,40 @@ func LoadConfig() {
 
 		// Push Notifications
 		PushNotificationsEnabled: getEnvOrDefault("PUSH_NOTIFICATIONS_ENABLED", "true") == "true",
+
+		// ZCash Backend
+		ZCashBackendAPIKey: getEnvOrDefault("ZCASH_BACKEND_API_KEY", ""),
+	}
+
+	// Load settings from a configuration file.
+	//
+	// TODO: environment variables should have higher precedence, but this would require
+	// a significant rework. For now, only use the config file for settings that should
+	// not be overridden by environment variables, like model router configuration.
+	// Later should replace this with proper config handling using spf13/viper.
+	configFilePath := getEnvOrDefault("CONFIG_FILE", "config.yaml")
+	log.Printf("Loading config file: %v", configFilePath)
+
+	configFile, err := os.Open(configFilePath)
+	defer func() {
+		if configFile != nil {
+			configFile.Close()
+		}
+	}()
+
+	if err != nil {
+		log.Fatalf("Failed to open config file: %v", err)
+	}
+
+	if err := LoadConfigFile(configFile, AppConfig); err != nil {
+		log.Fatalf("Failed to load config file: %v", err)
 	}
 
 	// Validate required configs
+	if AppConfig.ModelRouterConfig == nil {
+		log.Fatal("Model Router configuration is empty")
+	}
+
 	if AppConfig.GoogleClientID == "" || AppConfig.SlackClientID == "" || AppConfig.TwitterClientID == "" {
 		log.Println("Warning: Some OAuth client IDs are missing. Please check your environment variables.")
 	}
@@ -288,6 +327,10 @@ func LoadConfig() {
 
 	if AppConfig.TelegramToken != "" {
 		log.Println("Telegram service enabled with token")
+	}
+
+	if AppConfig.ZCashBackendAPIKey == "" {
+		log.Println("Warning: ZCash Backend API key is missing. Please set PERPLEXITY_API_KEY environment variable.")
 	}
 
 	if AppConfig.AppStoreAPIKeyP8 == "" || AppConfig.AppStoreAPIKeyID == "" || AppConfig.AppStoreBundleID == "" || AppConfig.AppStoreIssuerID == "" {
@@ -349,4 +392,14 @@ func getEnvAsInt(key string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+func LoadConfigFile(reader io.Reader, config *Config) error {
+	decoder := yaml.NewDecoder(reader)
+
+	if err := decoder.Decode(config); err != nil {
+		return err
+	}
+
+	return nil
 }

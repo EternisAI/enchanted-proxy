@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 > ⚠️ **PUBLIC REPOSITORY** - This is a production backend, intentionally public for TEE verification. Never commit secrets, credentials, internal URLs, or infrastructure details. All secrets are injected via environment variables.
 

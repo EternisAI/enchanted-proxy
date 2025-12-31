@@ -125,6 +125,13 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, userID string, pric
 	}
 
 	// Apply 3-day free trial only for weekly subscriptions
+	s.logger.Info("trial check",
+		"weekly_price_id", s.weeklyPriceID,
+		"weekly_price_id_len", len(s.weeklyPriceID),
+		"request_price_id", priceID,
+		"request_price_id_len", len(priceID),
+		"match", priceID == s.weeklyPriceID)
+
 	if s.weeklyPriceID != "" && priceID == s.weeklyPriceID {
 		subscriptionData.TrialPeriodDays = stripe.Int64(3)
 		subscriptionData.TrialSettings = &stripe.CheckoutSessionSubscriptionDataTrialSettingsParams{
@@ -152,11 +159,19 @@ func (s *Service) CreateCheckoutSession(ctx context.Context, userID string, pric
 		return "", fmt.Errorf("failed to create checkout session: %w", err)
 	}
 
+	// Debug: log what Stripe actually created
+	var trialEnd *int64
+	if sess.Subscription != nil && sess.Subscription.TrialEnd > 0 {
+		trialEnd = &sess.Subscription.TrialEnd
+	}
+
 	s.logger.Info("checkout session created",
 		"user_id", userID,
 		"price_id", priceID,
 		"session_id", sess.ID,
 		"has_trial", s.weeklyPriceID != "" && priceID == s.weeklyPriceID,
+		"stripe_trial_end", trialEnd,
+		"subscription_id", sess.Subscription,
 		"origin", origin,
 		"success_url", successURL,
 		"cancel_url", cancelURL)

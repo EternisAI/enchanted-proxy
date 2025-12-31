@@ -1,55 +1,127 @@
 package routing
 
 import (
+	"fmt"
 	"log/slog"
+	"os"
+	"sort"
 	"testing"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 )
 
-func TestNewModelRouter(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIAPIKey:            "test-openai-key",
-		OpenRouterMobileAPIKey:  "test-openrouter-mobile-key",
-		OpenRouterDesktopAPIKey: "test-openrouter-desktop-key",
-	}
-	log := logger.New(logger.Config{Level: slog.LevelError})
+var (
+	ConfigFileEnvVar              = "CONFIG_FILE"
+	EternisAPIKeyEnvVar           = "ETERNIS_INFERENCE_API_KEY"
+	NearAIAPIKeyEnvVar            = "NEAR_AI_KEY"
+	OpenAIAPIKeyEnvVar            = "OPENAI_API_KEY"
+	OpenRouterMobileAPIKeyEnvVar  = "OPENROUTER_MOBILE_API_KEY"
+	OpenRouterDesktopAPIKeyEnvVar = "OPENROUTER_DESKTOP_API_KEY"
+	TinfoilAPIKeyEnvVar           = "TINFOIL_API_KEY"
 
-	router := NewModelRouter(cfg, log)
+	ConfigFile              = "testdata/config.yaml"
+	EternisAPIKey           = "test-eternis-key"
+	NearAIAPIKey            = "test-near-ai-key"
+	OpenAIAPIKey            = "test-openai-key"
+	OpenRouterDesktopAPIKey = "test-openrouter-desktop-key"
+	OpenRouterMobileAPIKey  = "test-openrouter-mobile-key"
+	TinfoilAPIKey           = "test-tinfoil-key"
+
+	EternisGLM46BaseURL   = "http://127.0.0.1:20001/v1"
+	EternisMistralBaseURL = "http://34.30.193.13:8000/v1"
+	OpenAIBaseURL         = "https://api.openai.com/v1"
+	OpenRouterBaseURL     = "https://openrouter.ai/api/v1"
+	TinfoilBaseURL        = "https://inference.tinfoil.sh/v1"
+)
+
+func newEnv(overrides map[string]string) map[string]string {
+	env := map[string]string{
+		ConfigFileEnvVar:              ConfigFile,
+		EternisAPIKeyEnvVar:           EternisAPIKey,
+		NearAIAPIKeyEnvVar:            NearAIAPIKey,
+		OpenAIAPIKeyEnvVar:            OpenAIAPIKey,
+		OpenRouterMobileAPIKeyEnvVar:  OpenRouterMobileAPIKey,
+		OpenRouterDesktopAPIKeyEnvVar: OpenRouterDesktopAPIKey,
+		TinfoilAPIKeyEnvVar:           TinfoilAPIKey,
+	}
+
+	for key, value := range overrides {
+		env[key] = value
+	}
+
+	return env
+}
+
+func newModelRouter(t *testing.T, env map[string]string) *ModelRouter {
+	var log *logger.Logger
+	if testing.Verbose() {
+		log = logger.New(logger.Config{Level: slog.LevelDebug})
+	} else {
+		log = logger.New(logger.Config{Level: slog.LevelError})
+	}
+
+	for key, value := range env {
+		t.Setenv(key, value)
+	}
+
+	appConfig := &config.Config{
+		OpenRouterMobileAPIKey:  os.Getenv(OpenRouterMobileAPIKeyEnvVar),
+		OpenRouterDesktopAPIKey: os.Getenv(OpenRouterDesktopAPIKeyEnvVar),
+	}
+
+	configFilePath := os.Getenv(ConfigFileEnvVar)
+	configFile, err := os.Open(configFilePath)
+	defer func() {
+		if configFile != nil {
+			configFile.Close()
+		}
+	}()
+
+	if err != nil {
+		t.Fatalf("Failed to open config file: %v", err)
+	}
+
+	if err := config.LoadConfigFile(configFile, appConfig); err != nil {
+		t.Fatalf("Failed to load config file: %v", err)
+	}
+
+	return NewModelRouter(appConfig, log)
+}
+
+func TestNewModelRouter(t *testing.T) {
+	router := newModelRouter(t, newEnv(nil))
+
 	if router == nil {
 		t.Fatal("NewModelRouter returned nil")
 	}
-	if router.routes == nil {
-		t.Fatal("routes map is nil")
+
+	if len(router.routes) == 0 {
+		t.Fatal("routes map is empty")
 	}
-	if router.config != cfg {
-		t.Error("config not stored correctly")
+
+	if router.getOpenRouterAPIKey("desktop") != OpenRouterDesktopAPIKey ||
+		router.getOpenRouterAPIKey("mobile") != OpenRouterMobileAPIKey {
+		t.Fatal("platform api keys for OpenRouter are not processed correctly")
 	}
 }
 
 func TestRouteModelExactMatch(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIAPIKey:           "test-openai-key",
-		OpenRouterMobileAPIKey: "test-openrouter-key",
-	}
-	log := logger.New(logger.Config{Level: slog.LevelError})
-	router := NewModelRouter(cfg, log)
+	router := newModelRouter(t, newEnv(nil))
 
 	tests := []struct {
 		model            string
 		expectedBaseURL  string
 		expectedKey      string
-		expectedAPIType  APIType
+		expectedAPIType  config.APIType
 		expectedProvider string
 	}{
-		{"gpt-4", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
-		{"gpt-4-turbo", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
-		{"gpt-3.5-turbo", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
-		{"o1-preview", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
-		{"o1-mini", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
-		{"o3-mini", "https://api.openai.com/v1", "test-openai-key", APITypeChatCompletions, "OpenAI"},
-		{"gpt-5-pro", "https://api.openai.com/v1", "test-openai-key", APITypeResponses, "OpenAI"},
+		// To ensure the "exact" match, use the "canonical" model names and the models that
+		// don't have model name overrides on the endpoint configuration level in the testdata.
+		{"zai-org/GLM-4.6", EternisGLM46BaseURL, EternisAPIKey, config.APITypeChatCompletions, "Eternis"},
+		{"dphn/Dolphin-Mistral-24B-Venice-Edition", EternisMistralBaseURL, EternisAPIKey, config.APITypeChatCompletions, "Eternis"},
+		{"openai/gpt-4.1", OpenRouterBaseURL, OpenRouterMobileAPIKey, config.APITypeChatCompletions, "OpenRouter"},
+		{"openai/gpt-5", OpenRouterBaseURL, OpenRouterMobileAPIKey, config.APITypeChatCompletions, "OpenRouter"},
 	}
 
 	for _, tt := range tests {
@@ -57,6 +129,9 @@ func TestRouteModelExactMatch(t *testing.T) {
 			provider, err := router.RouteModel(tt.model, "mobile")
 			if err != nil {
 				t.Fatalf("RouteModel failed: %v", err)
+			}
+			if provider.Model != tt.model {
+				t.Errorf("expected model %s, got %s", tt.model, provider.Model)
 			}
 			if provider.BaseURL != tt.expectedBaseURL {
 				t.Errorf("expected baseURL %s, got %s", tt.expectedBaseURL, provider.BaseURL)
@@ -74,12 +149,116 @@ func TestRouteModelExactMatch(t *testing.T) {
 	}
 }
 
-func TestRouteModelPrefixMatch(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIAPIKey: "test-openai-key",
+func TestRouteModelTokenMultiplier(t *testing.T) {
+	router := newModelRouter(t, newEnv(nil))
+
+	tests := map[string]float64{
+		"gpt-4": 1.0,
+		"gpt-5": 6.0,
 	}
-	log := logger.New(logger.Config{Level: slog.LevelError})
-	router := NewModelRouter(cfg, log)
+
+	for model, expectedTokenMultiplier := range tests {
+		t.Run(model, func(t *testing.T) {
+			provider, err := router.RouteModel(model, "")
+			if err != nil {
+				t.Fatalf("RouteModel failed: %v", err)
+			}
+
+			if provider.TokenMultiplier != expectedTokenMultiplier {
+				t.Errorf(
+					"expected TokenMultiplier %v, got %v",
+					expectedTokenMultiplier,
+					provider.TokenMultiplier,
+				)
+			}
+		})
+	}
+}
+
+func TestRouteModelBaseURLOverride(t *testing.T) {
+	router := newModelRouter(t, newEnv(nil))
+
+	provider, err := router.RouteModel("zai-org/GLM-4.6", "")
+	if err != nil {
+		t.Fatalf("RouteModel failed: %v", err)
+	}
+
+	if provider.BaseURL != EternisGLM46BaseURL {
+		t.Errorf("expected BaseURL %s, got %s", EternisGLM46BaseURL, provider.BaseURL)
+	}
+}
+
+func TestRouteModelNameOverride(t *testing.T) {
+	router := newModelRouter(t, newEnv(nil))
+
+	provider, err := router.RouteModel("deepseek-ai/DeepSeek-R1-0528", "")
+	if err != nil {
+		t.Fatalf("RouteModel failed: %v", err)
+	}
+
+	expectedModel := "deepseek-r1-0528"
+	if provider.Model != expectedModel {
+		t.Errorf("expected model name %s, got %s", expectedModel, provider.BaseURL)
+	}
+}
+
+func TestRouteModelAPITypeOverride(t *testing.T) {
+	router := newModelRouter(t, newEnv(nil))
+
+	tests := map[string]config.APIType{
+		"gpt-4":     config.APITypeChatCompletions,
+		"gpt-5-pro": config.APITypeResponses,
+	}
+
+	for model, expectedAPIType := range tests {
+		t.Run(model, func(t *testing.T) {
+			provider, err := router.RouteModel(model, "")
+			if err != nil {
+				t.Fatalf("RouteModel failed: %v", err)
+			}
+
+			if provider.APIType != expectedAPIType {
+				t.Errorf("expected API type %s, got %s", expectedAPIType, provider.APIType)
+			}
+		})
+	}
+}
+
+func TestRouteModelAliasMatch(t *testing.T) {
+	router := newModelRouter(t, newEnv(nil))
+
+	// Map from supported aliases to the names expected by the configured provider
+	tests := map[string]string{
+		"deepseek/deepseek-r1-0528": "deepseek-r1-0528",
+		"llama-3.3-70b":             "llama3-3-70b",
+		"z-ai/glm-4.6":              "zai-org/GLM-4.6",
+		"dolphin-mistral-eternis":   "dphn/Dolphin-Mistral-24B-Venice-Edition",
+		"gpt-4.1":                   "openai/gpt-4.1",
+		"gpt-5":                     "openai/gpt-5",
+		"openai/gpt-5-pro":          "gpt-5-pro",
+		"openai/gpt-4":              "gpt-4",
+		"openai/gpt-4-turbo":        "gpt-4-turbo",
+		"openai/gpt-3.5-turbo":      "gpt-3.5-turbo",
+		"openai/o1-preview":         "o1-preview",
+		"openai/o1-mini":            "o1-mini",
+		"openai/o3-mini":            "o3-mini",
+	}
+
+	for alias, model := range tests {
+		t.Run(alias, func(t *testing.T) {
+			provider, err := router.RouteModel(alias, "mobile")
+			if err != nil {
+				t.Fatalf("RouteModel failed for %s: %v", alias, err)
+			}
+			if provider.Model != model {
+				t.Errorf("expected alias %s to resolve to %s, got %s", alias, model, provider.Model)
+			}
+		})
+	}
+}
+
+func TestRouteModelPrefixMatch(t *testing.T) {
+	router := newModelRouter(t, newEnv(nil))
 
 	tests := []string{
 		"gpt-4-0125-preview",
@@ -103,12 +282,7 @@ func TestRouteModelPrefixMatch(t *testing.T) {
 }
 
 func TestRouteModelFallbackToOpenRouter(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIAPIKey:           "test-openai-key",
-		OpenRouterMobileAPIKey: "test-openrouter-mobile",
-	}
-	log := logger.New(logger.Config{Level: slog.LevelError})
-	router := NewModelRouter(cfg, log)
+	router := newModelRouter(t, newEnv(nil))
 
 	unknownModels := []string{
 		"claude-3-opus-20240229",
@@ -126,10 +300,10 @@ func TestRouteModelFallbackToOpenRouter(t *testing.T) {
 			if provider.Name != "OpenRouter" {
 				t.Errorf("expected OpenRouter fallback for %s, got %s", model, provider.Name)
 			}
-			if provider.BaseURL != "https://openrouter.ai/api/v1" {
+			if provider.BaseURL != OpenRouterBaseURL {
 				t.Errorf("expected OpenRouter baseURL, got %s", provider.BaseURL)
 			}
-			if provider.APIKey != "test-openrouter-mobile" {
+			if provider.APIKey != OpenRouterMobileAPIKey {
 				t.Errorf("expected mobile key, got %s", provider.APIKey)
 			}
 		})
@@ -137,21 +311,16 @@ func TestRouteModelFallbackToOpenRouter(t *testing.T) {
 }
 
 func TestRouteModelPlatformSpecificKeys(t *testing.T) {
-	cfg := &config.Config{
-		OpenRouterMobileAPIKey:  "mobile-key",
-		OpenRouterDesktopAPIKey: "desktop-key",
-	}
-	log := logger.New(logger.Config{Level: slog.LevelError})
-	router := NewModelRouter(cfg, log)
+	router := newModelRouter(t, newEnv(nil))
 
 	tests := []struct {
 		platform    string
 		expectedKey string
 	}{
-		{"mobile", "mobile-key"},
-		{"desktop", "desktop-key"},
-		{"unknown", "mobile-key"}, // Falls back to mobile
-		{"", "mobile-key"},        // Empty defaults to mobile
+		{"mobile", OpenRouterMobileAPIKey},
+		{"desktop", OpenRouterDesktopAPIKey},
+		{"unknown", OpenRouterMobileAPIKey}, // Falls back to mobile
+		{"", OpenRouterMobileAPIKey},        // Empty defaults to mobile
 	}
 
 	for _, tt := range tests {
@@ -168,11 +337,7 @@ func TestRouteModelPlatformSpecificKeys(t *testing.T) {
 }
 
 func TestRouteModelEmptyModel(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIAPIKey: "test-key",
-	}
-	log := logger.New(logger.Config{Level: slog.LevelError})
-	router := NewModelRouter(cfg, log)
+	router := newModelRouter(t, newEnv(nil))
 
 	_, err := router.RouteModel("", "mobile")
 	if err == nil {
@@ -181,24 +346,19 @@ func TestRouteModelEmptyModel(t *testing.T) {
 }
 
 func TestRouteModelNoProviderConfigured(t *testing.T) {
-	cfg := &config.Config{
-		// No API keys configured
-	}
-	log := logger.New(logger.Config{Level: slog.LevelError})
-	router := NewModelRouter(cfg, log)
+	router := newModelRouter(t, map[string]string{
+		ConfigFileEnvVar: ConfigFile,
+	})
 
-	_, err := router.RouteModel("gpt-4", "mobile")
+	provider, err := router.RouteModel("gpt-4", "mobile")
 	if err == nil {
-		t.Error("expected error when no provider configured")
+		t.Errorf("expected error when no provider keys are configured, got %v", provider.Name)
+		router.logger.Info(fmt.Sprintf("%#v", router.routes))
 	}
 }
 
 func TestRouteModelCaseInsensitive(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIAPIKey: "test-key",
-	}
-	log := logger.New(logger.Config{Level: slog.LevelError})
-	router := NewModelRouter(cfg, log)
+	router := newModelRouter(t, newEnv(nil))
 
 	tests := []string{
 		"GPT-4",
@@ -221,12 +381,7 @@ func TestRouteModelCaseInsensitive(t *testing.T) {
 }
 
 func TestGetSupportedModels(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIAPIKey:           "test-openai-key",
-		OpenRouterMobileAPIKey: "test-openrouter-key",
-	}
-	log := logger.New(logger.Config{Level: slog.LevelError})
-	router := NewModelRouter(cfg, log)
+	router := newModelRouter(t, newEnv(nil))
 
 	models := router.GetSupportedModels()
 	if len(models) == 0 {
@@ -240,61 +395,68 @@ func TestGetSupportedModels(t *testing.T) {
 		}
 	}
 
-	// Should include known models
-	expectedModels := []string{"gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"}
-	for _, expected := range expectedModels {
-		found := false
-		for _, model := range models {
-			if model == expected {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected model %s not found in supported models", expected)
+	// Should be a sorted list of canonical names of configured models
+	expectedModels := []string{
+		"deepseek-ai/DeepSeek-R1-0528",
+		"meta-llama/Llama-3.3-70B",
+		"zai-org/GLM-4.6",
+		"dphn/Dolphin-Mistral-24B-Venice-Edition",
+		"openai/gpt-4.1",
+		"openai/gpt-5",
+		"openai/gpt-5-pro",
+		"openai/gpt-4",
+		"openai/gpt-4-turbo",
+		"openai/gpt-3.5-turbo",
+		"openai/o1-preview",
+		"openai/o1-mini",
+		"openai/o3-mini",
+	}
+
+	sort.Strings(expectedModels)
+
+	if len(expectedModels) != len(models) {
+		t.Errorf("expected %d models, got %d", len(expectedModels), len(models))
+	}
+
+	for i, expected := range expectedModels {
+		if models[i] != expected {
+			t.Errorf("expected model %s, got %s", expected, models[i])
 		}
 	}
 }
 
 func TestGetProviders(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIAPIKey:           "test-openai-key",
-		OpenRouterMobileAPIKey: "test-openrouter-key",
-	}
-	log := logger.New(logger.Config{Level: slog.LevelError})
-	router := NewModelRouter(cfg, log)
+	router := newModelRouter(t, newEnv(nil))
 
 	providers := router.GetProviders()
 	if len(providers) == 0 {
 		t.Error("expected non-empty providers list")
 	}
 
-	// Should include OpenAI and OpenRouter
-	hasOpenAI := false
-	hasOpenRouter := false
-	for _, provider := range providers {
-		if provider == "OpenAI" {
-			hasOpenAI = true
-		}
-		if provider == "OpenRouter" {
-			hasOpenRouter = true
-		}
+	// Should be a sorted list of names of configured providers that have any models routed
+	// to them
+	expectedProviders := []string{
+		"Eternis",
+		"Tinfoil",
+		"OpenAI",
+		"OpenRouter",
 	}
 
-	if !hasOpenAI {
-		t.Error("expected OpenAI in providers list")
+	sort.Strings(expectedProviders)
+
+	if len(expectedProviders) != len(providers) {
+		t.Errorf("expected %d providers, got %d", len(expectedProviders), len(providers))
 	}
-	if !hasOpenRouter {
-		t.Error("expected OpenRouter in providers list")
+
+	for i, expected := range expectedProviders {
+		if providers[i] != expected {
+			t.Errorf("expected provider %s, got %s", expected, providers[i])
+		}
 	}
 }
 
 func TestRouteModelWithWhitespace(t *testing.T) {
-	cfg := &config.Config{
-		OpenAIAPIKey: "test-key",
-	}
-	log := logger.New(logger.Config{Level: slog.LevelError})
-	router := NewModelRouter(cfg, log)
+	router := newModelRouter(t, newEnv(nil))
 
 	provider, err := router.RouteModel("  gpt-4  ", "mobile")
 	if err != nil {
@@ -315,43 +477,40 @@ func TestGetOpenRouterAPIKeyFallback(t *testing.T) {
 	}{
 		{
 			name:        "mobile platform with both keys",
-			mobileKey:   "mobile-key",
-			desktopKey:  "desktop-key",
+			mobileKey:   OpenRouterMobileAPIKey,
+			desktopKey:  OpenRouterDesktopAPIKey,
 			platform:    "mobile",
-			expectedKey: "mobile-key",
+			expectedKey: OpenRouterMobileAPIKey,
 		},
 		{
 			name:        "desktop platform with both keys",
-			mobileKey:   "mobile-key",
-			desktopKey:  "desktop-key",
+			mobileKey:   OpenRouterMobileAPIKey,
+			desktopKey:  OpenRouterDesktopAPIKey,
 			platform:    "desktop",
-			expectedKey: "desktop-key",
+			expectedKey: OpenRouterDesktopAPIKey,
 		},
 		{
 			name:        "only mobile key available",
-			mobileKey:   "mobile-key",
+			mobileKey:   OpenRouterMobileAPIKey,
 			desktopKey:  "",
 			platform:    "desktop",
-			expectedKey: "mobile-key", // Falls back to mobile
+			expectedKey: OpenRouterMobileAPIKey, // Falls back to mobile
 		},
 		{
 			name:        "only desktop key available",
 			mobileKey:   "",
-			desktopKey:  "desktop-key",
+			desktopKey:  OpenRouterDesktopAPIKey,
 			platform:    "mobile",
-			expectedKey: "desktop-key", // Falls back to desktop
+			expectedKey: OpenRouterDesktopAPIKey, // Falls back to desktop
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{
-				OpenRouterMobileAPIKey:  tt.mobileKey,
-				OpenRouterDesktopAPIKey: tt.desktopKey,
-			}
-			log := logger.New(logger.Config{Level: slog.LevelError})
-			router := NewModelRouter(cfg, log)
-
+			router := newModelRouter(t, newEnv(map[string]string{
+				OpenRouterMobileAPIKeyEnvVar:  tt.mobileKey,
+				OpenRouterDesktopAPIKeyEnvVar: tt.desktopKey,
+			}))
 			provider, err := router.RouteModel("unknown-model", tt.platform)
 			if err != nil {
 				t.Fatalf("RouteModel failed: %v", err)
