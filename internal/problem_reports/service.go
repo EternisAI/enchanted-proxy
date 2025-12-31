@@ -43,17 +43,7 @@ func (s *Service) CreateReport(ctx context.Context, userID string, req *CreatePr
 	reportID := uuid.New().String()
 
 	title := fmt.Sprintf("[Problem Report] %s", truncateString(req.ProblemDescription, 80))
-	description := fmt.Sprintf("**Description:**\n%s\n\n**Device:** %s (%s %s)\n**App Version:** %s (%s)\n**Subscription Tier:** %s\n**Contact Email:** %s\n\n**Report ID:** %s\n**User ID:** %s",
-		req.ProblemDescription,
-		req.DeviceInfo.DeviceModel,
-		req.DeviceInfo.SystemName,
-		req.DeviceInfo.SystemVersion,
-		req.DeviceInfo.AppVersion,
-		req.DeviceInfo.BuildNumber,
-		ptrToString(req.SubscriptionTier, "unknown"),
-		ptrToString(req.ContactEmail, "not provided"),
-		reportID,
-		userID)
+	description := s.buildLinearDescription(req, reportID, userID)
 
 	var ticketID *string
 	linearTicketID, err := s.linearClient.CreateIssue(ctx, title, description)
@@ -68,29 +58,26 @@ func (s *Service) CreateReport(ctx context.Context, userID string, req *CreatePr
 		ID:                 reportID,
 		UserID:             userID,
 		ProblemDescription: req.ProblemDescription,
-		DeviceModel:        strPtr(req.DeviceInfo.DeviceModel),
-		DeviceName:         strPtr(req.DeviceInfo.DeviceName),
-		SystemName:         strPtr(req.DeviceInfo.SystemName),
-		SystemVersion:      strPtr(req.DeviceInfo.SystemVersion),
-		AppVersion:         strPtr(req.DeviceInfo.AppVersion),
-		BuildNumber:        strPtr(req.DeviceInfo.BuildNumber),
-		Locale:             strPtr(req.DeviceInfo.Locale),
-		Timezone:           strPtr(req.DeviceInfo.Timezone),
-		TotalCapacityBytes: sql.NullInt64{
-			Int64: req.StorageInfo.TotalCapacityBytes,
-			Valid: true,
-		},
-		AvailableCapacityBytes: sql.NullInt64{
-			Int64: req.StorageInfo.AvailableCapacityBytes,
-			Valid: true,
-		},
-		UsedCapacityBytes: sql.NullInt64{
-			Int64: req.StorageInfo.UsedCapacityBytes,
-			Valid: true,
-		},
-		SubscriptionTier: req.SubscriptionTier,
-		ContactEmail:     req.ContactEmail,
-		TicketID:         ticketID,
+		SubscriptionTier:   req.SubscriptionTier,
+		ContactEmail:       req.ContactEmail,
+		TicketID:           ticketID,
+	}
+
+	if req.DeviceInfo != nil {
+		params.DeviceModel = strPtr(req.DeviceInfo.DeviceModel)
+		params.DeviceName = strPtr(req.DeviceInfo.DeviceName)
+		params.SystemName = strPtr(req.DeviceInfo.SystemName)
+		params.SystemVersion = strPtr(req.DeviceInfo.SystemVersion)
+		params.AppVersion = strPtr(req.DeviceInfo.AppVersion)
+		params.BuildNumber = strPtr(req.DeviceInfo.BuildNumber)
+		params.Locale = strPtr(req.DeviceInfo.Locale)
+		params.Timezone = strPtr(req.DeviceInfo.Timezone)
+	}
+
+	if req.StorageInfo != nil {
+		params.TotalCapacityBytes = sql.NullInt64{Int64: req.StorageInfo.TotalCapacityBytes, Valid: true}
+		params.AvailableCapacityBytes = sql.NullInt64{Int64: req.StorageInfo.AvailableCapacityBytes, Valid: true}
+		params.UsedCapacityBytes = sql.NullInt64{Int64: req.StorageInfo.UsedCapacityBytes, Valid: true}
 	}
 
 	_, err = s.queries.CreateProblemReport(ctx, params)
@@ -108,6 +95,29 @@ func (s *Service) CreateReport(ctx context.Context, userID string, req *CreatePr
 	}
 
 	return resp, nil
+}
+
+func (s *Service) buildLinearDescription(req *CreateProblemReportRequest, reportID, userID string) string {
+	desc := fmt.Sprintf("**Description:**\n%s\n\n", req.ProblemDescription)
+
+	if req.DeviceInfo != nil {
+		desc += fmt.Sprintf("**Device:** %s (%s %s)\n**App Version:** %s (%s)\n\n",
+			req.DeviceInfo.DeviceModel,
+			req.DeviceInfo.SystemName,
+			req.DeviceInfo.SystemVersion,
+			req.DeviceInfo.AppVersion,
+			req.DeviceInfo.BuildNumber)
+	} else {
+		desc += "**Device Info:** not provided (user opted out)\n\n"
+	}
+
+	desc += fmt.Sprintf("**Subscription Tier:** %s\n**Contact Email:** %s\n\n**Report ID:** %s\n**User ID:** %s",
+		ptrToString(req.SubscriptionTier, "unknown"),
+		ptrToString(req.ContactEmail, "not provided"),
+		reportID,
+		userID)
+
+	return desc
 }
 
 func truncateString(s string, maxLen int) string {

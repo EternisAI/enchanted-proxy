@@ -4,12 +4,13 @@ import "time"
 
 // CreateProblemReportRequest matches the iOS ProblemReportModel structure.
 // Note: id, userId, and createdAt are generated server-side.
+// DeviceInfo and StorageInfo are optional - users can opt out of sending device info.
 type CreateProblemReportRequest struct {
-	ProblemDescription string      `json:"problemDescription" binding:"required"`
-	DeviceInfo         DeviceInfo  `json:"deviceInfo" binding:"required"`
-	StorageInfo        StorageInfo `json:"storageInfo" binding:"required"`
-	SubscriptionTier   *string     `json:"subscriptionTier,omitempty"`
-	ContactEmail       *string     `json:"contactEmail,omitempty"` // Optional email so we can reply
+	ProblemDescription string       `json:"problemDescription" binding:"required"`
+	DeviceInfo         *DeviceInfo  `json:"deviceInfo,omitempty"`
+	StorageInfo        *StorageInfo `json:"storageInfo,omitempty"`
+	SubscriptionTier   *string      `json:"subscriptionTier,omitempty"`
+	ContactEmail       *string      `json:"contactEmail,omitempty"` // Optional email so we can reply
 }
 
 type DeviceInfo struct {
@@ -35,16 +36,16 @@ type CreateProblemReportResponse struct {
 }
 
 type ProblemReport struct {
-	ID                 string      `json:"id"`
-	UserID             string      `json:"userId"`
-	ProblemDescription string      `json:"problemDescription"`
-	DeviceInfo         DeviceInfo  `json:"deviceInfo"`
-	StorageInfo        StorageInfo `json:"storageInfo"`
-	SubscriptionTier   *string     `json:"subscriptionTier,omitempty"`
-	ContactEmail       *string     `json:"contactEmail,omitempty"`
-	TicketID           *string     `json:"ticketId,omitempty"`
-	CreatedAt          time.Time   `json:"createdAt"`
-	UpdatedAt          time.Time   `json:"updatedAt"`
+	ID                 string       `json:"id"`
+	UserID             string       `json:"userId"`
+	ProblemDescription string       `json:"problemDescription"`
+	DeviceInfo         *DeviceInfo  `json:"deviceInfo,omitempty"`
+	StorageInfo        *StorageInfo `json:"storageInfo,omitempty"`
+	SubscriptionTier   *string      `json:"subscriptionTier,omitempty"`
+	ContactEmail       *string      `json:"contactEmail,omitempty"`
+	TicketID           *string      `json:"ticketId,omitempty"`
+	CreatedAt          time.Time    `json:"createdAt"`
+	UpdatedAt          time.Time    `json:"updatedAt"`
 }
 
 const (
