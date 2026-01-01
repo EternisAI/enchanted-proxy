@@ -89,6 +89,8 @@ model_router:
   # GLM-4.7 - Dev/Testing - via OpenRouter (1× multiplier)
   - name: z-ai/glm-4.7
     aliases:
+    - zai-org/GLM-4.7
+    - zhipu/glm-4.7
     - glm-4.7
     token_multiplier: 1.0
     providers:

@@ -76,7 +76,7 @@ var Configs = map[Tier]Config{
 			"deepseek-r1-0528", "deepseek-r1", // DeepSeek R1 (1×)
 			"llama3-3-70b", "llama-3.3-70b", // Llama 3.3 70B (1×)
 			"zai-org/GLM-4.6", "glm-4.6", // GLM-4.6 (3×)
-			"zhipu/glm-4.7", "glm-4.7", // GLM-4.7 (1×, dev/testing)
+			"z-ai/glm-4.7", "zhipu/glm-4.7", "glm-4.7", // GLM-4.7 (1×, dev/testing)
 			"dolphin-mistral-eternis", "dolphin-mistral", // Dolphin Mistral (0.5×, uncensored)
 		},
 		DeepResearchDailyRuns:         0, // Not available daily
@@ -94,7 +94,7 @@ var Configs = map[Tier]Config{
 		DailyPlanTokens:   40_000, // 40k tokens/day
 		AllowedModels: []string{
 			"zai-org/GLM-4.6", "glm-4.6", // GLM 4.6
-			"zhipu/glm-4.7", "glm-4.7", // GLM-4.7 (dev/testing)
+			"z-ai/glm-4.7", "zhipu/glm-4.7", "glm-4.7", // GLM-4.7 (dev/testing)
 		},
 		DeepResearchDailyRuns:         -1, // Unlimited daily runs
 		DeepResearchLifetimeRuns:      0,  // Check daily only
