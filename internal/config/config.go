@@ -122,6 +122,12 @@ type Config struct {
 
 	// ZCash Backend
 	ZCashBackendAPIKey string
+
+	// Linear API (problem reports)
+	LinearAPIKey    string
+	LinearTeamID    string
+	LinearProjectID string
+	LinearLabelID   string
 }
 
 var AppConfig *Config
@@ -266,6 +272,12 @@ func LoadConfig() {
 
 		// ZCash Backend
 		ZCashBackendAPIKey: getEnvOrDefault("ZCASH_BACKEND_API_KEY", ""),
+
+		// Linear API (problem reports)
+		LinearAPIKey:    getEnvOrDefault("LINEAR_API_KEY", ""),
+		LinearLabelID:   getEnvOrDefault("LINEAR_LABEL_ID", ""),
+		LinearProjectID: getEnvOrDefault("LINEAR_PROJECT_ID", ""),
+		LinearTeamID:    getEnvOrDefault("LINEAR_TEAM_ID", ""),
 	}
 
 	// Load settings from a configuration file.
@@ -330,7 +342,11 @@ func LoadConfig() {
 	}
 
 	if AppConfig.ZCashBackendAPIKey == "" {
-		log.Println("Warning: ZCash Backend API key is missing. Please set PERPLEXITY_API_KEY environment variable.")
+		log.Println("Warning: ZCash Backend API key is missing. Please set ZCASH_BACKEND_API_KEY environment variable.")
+	}
+
+	if AppConfig.LinearAPIKey == "" {
+		log.Println("Warning: Linear API key is missing. Please set LINEAR_API_KEY environment variable.")
 	}
 
 	if AppConfig.AppStoreAPIKeyP8 == "" || AppConfig.AppStoreAPIKeyID == "" || AppConfig.AppStoreBundleID == "" || AppConfig.AppStoreIssuerID == "" {
