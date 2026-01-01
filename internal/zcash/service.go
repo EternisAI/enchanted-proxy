@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -30,17 +31,15 @@ const (
 )
 
 type Service struct {
-	queries      pgdb.Querier
-	logger       *logger.Logger
-	client       *http.Client
-	isProduction bool
+	queries pgdb.Querier
+	logger  *logger.Logger
+	client  *http.Client
 }
 
-func NewService(queries pgdb.Querier, logger *logger.Logger, isProduction bool) *Service {
+func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
 	return &Service{
-		queries:      queries,
-		logger:       logger,
-		isProduction: isProduction,
+		queries: queries,
+		logger:  logger,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -78,7 +77,8 @@ type Product struct {
 
 func (s *Service) GetProducts() []Product {
 	multiplier := 1.0
-	if !s.isProduction {
+	// Apply 0.01 multiplier for dev, staging, and local environments
+	if env := os.Getenv("ENVIRONMENT"); env == "dev" || env == "staging" || env == "local" {
 		multiplier = 0.01
 	}
 	return []Product{
