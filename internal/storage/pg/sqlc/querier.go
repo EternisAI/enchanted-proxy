@@ -14,8 +14,10 @@ type Querier interface {
 	AtomicUseInviteCode(ctx context.Context, arg AtomicUseInviteCodeParams) error
 	CompleteDeepResearchRun(ctx context.Context, arg CompleteDeepResearchRunParams) error
 	CountInviteCodesByRedeemedBy(ctx context.Context, redeemedBy *string) (int64, error)
+	CountProblemReportsByUserID(ctx context.Context, userID string) (int64, error)
 	CreateDeepResearchRun(ctx context.Context, arg CreateDeepResearchRunParams) (int64, error)
 	CreateInviteCode(ctx context.Context, arg CreateInviteCodeParams) (InviteCode, error)
+	CreateProblemReport(ctx context.Context, arg CreateProblemReportParams) (ProblemReport, error)
 	CreateRequestLog(ctx context.Context, arg CreateRequestLogParams) error
 	CreateRequestLogWithPlanTokens(ctx context.Context, arg CreateRequestLogWithPlanTokensParams) error
 	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
@@ -30,6 +32,7 @@ type Querier interface {
 	GetEntitlement(ctx context.Context, userID string) (GetEntitlementRow, error)
 	GetInviteCodeByCodeHash(ctx context.Context, codeHash string) (InviteCode, error)
 	GetInviteCodeByID(ctx context.Context, id int64) (InviteCode, error)
+	GetProblemReportByID(ctx context.Context, id string) (ProblemReport, error)
 	GetSessionMessageCount(ctx context.Context, sessionID string) (int64, error)
 	GetSessionMessages(ctx context.Context, sessionID string) ([]DeepResearchMessage, error)
 	GetStripeCustomerID(ctx context.Context, userID string) (*string, error)

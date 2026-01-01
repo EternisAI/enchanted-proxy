@@ -22,6 +22,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/composio"
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/deepr"
+	"github.com/eternisai/enchanted-proxy/internal/fallback"
 	"github.com/eternisai/enchanted-proxy/internal/iap"
 	"github.com/eternisai/enchanted-proxy/internal/invitecode"
 	"github.com/eternisai/enchanted-proxy/internal/keyshare"
@@ -30,6 +31,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/oauth"
+	"github.com/eternisai/enchanted-proxy/internal/problem_reports"
 	"github.com/eternisai/enchanted-proxy/internal/proxy"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"github.com/eternisai/enchanted-proxy/internal/routing"
@@ -39,9 +41,9 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/stripe"
 	"github.com/eternisai/enchanted-proxy/internal/task"
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
-	"github.com/eternisai/enchanted-proxy/internal/zcash"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
 	"github.com/eternisai/enchanted-proxy/internal/tools"
+	"github.com/eternisai/enchanted-proxy/internal/zcash"
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -284,6 +286,9 @@ func main() {
 	// Initialize model router for automatic provider routing
 	modelRouter := routing.NewModelRouter(config.AppConfig, logger.WithComponent("routing"))
 
+	// Initialize model routing fallback service
+	fallbackService := fallback.NewFallbackService(config.AppConfig, logger.WithComponent("fallback"), modelRouter)
+
 	// Initialize key sharing service
 	var keyshareHandler *keyshare.Handler
 	if firebaseClient != nil {
@@ -322,6 +327,15 @@ func main() {
 	mcpHandler := mcp.NewHandler(mcpService)
 	searchHandler := search.NewHandler(searchService, logger.WithComponent("search"))
 	taskHandler := task.NewHandler(taskService, logger.WithComponent("task"))
+	problemReportsService := problem_reports.NewService(
+		db.Queries,
+		config.AppConfig.LinearAPIKey,
+		config.AppConfig.LinearTeamID,
+		config.AppConfig.LinearProjectID,
+		config.AppConfig.LinearLabelID,
+		logger.WithComponent("problem-reports"),
+	)
+	problemReportsHandler := problem_reports.NewHandler(problemReportsService, logger.WithComponent("problem-reports"))
 
 	// Initialize NATS for Telegram
 	var natsClient *nats.Conn
@@ -387,6 +401,7 @@ func main() {
 		mcpHandler:             mcpHandler,
 		searchHandler:          searchHandler,
 		taskHandler:            taskHandler,
+		problemReportsHandler:  problemReportsHandler,
 		keyshareHandler:        keyshareHandler,
 		deeprStorage:           deeprStorage,
 		deeprSessionManager:    deeprSessionManager,
@@ -452,6 +467,9 @@ func main() {
 	<-quit
 	log.Info("shutting down servers")
 
+	// Shutdown the model routing fallback service
+	fallbackService.Shutdown()
+
 	// Shutdown the request tracking service worker pool
 	requestTrackingService.Shutdown()
 	log.Info("request tracking service shutdown complete")
@@ -509,6 +527,7 @@ type restServerInput struct {
 	mcpHandler             *mcp.Handler
 	searchHandler          *search.Handler
 	taskHandler            *task.Handler
+	problemReportsHandler  *problem_reports.Handler
 	keyshareHandler        *keyshare.Handler
 	deeprStorage           deepr.MessageStorage
 	deeprSessionManager    *deepr.SessionManager
@@ -614,6 +633,9 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 			tasks.GET("", input.taskHandler.GetTasks)              // GET /api/v1/tasks - Get all tasks for user
 			tasks.DELETE("/:taskId", input.taskHandler.DeleteTask) // DELETE /api/v1/tasks/:taskId - Delete a task
 		}
+
+		// Problem Reports API routes (protected)
+		api.POST("/problem-reports", input.problemReportsHandler.CreateProblemReport) // POST /api/v1/problem-reports - Submit a problem report
 
 		// Deep Research endpoints (protected)
 		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled, input.notificationService, input.titleService, input.modelRouter)) // POST API to start deep research

@@ -1,0 +1,22 @@
+model_router:
+  providers:
+  - name: Eternis
+    api_key_env_var: ETERNIS_INFERENCE_API_KEY
+
+  - name: NEAR AI
+    api_key_env_var: NEAR_API_KEY
+    base_url: https://cloud-api.near.ai/v1
+
+  models:
+  - name: zai-org/GLM-4.6
+    providers:
+    - name: Eternis
+      base_url: http://127.0.0.1:20001/v1
+      fallback:
+        trigger:
+          dwell_time: 2m
+          query: test-trigger-query
+        recover:
+          dwell_time: 1m
+          query: test-recover-query
+    - name: NEAR AI

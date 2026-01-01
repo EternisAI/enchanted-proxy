@@ -47,6 +47,7 @@ egress:
   - cloud-api.near.ai
   - us-east-1.aws.api.temporal.io
   # Internal API endpoints
+  - 7697efc6.igw.ghostagent.org
   - glm-46.llm.eternisai.net
   - zcash.eternisai.net
   # Internal deepresearch API endpoint
@@ -68,6 +69,8 @@ egress:
   - firestore.googleapis.com
   # Firebase Cloud Messaging (push notifications)
   - fcm.googleapis.com
+  # Linear API (problem reports)
+  - api.linear.app
 env:
 - APPSTORE_API_KEY_ID
 - APPSTORE_API_KEY_P8
@@ -87,6 +90,9 @@ env:
 - ENABLE_TELEGRAM_SERVER
 - ETERNIS_INFERENCE_API_KEY
 - EXA_API_KEY
+- FALLBACK_CHECK_INTERVAL
+- FALLBACK_PROMETHEUS_TOKEN
+- FALLBACK_PROMETHEUS_URL
 - FIREBASE_CRED_JSON
 - FIREBASE_PROJECT_ID
 - FREE_MONTHLY_PLAN_TOKENS
@@ -94,6 +100,10 @@ env:
 - GOOGLE_CLIENT_ID
 - GOOGLE_CLIENT_SECRET
 - JWT_JWKS_URL
+- LINEAR_API_KEY
+- LINEAR_LABEL_ID
+- LINEAR_PROJECT_ID
+- LINEAR_TEAM_ID
 - LOG_FORMAT
 - LOG_LEVEL
 - MESSAGE_STORAGE_BUFFER_SIZE

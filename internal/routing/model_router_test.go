@@ -1,10 +1,10 @@
 package routing
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 	"sort"
+	"sync/atomic"
 	"testing"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
@@ -14,7 +14,7 @@ import (
 var (
 	ConfigFileEnvVar              = "CONFIG_FILE"
 	EternisAPIKeyEnvVar           = "ETERNIS_INFERENCE_API_KEY"
-	NearAIAPIKeyEnvVar            = "NEAR_AI_KEY"
+	NearAIAPIKeyEnvVar            = "NEAR_API_KEY"
 	OpenAIAPIKeyEnvVar            = "OPENAI_API_KEY"
 	OpenRouterMobileAPIKeyEnvVar  = "OPENROUTER_MOBILE_API_KEY"
 	OpenRouterDesktopAPIKeyEnvVar = "OPENROUTER_DESKTOP_API_KEY"
@@ -96,7 +96,8 @@ func TestNewModelRouter(t *testing.T) {
 		t.Fatal("NewModelRouter returned nil")
 	}
 
-	if len(router.routes) == 0 {
+	routes := router.GetRoutes()
+	if len(routes) == 0 {
 		t.Fatal("routes map is empty")
 	}
 
@@ -353,7 +354,6 @@ func TestRouteModelNoProviderConfigured(t *testing.T) {
 	provider, err := router.RouteModel("gpt-4", "mobile")
 	if err == nil {
 		t.Errorf("expected error when no provider keys are configured, got %v", provider.Name)
-		router.logger.Info(fmt.Sprintf("%#v", router.routes))
 	}
 }
 
@@ -437,6 +437,7 @@ func TestGetProviders(t *testing.T) {
 	// to them
 	expectedProviders := []string{
 		"Eternis",
+		"NEAR AI",
 		"Tinfoil",
 		"OpenAI",
 		"OpenRouter",
@@ -519,5 +520,106 @@ func TestGetOpenRouterAPIKeyFallback(t *testing.T) {
 				t.Errorf("expected key %s, got %s", tt.expectedKey, provider.APIKey)
 			}
 		})
+	}
+}
+
+func TestFallbackEndpoints(t *testing.T) {
+	router := newModelRouter(t, newEnv(nil))
+	routes := router.GetRoutes()
+
+	model := "zai-org/GLM-4.6"
+	route, ok := routes[model]
+	if !ok {
+		t.Fatalf("No route for model %s", model)
+	}
+
+	if len(route.ActiveEndpoints) != 1 {
+		t.Errorf("Expected 1 active endpoint, got %d", len(route.ActiveEndpoints))
+	}
+
+	if len(route.InactiveEndpoints) != 1 {
+		t.Errorf("Expected 1 inactive endpoint, got %d", len(route.InactiveEndpoints))
+	}
+}
+
+func TestRoundRobinRouting(t *testing.T) {
+	router := newModelRouter(t, newEnv(nil))
+	routes := router.GetRoutes()
+
+	model := "zai-org/GLM-4.6"
+	route, ok := routes[model]
+	if !ok {
+		t.Fatalf("No route for model %s", model)
+	}
+
+	activeEndpoints := make([]ModelEndpoint, 0, len(route.ActiveEndpoints)+len(route.InactiveEndpoints))
+	activeEndpoints = append(activeEndpoints, route.ActiveEndpoints...)
+	activeEndpoints = append(activeEndpoints, route.InactiveEndpoints...)
+	if len(activeEndpoints) != 2 {
+		t.Errorf("Expected 2 endpoints in total, got %d", len(activeEndpoints))
+	}
+
+	newRoutes := make(map[string]ModelRoute, len(routes))
+	for key, value := range routes {
+		newRoutes[key] = value
+	}
+
+	newRoutes[model] = ModelRoute{
+		ActiveEndpoints:   activeEndpoints,
+		RoundRobinCounter: &atomic.Uint64{},
+	}
+
+	router.SetRoutes(newRoutes)
+
+	tests := []string{"Eternis", "NEAR AI", "Eternis", "NEAR AI", "Eternis"}
+	for n, expectedProvider := range tests {
+		provider, err := router.RouteModel(model, "")
+		if err != nil {
+			t.Fatalf("RouteModel failed: %v", err)
+		}
+		if provider.Name != expectedProvider {
+			t.Errorf("Expected provider %s on attempt #%d, got %s", expectedProvider, n+1, provider.Name)
+		}
+	}
+}
+
+func TestPanicModeRouting(t *testing.T) {
+	router := newModelRouter(t, newEnv(nil))
+	routes := router.GetRoutes()
+
+	model := "zai-org/GLM-4.6"
+	route, ok := routes[model]
+	if !ok {
+		t.Fatalf("No route for model %s", model)
+	}
+
+	inactiveEndpoints := make([]ModelEndpoint, 0, len(route.ActiveEndpoints)+len(route.InactiveEndpoints))
+	inactiveEndpoints = append(inactiveEndpoints, route.ActiveEndpoints...)
+	inactiveEndpoints = append(inactiveEndpoints, route.InactiveEndpoints...)
+	if len(inactiveEndpoints) != 2 {
+		t.Errorf("Expected 2 endpoints in total, got %d", len(inactiveEndpoints))
+	}
+
+	newRoutes := make(map[string]ModelRoute, len(routes))
+	for key, value := range routes {
+		newRoutes[key] = value
+	}
+
+	newRoutes[model] = ModelRoute{
+		InactiveEndpoints: inactiveEndpoints,
+		RoundRobinCounter: &atomic.Uint64{},
+	}
+
+	router.SetRoutes(newRoutes)
+
+	tests := []string{"Eternis", "NEAR AI", "Eternis", "NEAR AI", "Eternis"}
+	for n, expectedProvider := range tests {
+		provider, err := router.RouteModel(model, "")
+		if err != nil {
+			t.Fatalf("RouteModel failed: %v", err)
+		}
+		if provider.Name != expectedProvider {
+			t.Errorf("Expected provider %s on attempt #%d, got %s", expectedProvider, n+1, provider.Name)
+		}
 	}
 }

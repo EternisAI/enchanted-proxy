@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-yaml"
 	"github.com/joho/godotenv"
@@ -39,6 +40,11 @@ type Config struct {
 
 	// Model Router
 	ModelRouterConfig *ModelRouterConfig `yaml:"model_router"`
+
+	// Model Router Fallback Service
+	FallbackPrometheusURL   string
+	FallbackPrometheusToken string
+	FallbackMinInterval     time.Duration
 
 	// MCP
 	PerplexityAPIKey  string
@@ -122,9 +128,19 @@ type Config struct {
 
 	// ZCash Backend
 	ZCashBackendAPIKey string
+
+	// Linear API (problem reports)
+	LinearAPIKey    string
+	LinearTeamID    string
+	LinearProjectID string
+	LinearLabelID   string
 }
 
-var AppConfig *Config
+var (
+	AppConfig *Config
+
+	DefaultFallbackCheckInterval = 15 * time.Second
+)
 
 func LoadConfig() {
 	// Load .env file if it exists
@@ -183,6 +199,11 @@ func LoadConfig() {
 		ValidatorType:    getEnvOrDefault("VALIDATOR_TYPE", "firebase"),
 		JWTJWKSURL:       getEnvOrDefault("JWT_JWKS_URL", ""),
 		FirebaseCredJSON: getEnvOrDefault("FIREBASE_CRED_JSON", ""),
+
+		// Model Router Fallback Service
+		FallbackPrometheusURL:   getEnvOrDefault("FALLBACK_PROMETHEUS_URL", ""),
+		FallbackPrometheusToken: getEnvOrDefault("FALLBACK_PROMETHEUS_TOKEN", ""),
+		FallbackMinInterval:     getEnvAsDuration("FALLBACK_CHECK_INTERVAL", DefaultFallbackCheckInterval),
 
 		// MCP
 		PerplexityAPIKey:  getEnvOrDefault("PERPLEXITY_API_KEY", ""),
@@ -266,6 +287,12 @@ func LoadConfig() {
 
 		// ZCash Backend
 		ZCashBackendAPIKey: getEnvOrDefault("ZCASH_BACKEND_API_KEY", ""),
+
+		// Linear API (problem reports)
+		LinearAPIKey:    getEnvOrDefault("LINEAR_API_KEY", ""),
+		LinearLabelID:   getEnvOrDefault("LINEAR_LABEL_ID", ""),
+		LinearProjectID: getEnvOrDefault("LINEAR_PROJECT_ID", ""),
+		LinearTeamID:    getEnvOrDefault("LINEAR_TEAM_ID", ""),
 	}
 
 	// Load settings from a configuration file.
@@ -330,7 +357,11 @@ func LoadConfig() {
 	}
 
 	if AppConfig.ZCashBackendAPIKey == "" {
-		log.Println("Warning: ZCash Backend API key is missing. Please set PERPLEXITY_API_KEY environment variable.")
+		log.Println("Warning: ZCash Backend API key is missing. Please set ZCASH_BACKEND_API_KEY environment variable.")
+	}
+
+	if AppConfig.LinearAPIKey == "" {
+		log.Println("Warning: Linear API key is missing. Please set LINEAR_API_KEY environment variable.")
 	}
 
 	if AppConfig.AppStoreAPIKeyP8 == "" || AppConfig.AppStoreAPIKeyID == "" || AppConfig.AppStoreBundleID == "" || AppConfig.AppStoreIssuerID == "" {
@@ -368,6 +399,17 @@ func LoadConfig() {
 func getEnvOrDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := time.ParseDuration(value); err == nil {
+			return parsed
+		} else {
+			log.Printf("Warning: Failed to parse environment variable %s='%s' as time.Duration, using default %v: %v", key, value, defaultValue, err)
+		}
 	}
 	return defaultValue
 }
