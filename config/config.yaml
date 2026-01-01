@@ -62,6 +62,14 @@ model_router:
     - name: Eternis
       base_url: http://34.30.193.13:8000/v1
 
+  # GLM-4.7 - Dev/Testing - via OpenRouter (1× multiplier)
+  - name: zhipu/glm-4.7
+    aliases:
+    - glm-4.7
+    token_multiplier: 1.0
+    providers:
+    - name: OpenRouter
+
   # GPT-4.1 - Pro only - via OpenRouter (4× multiplier)
   - name: openai/gpt-4.1
     aliases:
