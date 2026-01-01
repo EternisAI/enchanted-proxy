@@ -61,7 +61,7 @@ func (e *promQueryAPIEmulator) Query(
 			{
 				Metric:    prommodel.Metric(prommodel.LabelSet(map[prommodel.LabelName]prommodel.LabelValue{})),
 				Value:     prommodel.SampleValue(*e.value),
-				Timestamp: prommodel.Time(ts.Unix()),
+				Timestamp: prommodel.Time(ts.UnixMilli()),
 			},
 		})
 	}
