@@ -203,8 +203,14 @@ func TestMaintainFallbackState(t *testing.T) {
 		InactiveEndpoints: route.ActiveEndpoints,
 		RoundRobinCounter: route.RoundRobinCounter,
 	}
-	routes[model] = route
-	router.SetRoutes(routes)
+
+	newRoutes := make(map[string]routing.ModelRoute, len(routes))
+	for key, value := range routes {
+		newRoutes[key] = value
+	}
+
+	newRoutes[model] = route
+	router.SetRoutes(newRoutes)
 
 	expectedProviderName := "NEAR AI"
 	provider, err := router.RouteModel(model, "")
@@ -327,8 +333,14 @@ func TestRecoverTrigger(t *testing.T) {
 		InactiveEndpoints: route.ActiveEndpoints,
 		RoundRobinCounter: route.RoundRobinCounter,
 	}
-	routes[model] = route
-	router.SetRoutes(routes)
+
+	newRoutes := make(map[string]routing.ModelRoute, len(routes))
+	for key, value := range routes {
+		newRoutes[key] = value
+	}
+
+	newRoutes[model] = route
+	router.SetRoutes(newRoutes)
 
 	expectedProviderName := "NEAR AI"
 	provider, err := router.RouteModel(model, "")

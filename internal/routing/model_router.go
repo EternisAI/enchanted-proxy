@@ -43,7 +43,8 @@ type ModelRouter struct {
 	logger  *logger.Logger
 }
 
-// GetRoutes retrieves a shallow copy of the current routing map from the atomic pointer store
+// GetRoutes retrieves the current routing map from the atomic pointer store.
+// WARNING: Callers must not modify the returned map; use SetRoutes for updates.
 func (mr *ModelRouter) GetRoutes() map[string]ModelRoute {
 	return *(mr.routes.Load())
 }

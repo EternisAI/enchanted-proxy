@@ -52,7 +52,8 @@ func NewFallbackService(appConfig *config.Config, logger *logger.Logger, router 
 
 	if appConfig.FallbackPrometheusToken != "" {
 		promCfg.RoundTripper = &promRoundTripper{
-			token: appConfig.FallbackPrometheusToken,
+			token:        appConfig.FallbackPrometheusToken,
+			roundTripper: http.DefaultTransport,
 		}
 	}
 
@@ -84,9 +85,8 @@ func NewFallbackService(appConfig *config.Config, logger *logger.Logger, router 
 					config:   endpoint.Fallback,
 				}
 
-				go worker.run()
-
 				s.wg.Add(1)
+				go worker.run()
 			}
 		}
 	}
@@ -131,7 +131,7 @@ func (w *fallbackWorker) run() {
 		case <-time.After(time.Until(nextRunTime)):
 			nextRunTime = w.refreshEndpoints(w.service.api, time.Now())
 			if nextRunTime.IsZero() {
-				break
+				return
 			}
 		case <-w.service.shutdown:
 			return
@@ -194,8 +194,9 @@ func (w *fallbackWorker) refreshEndpoints(api promQueryAPI, now time.Time) time.
 	resChan := make(chan promQueryResult)
 
 	ctx, cancel := context.WithTimeout(context.Background(), w.service.interval)
+	defer cancel()
+
 	go func() {
-		defer cancel()
 		result, warnings, err := api.Query(ctx, query, now)
 		resChan <- promQueryResult{result, warnings, err}
 	}()
@@ -336,8 +337,14 @@ func (w *fallbackWorker) refreshEndpoints(api promQueryAPI, now time.Time) time.
 		InactiveEndpoints: inactiveEndpoints,
 		RoundRobinCounter: route.RoundRobinCounter,
 	}
-	routes[w.model] = route
-	w.service.router.SetRoutes(routes)
+
+	newRoutes := make(map[string]routing.ModelRoute, len(routes))
+	for key, value := range routes {
+		newRoutes[key] = value
+	}
+
+	newRoutes[w.model] = route
+	w.service.router.SetRoutes(newRoutes)
 
 	return nextRunTime
 }

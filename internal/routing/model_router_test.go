@@ -557,11 +557,17 @@ func TestRoundRobinRouting(t *testing.T) {
 		t.Errorf("Expected 2 endpoints in total, got %d", len(route.ActiveEndpoints))
 	}
 
-	routes[model] = ModelRoute{
+	newRoutes := make(map[string]ModelRoute, len(routes))
+	for key, value := range routes {
+		newRoutes[key] = value
+	}
+
+	newRoutes[model] = ModelRoute{
 		ActiveEndpoints:   activeEndpoints,
 		RoundRobinCounter: &atomic.Uint64{},
 	}
-	router.SetRoutes(routes)
+
+	router.SetRoutes(newRoutes)
 
 	tests := []string{"Eternis", "NEAR AI", "Eternis", "NEAR AI", "Eternis"}
 	for n, expectedProvider := range tests {
@@ -590,11 +596,17 @@ func TestPanicModeRouting(t *testing.T) {
 		t.Errorf("Expected 2 endpoints in total, got %d", len(route.ActiveEndpoints))
 	}
 
-	routes[model] = ModelRoute{
+	newRoutes := make(map[string]ModelRoute, len(routes))
+	for key, value := range routes {
+		newRoutes[key] = value
+	}
+
+	newRoutes[model] = ModelRoute{
 		InactiveEndpoints: inactiveEndpoints,
 		RoundRobinCounter: &atomic.Uint64{},
 	}
-	router.SetRoutes(routes)
+
+	router.SetRoutes(newRoutes)
 
 	tests := []string{"Eternis", "NEAR AI", "Eternis", "NEAR AI", "Eternis"}
 	for n, expectedProvider := range tests {

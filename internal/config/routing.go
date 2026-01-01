@@ -319,7 +319,7 @@ type FallbackConfig struct {
 	// remove traffic from this endpoint.
 	Trigger FallbackStateConfig `yaml:"trigger"`
 
-	// Recover contains fallback policy setitings for detecting a recovery state that should
+	// Recover contains fallback policy settings for detecting a recovery state that should
 	// return traffic to this endpoint.
 	Recover FallbackStateConfig `yaml:"recover"`
 }
@@ -338,7 +338,7 @@ func (cfg *FallbackConfig) Validate() error {
 	return nil
 }
 
-// unmarshalModelEndpointProvider implements a custom YAML unmarshaler for FallbackConfig.
+// unmarshalFallbackConfig implements a custom YAML unmarshaler for FallbackConfig.
 // Validates the value after unmarshaling.
 func unmarshalFallbackConfig(value *FallbackConfig, data []byte) error {
 	type Aux FallbackConfig
