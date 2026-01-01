@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -77,8 +76,7 @@ type Product struct {
 
 func (s *Service) GetProducts() []Product {
 	multiplier := 1.0
-	// Apply 0.01 multiplier for dev, staging, and local environments
-	if env := os.Getenv("ENVIRONMENT"); env == "dev" || env == "staging" || env == "local" {
+	if config.AppConfig.ZCashDebugPricing {
 		multiplier = 0.01
 	}
 	return []Product{
