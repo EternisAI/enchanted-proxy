@@ -124,14 +124,17 @@ func (w *fallbackWorker) run() {
 		slog.String("provider", w.provider))
 
 	nextRunTime := time.Now()
+	timer := time.NewTimer(time.Until(nextRunTime))
+	defer timer.Stop()
 
 	for {
 		select {
-		case <-time.After(time.Until(nextRunTime)):
+		case <-timer.C:
 			nextRunTime = w.refreshEndpoints(w.service.api, time.Now())
 			if nextRunTime.IsZero() {
 				return
 			}
+			timer.Reset(time.Until(nextRunTime))
 		case <-w.service.shutdown:
 			return
 		}
