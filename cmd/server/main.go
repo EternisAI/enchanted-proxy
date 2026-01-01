@@ -22,6 +22,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/composio"
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/deepr"
+	"github.com/eternisai/enchanted-proxy/internal/fallback"
 	"github.com/eternisai/enchanted-proxy/internal/iap"
 	"github.com/eternisai/enchanted-proxy/internal/invitecode"
 	"github.com/eternisai/enchanted-proxy/internal/keyshare"
@@ -40,9 +41,9 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/stripe"
 	"github.com/eternisai/enchanted-proxy/internal/task"
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
-	"github.com/eternisai/enchanted-proxy/internal/zcash"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
 	"github.com/eternisai/enchanted-proxy/internal/tools"
+	"github.com/eternisai/enchanted-proxy/internal/zcash"
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -285,6 +286,9 @@ func main() {
 	// Initialize model router for automatic provider routing
 	modelRouter := routing.NewModelRouter(config.AppConfig, logger.WithComponent("routing"))
 
+	// Initialize model routing fallback service
+	fallbackService := fallback.NewFallbackService(config.AppConfig, logger.WithComponent("fallback"), modelRouter)
+
 	// Initialize key sharing service
 	var keyshareHandler *keyshare.Handler
 	if firebaseClient != nil {
@@ -462,6 +466,9 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Info("shutting down servers")
+
+	// Shutdown the model routing fallback service
+	fallbackService.Shutdown()
 
 	// Shutdown the request tracking service worker pool
 	requestTrackingService.Shutdown()

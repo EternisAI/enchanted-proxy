@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/goccy/go-yaml"
 )
@@ -261,6 +262,10 @@ type ModelEndpointProvider struct {
 	// APIType determines which API format to use (chat_completions or responses).
 	// Defaults to chat_completions.
 	APIType APIType `yaml:"api_type,omitempty"`
+
+	// FallbackConfig contains optional settings configuring traffic fallback behavior
+	// for this provider endpoint if it becomes unhealthy or overloaded.
+	Fallback *FallbackConfig `yaml:"fallback,omitempty"`
 }
 
 // Validate performs validation of a ModelEndpointProvider value:
@@ -278,6 +283,12 @@ func (p *ModelEndpointProvider) Validate() error {
 
 	if err := p.APIType.Validate(); err != nil {
 		return err
+	}
+
+	if p.Fallback != nil {
+		if err := p.Fallback.Validate(); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -302,6 +313,62 @@ func unmarshalModelEndpointProvider(value *ModelEndpointProvider, data []byte) e
 	return nil
 }
 
+// Fallback contains fallback policy settings for a model endpoint
+type FallbackConfig struct {
+	// Trigger contains fallback policy settings for detecting an overload state that should
+	// remove traffic from this endpoint.
+	Trigger FallbackStateConfig `yaml:"trigger"`
+
+	// Recover contains fallback policy settings for detecting a recovery state that should
+	// return traffic to this endpoint.
+	Recover FallbackStateConfig `yaml:"recover"`
+}
+
+// Validate performs validation of a FallbackConfig value:
+// - Checks that PromQL queries for trigger and recover events are specified
+func (cfg *FallbackConfig) Validate() error {
+	if cfg.Trigger.Query == "" {
+		return errors.New("fallback trigger query must be specified")
+	}
+
+	if cfg.Recover.Query == "" {
+		return errors.New("fallback recover query must be specified")
+	}
+
+	return nil
+}
+
+// unmarshalFallbackConfig implements a custom YAML unmarshaler for FallbackConfig.
+// Validates the value after unmarshaling.
+func unmarshalFallbackConfig(value *FallbackConfig, data []byte) error {
+	type Aux FallbackConfig
+	var aux Aux
+
+	if err := yaml.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	*value = FallbackConfig(aux)
+
+	if err := value.Validate(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// FallbackStateConfig contains fallback policy configuration for a specific state of a model
+// endpoint (overload/fallback or normal/recovery).
+type FallbackStateConfig struct {
+	// DwellTime is the duration of hysteresis period after entering the state which prevents
+	// changing the state again for this duration.
+	DwellTime time.Duration `yaml:"dwell_time"`
+
+	// Query is a PromQL query that should return an empty vector or a vector of 0 while the
+	// state is not entered and a vector of 1 after the state is entered
+	Query string `yaml:"query"`
+}
+
 func init() {
 	// Register unmarshalers of custom types with the YAML library
 	yaml.RegisterCustomUnmarshaler[APIType](unmarshalAPITypeYAML)
@@ -309,6 +376,7 @@ func init() {
 	yaml.RegisterCustomUnmarshaler[ModelProviderConfig](unmarshalModelProviderConfig)
 	yaml.RegisterCustomUnmarshaler[ModelConfig](unmarshalModelConfig)
 	yaml.RegisterCustomUnmarshaler[ModelEndpointProvider](unmarshalModelEndpointProvider)
+	yaml.RegisterCustomUnmarshaler[FallbackConfig](unmarshalFallbackConfig)
 }
 
 // validateURLString performs basic sanity checks of a string that should contain a valid URL.

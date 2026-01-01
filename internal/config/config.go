@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-yaml"
 	"github.com/joho/godotenv"
@@ -39,6 +40,11 @@ type Config struct {
 
 	// Model Router
 	ModelRouterConfig *ModelRouterConfig `yaml:"model_router"`
+
+	// Model Router Fallback Service
+	FallbackPrometheusURL   string
+	FallbackPrometheusToken string
+	FallbackMinInterval     time.Duration
 
 	// MCP
 	PerplexityAPIKey  string
@@ -130,7 +136,11 @@ type Config struct {
 	LinearLabelID   string
 }
 
-var AppConfig *Config
+var (
+	AppConfig *Config
+
+	DefaultFallbackCheckInterval = 15 * time.Second
+)
 
 func LoadConfig() {
 	// Load .env file if it exists
@@ -189,6 +199,11 @@ func LoadConfig() {
 		ValidatorType:    getEnvOrDefault("VALIDATOR_TYPE", "firebase"),
 		JWTJWKSURL:       getEnvOrDefault("JWT_JWKS_URL", ""),
 		FirebaseCredJSON: getEnvOrDefault("FIREBASE_CRED_JSON", ""),
+
+		// Model Router Fallback Service
+		FallbackPrometheusURL:   getEnvOrDefault("FALLBACK_PROMETHEUS_URL", ""),
+		FallbackPrometheusToken: getEnvOrDefault("FALLBACK_PROMETHEUS_TOKEN", ""),
+		FallbackMinInterval:     getEnvAsDuration("FALLBACK_CHECK_INTERVAL", DefaultFallbackCheckInterval),
 
 		// MCP
 		PerplexityAPIKey:  getEnvOrDefault("PERPLEXITY_API_KEY", ""),
@@ -384,6 +399,17 @@ func LoadConfig() {
 func getEnvOrDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := time.ParseDuration(value); err == nil {
+			return parsed
+		} else {
+			log.Printf("Warning: Failed to parse environment variable %s='%s' as time.Duration, using default %v: %v", key, value, defaultValue, err)
+		}
 	}
 	return defaultValue
 }

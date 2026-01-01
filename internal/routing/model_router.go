@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -38,8 +39,19 @@ import (
 type ModelRouter struct {
 	aliases map[string]string
 	apiKeys map[string]map[string]string // Store platform-specific keys for API providers
-	routes  map[string]ModelRoute
+	routes  atomic.Pointer[map[string]ModelRoute]
 	logger  *logger.Logger
+}
+
+// GetRoutes retrieves the current routing map from the atomic pointer store.
+// WARNING: Callers must not modify the returned map; use SetRoutes for updates.
+func (mr *ModelRouter) GetRoutes() map[string]ModelRoute {
+	return *(mr.routes.Load())
+}
+
+// SetRoutes updates the atomic pointer store of the current routing map with a new pointer
+func (mr *ModelRouter) SetRoutes(routes map[string]ModelRoute) {
+	mr.routes.Store(&routes)
 }
 
 // ModelRoute maintains actual lists of provider endpoints where the requests for this model
@@ -54,13 +66,17 @@ type ModelRoute struct {
 	// Endpoints may be deactivated by fallback policy or other similar settings.
 	// TODO: Will be used by the fallback policy.
 	InactiveEndpoints []ModelEndpoint
+
+	// RoundRobinCounter is an atomic counter used to implement simple round-robin balancing
+	// if choosing from multiple endpoints.
+	RoundRobinCounter *atomic.Uint64
 }
 
 // ModelEndpoint contains all information necessary to route requests for a specific model to
 // a specific inference API provider, aggregated from the declarative routing configuration.
 type ModelEndpoint struct {
-	Provider ProviderConfig
-	// TODO: Fallback policy configuration will be stored here
+	Provider *ProviderConfig
+	Fallback *FallbackConfig
 }
 
 // ProviderConfig contains aggregated routing information for an AI provider.
@@ -82,6 +98,13 @@ type ProviderConfig struct {
 
 	// TokenMultiplier is the cost multiplier for this model (1× to 50×)
 	TokenMultiplier float64
+}
+
+// FallbackConfig contains fallback policy settings for trigger (entering overload/fallback state)
+// and recover (entering normal/recovery state) events for a model endpoint.
+type FallbackConfig struct {
+	Trigger *config.FallbackStateConfig
+	Recover *config.FallbackStateConfig
 }
 
 // NewModelRouter creates a new model router from configuration.
@@ -112,13 +135,15 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 
 	router.RebuildRoutes(cfg.ModelRouterConfig)
 
-	if len(router.routes) == 0 {
+	routes := router.GetRoutes()
+
+	if len(routes) == 0 {
 		logger.Error("model router has no model routes")
 		return nil
 	}
 
 	logger.Info("model router initialized",
-		slog.Int("route_count", len(router.routes)))
+		slog.Int("route_count", len(routes)))
 
 	return router
 }
@@ -157,7 +182,7 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 			continue
 		}
 
-		var activeEndpoints []ModelEndpoint
+		var activeEndpoints, inactiveEndpoints []ModelEndpoint
 
 		for _, endpointProvider := range model.Providers {
 			if modelProvider, exists := providers[endpointProvider.Name]; exists {
@@ -167,7 +192,7 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 				}
 
 				// Build an aggregated provider configuration for this endpoint
-				provider := ProviderConfig{
+				provider := &ProviderConfig{
 					BaseURL:         modelProvider.BaseURL,
 					APIKey:          modelProvider.APIKey,
 					Name:            modelProvider.Name,
@@ -186,8 +211,27 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 					provider.BaseURL = endpointProvider.BaseURL
 				}
 
-				endpoint := ModelEndpoint{provider}
-				activeEndpoints = append(activeEndpoints, endpoint)
+				var fallback *FallbackConfig
+
+				// Build the fallback configuration, if specified.
+				if endpointProvider.Fallback != nil {
+					fallback = &FallbackConfig{
+						Trigger: &endpointProvider.Fallback.Trigger,
+						Recover: &endpointProvider.Fallback.Recover,
+					}
+				}
+
+				endpoint := ModelEndpoint{provider, fallback}
+
+				// Endpoints with specified fallback configuration are treated as "primary"
+				// and start as active endpoints.
+				// Endpoints without specified fallback configuration are treated as "fallback"
+				// and start as inactive endpoints.
+				if endpoint.Fallback != nil {
+					activeEndpoints = append(activeEndpoints, endpoint)
+				} else {
+					inactiveEndpoints = append(inactiveEndpoints, endpoint)
+				}
 			} else {
 				mr.logger.Warn("skipping unknown model endpoint provider",
 					slog.String("model", model.Name),
@@ -198,9 +242,20 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 
 		// Populate routes and alias mapping for the model.
 		// Alias mapping entries are normalized for reliable matching.
-		if len(activeEndpoints) > 0 {
-			routes[model.Name] = ModelRoute{
-				ActiveEndpoints: activeEndpoints,
+		if len(activeEndpoints) > 0 || len(inactiveEndpoints) > 0 {
+			// If there are no primary endpoints initially, it means fallback policy is
+			// not configured for the model - treat all endpoints are active.
+			if len(activeEndpoints) == 0 && len(inactiveEndpoints) > 0 {
+				routes[model.Name] = ModelRoute{
+					ActiveEndpoints:   inactiveEndpoints,
+					RoundRobinCounter: &atomic.Uint64{},
+				}
+			} else {
+				routes[model.Name] = ModelRoute{
+					ActiveEndpoints:   activeEndpoints,
+					InactiveEndpoints: inactiveEndpoints,
+					RoundRobinCounter: &atomic.Uint64{},
+				}
 			}
 
 			aliases[strings.ToLower(strings.TrimSpace(model.Name))] = model.Name
@@ -216,7 +271,7 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 
 	// Update the routing table and alias mappings in place
 	mr.aliases = aliases
-	mr.routes = routes
+	mr.SetRoutes(routes)
 }
 
 // RouteModel determines the provider for a given model ID.
@@ -301,19 +356,32 @@ func (mr *ModelRouter) RouteModel(modelID string, platform string) (*ProviderCon
 //   - model: The "canonical" name of the model
 //   - platform: Client platform ("mobile", "desktop") - used for OpenRouter key selection
 func (mr *ModelRouter) getModelEndpointProvider(model string, platform string) *ProviderConfig {
-	route, exists := mr.routes[model]
+	routes := mr.GetRoutes()
+
+	route, exists := routes[model]
 	if !exists {
 		return nil
 	}
 
-	// TODO: implement fallback logic
-	// For now, just select the first endpoint on the list every time.
+	var endpoint ModelEndpoint
 
-	if len(route.ActiveEndpoints) == 0 {
-		return nil
+	// Try to select an active endpoint first. If there are no active endpoints but some
+	// inactive endpoints, enter a "panic mode" and select one of inactive endpoints.
+	// If multiple endpoints are present, select one using a simple round-robin algorithm.
+	activeEndpointsCount := len(route.ActiveEndpoints)
+	if activeEndpointsCount > 0 {
+		idx := (route.RoundRobinCounter.Add(1) - 1) % uint64(activeEndpointsCount)
+		endpoint = route.ActiveEndpoints[idx]
+	} else {
+		inactiveEndpointsCount := len(route.InactiveEndpoints)
+		if inactiveEndpointsCount > 0 {
+			idx := (route.RoundRobinCounter.Add(1) - 1) % uint64(inactiveEndpointsCount)
+			endpoint = route.InactiveEndpoints[idx]
+		} else {
+			return nil
+		}
 	}
 
-	endpoint := route.ActiveEndpoints[0]
 	provider := endpoint.Provider
 
 	// For OpenRouter, determine the API key dynamically based on the platform and update in
@@ -327,10 +395,13 @@ func (mr *ModelRouter) getModelEndpointProvider(model string, platform string) *
 			return nil
 		}
 
-		provider.APIKey = apiKey
+		// Make a copy of the original provider struct and set the API key
+		prov := *provider
+		prov.APIKey = apiKey
+		provider = &prov
 	}
 
-	return &provider
+	return provider
 }
 
 // getOpenRouterAPIKey returns the appropriate OpenRouter API key for the platform.
@@ -369,9 +440,11 @@ func (mr *ModelRouter) getOpenRouterAPIKey(platform string) string {
 //   - API documentation
 //   - Health checks
 func (mr *ModelRouter) GetSupportedModels() []string {
-	models := make([]string, 0, len(mr.routes))
+	routes := mr.GetRoutes()
 
-	for model := range mr.routes {
+	models := make([]string, 0, len(routes))
+
+	for model := range routes {
 		if model != "*" {
 			models = append(models, model)
 		}
@@ -388,8 +461,11 @@ func (mr *ModelRouter) GetSupportedModels() []string {
 // Returns:
 //   - []string: List of provider names (e.g., ["Anthropic", "OpenAI", "OpenRouter"])
 func (mr *ModelRouter) GetProviders() []string {
+	routes := mr.GetRoutes()
+
 	providerMap := make(map[string]struct{})
-	for _, route := range mr.routes {
+
+	for _, route := range routes {
 		for _, endpoint := range route.ActiveEndpoints {
 			providerMap[endpoint.Provider.Name] = struct{}{}
 		}
