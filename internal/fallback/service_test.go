@@ -58,7 +58,7 @@ func (e *promQueryAPIEmulator) Query(
 		value = prommodel.Vector([]*prommodel.Sample{})
 	} else {
 		value = prommodel.Vector([]*prommodel.Sample{
-			&prommodel.Sample{
+			{
 				Metric:    prommodel.Metric(prommodel.LabelSet(map[prommodel.LabelName]prommodel.LabelValue{})),
 				Value:     prommodel.SampleValue(*e.value),
 				Timestamp: prommodel.Time(ts.Unix()),

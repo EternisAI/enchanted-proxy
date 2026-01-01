@@ -32,7 +32,6 @@ type FallbackService struct {
 	router   *routing.ModelRouter
 	interval time.Duration
 
-	ctx      context.Context
 	logger   *logger.Logger
 	mu       sync.Mutex
 	wg       sync.WaitGroup
@@ -243,7 +242,7 @@ func (w *fallbackWorker) refreshEndpoints(api promQueryAPI, now time.Time) time.
 		w.triggered = false
 
 		dwellTime := w.config.Recover.DwellTime
-		if dwellTime == 0 {
+		if dwellTime <= 0 {
 			dwellTime = w.service.interval
 		}
 
@@ -257,7 +256,7 @@ func (w *fallbackWorker) refreshEndpoints(api promQueryAPI, now time.Time) time.
 		w.triggered = true
 
 		dwellTime := w.config.Trigger.DwellTime
-		if dwellTime == 0 {
+		if dwellTime <= 0 {
 			dwellTime = w.service.interval
 		}
 
@@ -281,7 +280,7 @@ func (w *fallbackWorker) refreshEndpoints(api promQueryAPI, now time.Time) time.
 
 	endpointFlipped := false
 	for _, endpoint := range route.ActiveEndpoints {
-		// Flip one faillback endpoint (an endpoint that doesn't have its own fallback
+		// Flip one fallback endpoint (an endpoint that doesn't have its own fallback
 		// configuration) from active to inactive in case of a recovery event (w.triggered == false).
 		if endpoint.Fallback == nil && !w.triggered && !endpointFlipped {
 			inactiveEndpoints = append(inactiveEndpoints, endpoint)

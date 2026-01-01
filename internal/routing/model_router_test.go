@@ -552,9 +552,11 @@ func TestRoundRobinRouting(t *testing.T) {
 		t.Fatalf("No route for model %s", model)
 	}
 
-	activeEndpoints := append(route.ActiveEndpoints, route.InactiveEndpoints...)
+	activeEndpoints := make([]ModelEndpoint, 0, len(route.ActiveEndpoints)+len(route.InactiveEndpoints))
+	activeEndpoints = append(activeEndpoints, route.ActiveEndpoints...)
+	activeEndpoints = append(activeEndpoints, route.InactiveEndpoints...)
 	if len(activeEndpoints) != 2 {
-		t.Errorf("Expected 2 endpoints in total, got %d", len(route.ActiveEndpoints))
+		t.Errorf("Expected 2 endpoints in total, got %d", len(activeEndpoints))
 	}
 
 	newRoutes := make(map[string]ModelRoute, len(routes))
@@ -591,9 +593,11 @@ func TestPanicModeRouting(t *testing.T) {
 		t.Fatalf("No route for model %s", model)
 	}
 
-	inactiveEndpoints := append(route.ActiveEndpoints, route.InactiveEndpoints...)
+	inactiveEndpoints := make([]ModelEndpoint, 0, len(route.ActiveEndpoints)+len(route.InactiveEndpoints))
+	inactiveEndpoints = append(inactiveEndpoints, route.ActiveEndpoints...)
+	inactiveEndpoints = append(inactiveEndpoints, route.InactiveEndpoints...)
 	if len(inactiveEndpoints) != 2 {
-		t.Errorf("Expected 2 endpoints in total, got %d", len(route.ActiveEndpoints))
+		t.Errorf("Expected 2 endpoints in total, got %d", len(inactiveEndpoints))
 	}
 
 	newRoutes := make(map[string]ModelRoute, len(routes))
