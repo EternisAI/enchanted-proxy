@@ -400,6 +400,7 @@ func TestGetSupportedModels(t *testing.T) {
 		"deepseek-ai/DeepSeek-R1-0528",
 		"meta-llama/Llama-3.3-70B",
 		"zai-org/GLM-4.6",
+		"Qwen/Qwen3-30B-A3B-Instruct-2507",
 		"dphn/Dolphin-Mistral-24B-Venice-Edition",
 		"openai/gpt-4.1",
 		"openai/gpt-5",
