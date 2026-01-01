@@ -47,6 +47,7 @@ egress:
   - cloud-api.near.ai
   - us-east-1.aws.api.temporal.io
   # Internal API endpoints
+  - 7697efc6.igw.ghostagent.org
   - glm-46.llm.eternisai.net
   - zcash.eternisai.net
   # Internal deepresearch API endpoint
