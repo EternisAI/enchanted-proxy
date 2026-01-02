@@ -128,7 +128,7 @@ type Config struct {
 
 	// ZCash Backend
 	ZCashBackendAPIKey   string
-	ZCashDebugPricing    bool // Apply 0.01 price multiplier for testing (set true in dev environments)
+	ZCashDebugMultiplier float64 // Price multiplier for testing (e.g., 0.01 for 1% of normal price, 0 = disabled)
 
 	// Linear API (problem reports)
 	LinearAPIKey    string
@@ -288,7 +288,7 @@ func LoadConfig() {
 
 		// ZCash Backend
 		ZCashBackendAPIKey: getEnvOrDefault("ZCASH_BACKEND_API_KEY", ""),
-		ZCashDebugPricing:  getEnvOrDefault("ZCASH_DEBUG_PRICING", "false") == "true",
+		ZCashDebugMultiplier: getEnvFloat("ZCASH_DEBUG_MULTIPLIER", 0),
 
 		// Linear API (problem reports)
 		LinearAPIKey:    getEnvOrDefault("LINEAR_API_KEY", ""),

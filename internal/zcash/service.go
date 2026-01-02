@@ -76,8 +76,8 @@ type Product struct {
 
 func (s *Service) GetProducts() []Product {
 	multiplier := 1.0
-	if config.AppConfig.ZCashDebugPricing {
-		multiplier = 0.01
+	if config.AppConfig.ZCashDebugMultiplier > 0 {
+		multiplier = config.AppConfig.ZCashDebugMultiplier
 	}
 	return []Product{
 		{
