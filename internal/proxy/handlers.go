@@ -273,7 +273,7 @@ func ProxyHandler(
 						UserID:            userID,
 						ChatID:            chatID,
 						FirstMessage:      firstMessage,
-						Model:             model,
+						Model:             provider.Model,
 						BaseURL:           baseURL,
 						Platform:          platform,
 						EncryptionEnabled: encryptionEnabled,
