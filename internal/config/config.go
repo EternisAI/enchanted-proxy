@@ -438,6 +438,17 @@ func getEnvAsInt(key string, defaultValue int) int {
 	return defaultValue
 }
 
+func getEnvFloat(key string, defaultValue float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
+			return parsed
+		} else {
+			log.Printf("Warning: Failed to parse environment variable %s='%s' as float, using default %f: %v", key, value, defaultValue, err)
+		}
+	}
+	return defaultValue
+}
+
 func LoadConfigFile(reader io.Reader, config *Config) error {
 	decoder := yaml.NewDecoder(reader)
 
