@@ -127,7 +127,8 @@ type Config struct {
 	PushNotificationsEnabled bool // Enable/disable FCM push notifications for task completions (default: true)
 
 	// ZCash Backend
-	ZCashBackendAPIKey string
+	ZCashBackendAPIKey   string
+	ZCashDebugPricing    bool // Apply 0.01 price multiplier for testing (set true in dev environments)
 
 	// Linear API (problem reports)
 	LinearAPIKey    string
@@ -287,6 +288,7 @@ func LoadConfig() {
 
 		// ZCash Backend
 		ZCashBackendAPIKey: getEnvOrDefault("ZCASH_BACKEND_API_KEY", ""),
+		ZCashDebugPricing:  getEnvOrDefault("ZCASH_DEBUG_PRICING", "false") == "true",
 
 		// Linear API (problem reports)
 		LinearAPIKey:    getEnvOrDefault("LINEAR_API_KEY", ""),
