@@ -392,6 +392,7 @@ func (s *StreamSession) readUpstream() {
 					"event":        notif.Event,
 					"tool_name":    notif.ToolName,
 					"tool_call_id": notif.ToolCallID,
+					"query":        notif.Query,
 					"summary":      notif.Summary,
 					"error":        notif.Error,
 				})
