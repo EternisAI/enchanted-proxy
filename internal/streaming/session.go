@@ -112,6 +112,10 @@ type StreamSession struct {
 	continuationCount int    // Number of tool continuations executed
 	requestMu         sync.RWMutex
 
+	// Model info (for model-specific content filtering)
+	model   string
+	modelMu sync.RWMutex
+
 	// Logger
 	logger *logger.Logger
 }
@@ -235,6 +239,22 @@ func (s *StreamSession) SetUserID(userID string) {
 	s.userID = userID
 }
 
+// SetModel stores the model name for model-specific content filtering.
+// Must be called before Start() if GLM content filtering is desired.
+func (s *StreamSession) SetModel(model string) {
+	s.modelMu.Lock()
+	defer s.modelMu.Unlock()
+	s.model = model
+}
+
+// isGLMModel returns true if the current model is a GLM model that needs content filtering.
+func (s *StreamSession) isGLMModel() bool {
+	s.modelMu.RLock()
+	defer s.modelMu.RUnlock()
+	model := strings.ToLower(s.model)
+	return strings.Contains(model, "glm")
+}
+
 // getContextWithUserID returns a context derived from stopCtx with userID and chatID added.
 // This is used internally for tool execution to provide authentication and session context.
 func (s *StreamSession) getContextWithUserID() context.Context {
@@ -303,6 +323,14 @@ func (s *StreamSession) readUpstream() {
 		s.logger.Debug("tool detection enabled")
 	}
 
+	// GLM content filter for models that output <tool_call> XML in content
+	var glmFilter *GLMContentFilter
+	if s.isGLMModel() {
+		glmFilter = NewGLMContentFilter()
+		s.logger.Debug("GLM content filter enabled",
+			slog.String("model", s.model))
+	}
+
 	for scanner.Scan() {
 		// Check if stop was requested
 		select {
@@ -332,6 +360,18 @@ func (s *StreamSession) readUpstream() {
 		// Skip empty lines (common in SSE streams)
 		if strings.TrimSpace(line) == "" {
 			continue
+		}
+
+		// Apply GLM content filter if enabled
+		// This strips <tool_call> XML tags from content that GLM 4.7 outputs inline
+		if glmFilter != nil {
+			filteredLine, wasFiltered := glmFilter.FilterSSELine(line)
+			if wasFiltered {
+				line = filteredLine
+				s.logger.Debug("GLM content filtered",
+					slog.Bool("has_tool_calls", glmFilter.HasToolCalls()),
+					slog.Bool("inside_tool_call", glmFilter.IsInsideToolCall()))
+			}
 		}
 
 		// Extract token usage if present in this chunk
