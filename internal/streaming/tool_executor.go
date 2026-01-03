@@ -28,6 +28,7 @@ type ToolNotification struct {
 	Event      string `json:"event"`             // "started", "completed", "error"
 	ToolName   string `json:"tool_name"`         // e.g., "exa_search"
 	ToolCallID string `json:"tool_call_id"`      // e.g., "call_abc123"
+	Query      string `json:"query,omitempty"`   // Tool-specific query (e.g., search query)
 	Summary    string `json:"summary,omitempty"` // Result summary (for completed)
 	Error      string `json:"error,omitempty"`   // Error message (for error)
 }
@@ -122,6 +123,7 @@ func (te *ToolExecutor) ExecuteToolCalls(
 						Event:      "completed",
 						ToolName:   tc.Function.Name,
 						ToolCallID: tc.ID,
+						Query:      te.extractQuery(tc.Function.Name, tc.Function.Arguments),
 						Summary:    te.getSummary(result.Content),
 					})
 				}
@@ -171,6 +173,27 @@ func (te *ToolExecutor) getSummary(content string) string {
 		return content
 	}
 	return content[:maxLen] + "..."
+}
+
+// extractQuery extracts a human-readable query from tool arguments.
+func (te *ToolExecutor) extractQuery(toolName, args string) string {
+	switch toolName {
+	case "web_search":
+		var searchArgs struct {
+			Queries []string `json:"queries"`
+		}
+		if err := json.Unmarshal([]byte(args), &searchArgs); err == nil && len(searchArgs.Queries) > 0 {
+			return strings.Join(searchArgs.Queries, ", ")
+		}
+	case "search_memory":
+		var memoryArgs struct {
+			Query string `json:"query"`
+		}
+		if err := json.Unmarshal([]byte(args), &memoryArgs); err == nil && memoryArgs.Query != "" {
+			return memoryArgs.Query
+		}
+	}
+	return ""
 }
 
 // CreateContinuationRequest creates a new AI request with tool results.
