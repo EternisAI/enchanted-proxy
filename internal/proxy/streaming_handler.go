@@ -126,6 +126,9 @@ func handleStreamingWithBroadcast(
 	// Set original request body and provider config (needed for tool execution and continuation)
 	// Do this for all new sessions (whether created now or earlier as pending)
 	if isNew {
+		// Set model for model-specific content filtering (e.g., GLM <tool_call> XML stripping)
+		session.SetModel(model)
+
 		if requestBody, exists := c.Get("originalRequestBody"); exists {
 			if bodyBytes, ok := requestBody.([]byte); ok {
 				session.SetOriginalRequest(bodyBytes)
