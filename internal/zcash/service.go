@@ -30,17 +30,15 @@ const (
 )
 
 type Service struct {
-	queries      pgdb.Querier
-	logger       *logger.Logger
-	client       *http.Client
-	isProduction bool
+	queries pgdb.Querier
+	logger  *logger.Logger
+	client  *http.Client
 }
 
-func NewService(queries pgdb.Querier, logger *logger.Logger, isProduction bool) *Service {
+func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
 	return &Service{
-		queries:      queries,
-		logger:       logger,
-		isProduction: isProduction,
+		queries: queries,
+		logger:  logger,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -78,8 +76,8 @@ type Product struct {
 
 func (s *Service) GetProducts() []Product {
 	multiplier := 1.0
-	if !s.isProduction {
-		multiplier = 0.01
+	if config.AppConfig.ZCashDebugMultiplier > 0 {
+		multiplier = config.AppConfig.ZCashDebugMultiplier
 	}
 	return []Product{
 		{

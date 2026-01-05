@@ -19,6 +19,7 @@
 | **Llama 3.3 70B** (`llama-3.3-70b`) | Free, Pro | **1×** | Tinfoil | |
 | **GLM-4.6** (`glm-4.6`) | Free, Pro | **0.6×** | Eternis | Self-hosted |
 | **Dolphin Mistral** (`dolphin-mistral`) | Free, Pro | **0.5×** | Eternis | Uncensored, self-hosted |
+| **Qwen3 30B** (`qwen3-30b`) | Free, Pro | **0.8×** | NEAR AI | |
 | **GPT-4.1** (`gpt-4.1`) | Pro | **4×** | OpenRouter | |
 | **GPT-5** (`gpt-5`) | Pro | **6×** | OpenRouter | |
 | **GPT-5 Pro** (`gpt-5-pro`) | Pro | **50×** | OpenAI | Responses API |

@@ -78,6 +78,7 @@ var Configs = map[Tier]Config{
 			"zai-org/GLM-4.6", "glm-4.6", // GLM-4.6 (3×)
 			"z-ai/glm-4.7", "zhipu/glm-4.7", "glm-4.7", // GLM-4.7 (1×, dev/testing)
 			"dolphin-mistral-eternis", "dolphin-mistral", // Dolphin Mistral (0.5×, uncensored)
+			"Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3-30b", "qwen-30b", // Qwen3 30B (0.8×)
 		},
 		DeepResearchDailyRuns:         0, // Not available daily
 		DeepResearchLifetimeRuns:      1, // 1 lifetime run
@@ -95,6 +96,7 @@ var Configs = map[Tier]Config{
 		AllowedModels: []string{
 			"zai-org/GLM-4.6", "glm-4.6", // GLM 4.6
 			"z-ai/glm-4.7", "zhipu/glm-4.7", "glm-4.7", // GLM-4.7 (dev/testing)
+			"Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3-30b", "qwen-30b", // Qwen3 30B (0.8×)
 		},
 		DeepResearchDailyRuns:         -1, // Unlimited daily runs
 		DeepResearchLifetimeRuns:      0,  // Check daily only

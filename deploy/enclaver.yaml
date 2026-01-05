@@ -142,6 +142,7 @@ env:
 - TWITTER_CLIENT_ID
 - VALIDATOR_TYPE
 - ZCASH_BACKEND_API_KEY
+- ZCASH_DEBUG_MULTIPLIER
 files:
 - /etc/ssl/certs/eternis/llm-ca.pem
 - /var/run/secrets/tls/tls.crt

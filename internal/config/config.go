@@ -127,7 +127,8 @@ type Config struct {
 	PushNotificationsEnabled bool // Enable/disable FCM push notifications for task completions (default: true)
 
 	// ZCash Backend
-	ZCashBackendAPIKey string
+	ZCashBackendAPIKey   string
+	ZCashDebugMultiplier float64 // Price multiplier for testing (e.g., 0.01 for 1% of normal price, 0 = disabled)
 
 	// Linear API (problem reports)
 	LinearAPIKey    string
@@ -287,6 +288,7 @@ func LoadConfig() {
 
 		// ZCash Backend
 		ZCashBackendAPIKey: getEnvOrDefault("ZCASH_BACKEND_API_KEY", ""),
+		ZCashDebugMultiplier: getEnvFloat("ZCASH_DEBUG_MULTIPLIER", 0),
 
 		// Linear API (problem reports)
 		LinearAPIKey:    getEnvOrDefault("LINEAR_API_KEY", ""),
@@ -431,6 +433,17 @@ func getEnvAsInt(key string, defaultValue int) int {
 			return parsed
 		} else {
 			log.Printf("Warning: Failed to parse environment variable %s='%s' as int, using default %d: %v", key, value, defaultValue, err)
+		}
+	}
+	return defaultValue
+}
+
+func getEnvFloat(key string, defaultValue float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
+			return parsed
+		} else {
+			log.Printf("Warning: Failed to parse environment variable %s='%s' as float, using default %f: %v", key, value, defaultValue, err)
 		}
 	}
 	return defaultValue
