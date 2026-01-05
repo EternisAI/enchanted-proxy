@@ -45,6 +45,10 @@ func (h *Handler) CreateProblemReport(c *gin.Context) {
 		return
 	}
 
+	log.Info("problem report request",
+		slog.Bool("hasDeviceInfo", req.DeviceInfo != nil),
+		slog.Bool("hasStorageInfo", req.StorageInfo != nil))
+
 	resp, err := h.service.CreateReport(c.Request.Context(), userID, &req)
 	if err != nil {
 		log.Error("failed to create problem report",

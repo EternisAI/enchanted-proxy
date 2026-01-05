@@ -101,14 +101,22 @@ func (s *Service) buildLinearDescription(req *CreateProblemReportRequest, report
 	desc := fmt.Sprintf("**Description:**\n%s\n\n", req.ProblemDescription)
 
 	if req.DeviceInfo != nil {
-		desc += fmt.Sprintf("**Device:** %s (%s %s)\n**App Version:** %s (%s)\n\n",
+		desc += fmt.Sprintf("**Device:** %s (%s %s)\n**App Version:** %s (%s)\n**Locale:** %s\n**Timezone:** %s\n\n",
 			req.DeviceInfo.DeviceModel,
 			req.DeviceInfo.SystemName,
 			req.DeviceInfo.SystemVersion,
 			req.DeviceInfo.AppVersion,
-			req.DeviceInfo.BuildNumber)
+			req.DeviceInfo.BuildNumber,
+			req.DeviceInfo.Locale,
+			req.DeviceInfo.Timezone)
 	} else {
 		desc += "**Device Info:** not provided (user opted out)\n\n"
+	}
+
+	if req.StorageInfo != nil {
+		desc += fmt.Sprintf("**Storage:** %.1f GB free / %.1f GB total\n\n",
+			float64(req.StorageInfo.AvailableCapacityBytes)/(1024*1024*1024),
+			float64(req.StorageInfo.TotalCapacityBytes)/(1024*1024*1024))
 	}
 
 	desc += fmt.Sprintf("**Subscription Tier:** %s\n**Contact Email:** %s\n\n**Report ID:** %s\n**User ID:** %s",
