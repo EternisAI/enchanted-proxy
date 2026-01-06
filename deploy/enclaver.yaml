@@ -49,7 +49,6 @@ egress:
   # Internal API endpoints
   - 7697efc6.igw.ghostagent.org
   - glm-46.llm.eternisai.net
-  - glm-47.llm.eternisai.net
   - zcash.eternisai.net
   # Internal deepresearch API endpoint
   - flow-dev.dr-use1.ghostagent.org
