@@ -43,20 +43,21 @@ const createRequestLogWithPlanTokens = `-- name: CreateRequestLogWithPlanTokens 
 INSERT INTO request_logs (
     user_id, endpoint, model, provider,
     prompt_tokens, completion_tokens, total_tokens,
-    plan_tokens, token_multiplier
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    plan_tokens, token_multiplier, is_fallback_request
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 `
 
 type CreateRequestLogWithPlanTokensParams struct {
-	UserID           string         `json:"userId"`
-	Endpoint         string         `json:"endpoint"`
-	Model            *string        `json:"model"`
-	Provider         string         `json:"provider"`
-	PromptTokens     sql.NullInt32  `json:"promptTokens"`
-	CompletionTokens sql.NullInt32  `json:"completionTokens"`
-	TotalTokens      sql.NullInt32  `json:"totalTokens"`
-	PlanTokens       sql.NullInt32  `json:"planTokens"`
-	TokenMultiplier  sql.NullString `json:"tokenMultiplier"`
+	UserID            string         `json:"userId"`
+	Endpoint          string         `json:"endpoint"`
+	Model             *string        `json:"model"`
+	Provider          string         `json:"provider"`
+	PromptTokens      sql.NullInt32  `json:"promptTokens"`
+	CompletionTokens  sql.NullInt32  `json:"completionTokens"`
+	TotalTokens       sql.NullInt32  `json:"totalTokens"`
+	PlanTokens        sql.NullInt32  `json:"planTokens"`
+	TokenMultiplier   sql.NullString `json:"tokenMultiplier"`
+	IsFallbackRequest bool           `json:"isFallbackRequest"`
 }
 
 func (q *Queries) CreateRequestLogWithPlanTokens(ctx context.Context, arg CreateRequestLogWithPlanTokensParams) error {
@@ -70,8 +71,26 @@ func (q *Queries) CreateRequestLogWithPlanTokens(ctx context.Context, arg Create
 		arg.TotalTokens,
 		arg.PlanTokens,
 		arg.TokenMultiplier,
+		arg.IsFallbackRequest,
 	)
 	return err
+}
+
+const getUserFallbackTokensToday = `-- name: GetUserFallbackTokensToday :one
+SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
+FROM request_logs
+WHERE user_id = $1
+  AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
+  AND is_fallback_request = true
+  AND plan_tokens IS NOT NULL
+`
+
+// Query fallback quota usage for current day
+func (q *Queries) GetUserFallbackTokensToday(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserFallbackTokensToday, userID)
+	var plan_tokens int64
+	err := row.Scan(&plan_tokens)
+	return plan_tokens, err
 }
 
 const getUserLifetimeTokenUsage = `-- name: GetUserLifetimeTokenUsage :one

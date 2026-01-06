@@ -47,6 +47,37 @@ type Config struct {
 
 	// Allowed features (features available for this tier, empty = all allowed)
 	AllowedFeatures []Feature `json:"allowed_features"` // Features allowed for this tier (empty = all allowed)
+
+	// Fallback rate limiting (activated when primary limits exceeded)
+	// nil = no fallback available for this tier
+	FallbackConfig *FallbackRateLimitConfig `json:"fallback_config,omitempty"`
+}
+
+// FallbackRateLimitConfig defines fallback quota when primary limits are exhausted.
+type FallbackRateLimitConfig struct {
+	// Models allowed in fallback mode (subset of primary AllowedModels)
+	AllowedModels []string `json:"allowed_models"`
+
+	// Daily fallback token limit (resets 00:00 UTC)
+	DailyFallbackTokens int64 `json:"daily_fallback_tokens"`
+}
+
+// IsModelAllowed checks if a model is allowed in fallback mode.
+func (f *FallbackRateLimitConfig) IsModelAllowed(modelID string) bool {
+	for _, allowed := range f.AllowedModels {
+		if allowed == modelID {
+			return true
+		}
+	}
+	return false
+}
+
+// GetFirstAllowedModel returns the first fallback model, or empty string if none configured.
+func (f *FallbackRateLimitConfig) GetFirstAllowedModel() string {
+	if len(f.AllowedModels) > 0 {
+		return f.AllowedModels[0]
+	}
+	return ""
 }
 
 // Feature represents a feature that can be allowed per tier.
@@ -103,6 +134,10 @@ var Configs = map[Tier]Config{
 		DeepResearchTokenCap:          10_000,
 		DeepResearchMaxActiveSessions: 0, // Unlimited concurrent
 		AllowedFeatures:               []Feature{},
+		FallbackConfig: &FallbackRateLimitConfig{
+			AllowedModels:       []string{"Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3-30b", "qwen-30b"},
+			DailyFallbackTokens: 1_000_000,
+		},
 	},
 	TierPro: {
 		Name:                          "pro",
@@ -117,6 +152,10 @@ var Configs = map[Tier]Config{
 		DeepResearchMaxActiveSessions: 0, // 0 = unlimited concurrent sessions
 		// Pro tier has all features including document upload
 		AllowedFeatures: []Feature{FeatureDocumentUpload},
+		FallbackConfig: &FallbackRateLimitConfig{
+			AllowedModels:       []string{"Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3-30b", "qwen-30b"},
+			DailyFallbackTokens: 1_000_000,
+		},
 	},
 }
 

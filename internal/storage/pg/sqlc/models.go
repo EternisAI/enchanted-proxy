@@ -83,17 +83,18 @@ type ProblemReport struct {
 }
 
 type RequestLog struct {
-	ID               int64          `json:"id"`
-	UserID           string         `json:"userId"`
-	Endpoint         string         `json:"endpoint"`
-	Model            *string        `json:"model"`
-	Provider         string         `json:"provider"`
-	CreatedAt        time.Time      `json:"createdAt"`
-	PromptTokens     sql.NullInt32  `json:"promptTokens"`
-	CompletionTokens sql.NullInt32  `json:"completionTokens"`
-	TotalTokens      sql.NullInt32  `json:"totalTokens"`
-	PlanTokens       sql.NullInt32  `json:"planTokens"`
-	TokenMultiplier  sql.NullString `json:"tokenMultiplier"`
+	ID                int64          `json:"id"`
+	UserID            string         `json:"userId"`
+	Endpoint          string         `json:"endpoint"`
+	Model             *string        `json:"model"`
+	Provider          string         `json:"provider"`
+	CreatedAt         time.Time      `json:"createdAt"`
+	PromptTokens      sql.NullInt32  `json:"promptTokens"`
+	CompletionTokens  sql.NullInt32  `json:"completionTokens"`
+	TotalTokens       sql.NullInt32  `json:"totalTokens"`
+	PlanTokens        sql.NullInt32  `json:"planTokens"`
+	TokenMultiplier   sql.NullString `json:"tokenMultiplier"`
+	IsFallbackRequest bool           `json:"isFallbackRequest"`
 }
 
 type Task struct {

@@ -2,6 +2,7 @@ package request_tracking
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,6 +25,27 @@ func newReaderCloser(b []byte) io.ReadCloser {
 // Delegates to common package for consistent implementation across codebase.
 func extractModelFromRequestBody(path string, body []byte) string {
 	return common.ExtractModelFromRequestBody(path, body)
+}
+
+// replaceModelInRequestBody replaces the model field in a JSON request body.
+// Returns the original body if replacement fails.
+func replaceModelInRequestBody(body []byte, newModel string) []byte {
+	if len(body) == 0 {
+		return body
+	}
+
+	var req map[string]interface{}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body
+	}
+
+	req["model"] = newModel
+	newBody, err := json.Marshal(req)
+	if err != nil {
+		return body
+	}
+
+	return newBody
 }
 
 // RequestTrackingMiddleware logs requests for authenticated users and checks rate limits.
@@ -76,9 +98,13 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger) 
 				}
 			}
 
-			// Model access control
+			// Extract model and check access/limits
 			model := extractModelFromRequestBody(c.Request.URL.Path, requestBody)
+			inFallbackMode := false
+			originalModel := model
+
 			if model != "" {
+				// Check primary model access
 				if !tierConfig.IsModelAllowed(model) {
 					log.Warn("model access denied",
 						slog.String("user_id", userID),
@@ -91,7 +117,8 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger) 
 				}
 			}
 
-			// Check monthly quota (if configured)
+			// Check primary quota limits
+			// Check monthly quota
 			if tierConfig.MonthlyPlanTokens > 0 {
 				used, err := trackingService.GetUserPlanTokensThisMonth(c.Request.Context(), userID)
 				if err != nil {
@@ -99,68 +126,125 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger) 
 						slog.String("error", err.Error()),
 						slog.String("user_id", userID))
 				} else if used >= tierConfig.MonthlyPlanTokens {
-					log.Warn("monthly rate limit exceeded",
-						slog.String("user_id", userID),
-						slog.String("tier", tierConfig.Name),
-						slog.Int64("limit", tierConfig.MonthlyPlanTokens),
-						slog.Int64("used", used))
-					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-						"error":     fmt.Sprintf("%s monthly plan token limit exceeded", tierConfig.DisplayName),
-						"tier":      tierConfig.Name,
-						"limit":     tierConfig.MonthlyPlanTokens,
-						"used":      used,
-						"resets_at": tierConfig.GetMonthlyResetTime(),
-					})
-					return
+					if tierConfig.FallbackConfig != nil {
+						inFallbackMode = true
+						log.Info("monthly limit exceeded, entering fallback mode",
+							slog.String("user_id", userID),
+							slog.String("tier", tierConfig.Name))
+					} else {
+						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+							"error":     fmt.Sprintf("%s monthly plan token limit exceeded", tierConfig.DisplayName),
+							"tier":      tierConfig.Name,
+							"limit":     tierConfig.MonthlyPlanTokens,
+							"used":      used,
+							"resets_at": tierConfig.GetMonthlyResetTime(),
+						})
+						return
+					}
 				}
 			}
 
-			// Check weekly quota (if configured)
-			if tierConfig.WeeklyPlanTokens > 0 {
+			// Check weekly quota
+			if !inFallbackMode && tierConfig.WeeklyPlanTokens > 0 {
 				used, err := trackingService.GetUserPlanTokensThisWeek(c.Request.Context(), userID)
 				if err != nil {
 					log.Error("failed to get weekly plan token usage",
 						slog.String("error", err.Error()),
 						slog.String("user_id", userID))
 				} else if used >= tierConfig.WeeklyPlanTokens {
-					log.Warn("weekly rate limit exceeded",
-						slog.String("user_id", userID),
-						slog.String("tier", tierConfig.Name),
-						slog.Int64("limit", tierConfig.WeeklyPlanTokens),
-						slog.Int64("used", used))
-					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-						"error":     fmt.Sprintf("%s weekly plan token limit exceeded", tierConfig.DisplayName),
-						"tier":      tierConfig.Name,
-						"limit":     tierConfig.WeeklyPlanTokens,
-						"used":      used,
-						"resets_at": tierConfig.GetWeeklyResetTime(),
-					})
-					return
+					if tierConfig.FallbackConfig != nil {
+						inFallbackMode = true
+						log.Info("weekly limit exceeded, entering fallback mode",
+							slog.String("user_id", userID),
+							slog.String("tier", tierConfig.Name))
+					} else {
+						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+							"error":     fmt.Sprintf("%s weekly plan token limit exceeded", tierConfig.DisplayName),
+							"tier":      tierConfig.Name,
+							"limit":     tierConfig.WeeklyPlanTokens,
+							"used":      used,
+							"resets_at": tierConfig.GetWeeklyResetTime(),
+						})
+						return
+					}
 				}
 			}
 
-			// Check daily quota (if configured)
-			if tierConfig.DailyPlanTokens > 0 {
+			// Check daily quota
+			if !inFallbackMode && tierConfig.DailyPlanTokens > 0 {
 				used, err := trackingService.GetUserPlanTokensToday(c.Request.Context(), userID)
 				if err != nil {
 					log.Error("failed to get daily plan token usage",
 						slog.String("error", err.Error()),
 						slog.String("user_id", userID))
 				} else if used >= tierConfig.DailyPlanTokens {
-					log.Warn("daily rate limit exceeded",
-						slog.String("user_id", userID),
-						slog.String("tier", tierConfig.Name),
-						slog.Int64("limit", tierConfig.DailyPlanTokens),
-						slog.Int64("used", used))
-					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-						"error":     fmt.Sprintf("%s daily plan token limit exceeded", tierConfig.DisplayName),
-						"tier":      tierConfig.Name,
-						"limit":     tierConfig.DailyPlanTokens,
-						"used":      used,
-						"resets_at": tierConfig.GetDailyResetTime(),
-					})
-					return
+					if tierConfig.FallbackConfig != nil {
+						inFallbackMode = true
+						log.Info("daily limit exceeded, entering fallback mode",
+							slog.String("user_id", userID),
+							slog.String("tier", tierConfig.Name))
+					} else {
+						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+							"error":     fmt.Sprintf("%s daily plan token limit exceeded", tierConfig.DisplayName),
+							"tier":      tierConfig.Name,
+							"limit":     tierConfig.DailyPlanTokens,
+							"used":      used,
+							"resets_at": tierConfig.GetDailyResetTime(),
+						})
+						return
+					}
 				}
+			}
+
+			// Handle fallback mode
+			if inFallbackMode {
+				fallbackCfg := tierConfig.FallbackConfig
+
+				// Check fallback quota
+				if fallbackCfg.DailyFallbackTokens > 0 {
+					used, err := trackingService.GetUserFallbackTokensToday(c.Request.Context(), userID)
+					if err != nil {
+						log.Error("failed to get fallback token usage",
+							slog.String("error", err.Error()),
+							slog.String("user_id", userID))
+					} else if used >= fallbackCfg.DailyFallbackTokens {
+						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+							"error":     fmt.Sprintf("%s fallback limit exceeded", tierConfig.DisplayName),
+							"tier":      tierConfig.Name,
+							"limit":     fallbackCfg.DailyFallbackTokens,
+							"used":      used,
+							"resets_at": tierConfig.GetDailyResetTime(),
+						})
+						return
+					}
+				}
+
+				// Auto-route to fallback model if current model not allowed
+				if model != "" && !fallbackCfg.IsModelAllowed(model) {
+					fallbackModel := fallbackCfg.GetFirstAllowedModel()
+					if fallbackModel == "" {
+						c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+							"error": "No fallback models configured",
+						})
+						return
+					}
+
+					// Replace model in request body
+					newBody := replaceModelInRequestBody(requestBody, fallbackModel)
+					c.Request.Body = newReaderCloser(newBody)
+					model = fallbackModel
+
+					log.Info("auto-routed to fallback model",
+						slog.String("user_id", userID),
+						slog.String("requested_model", originalModel),
+						slog.String("fallback_model", fallbackModel))
+				}
+
+				// Set context flag for fallback mode
+				c.Set("isFallbackRequest", true)
+			} else {
+				// Primary mode
+				c.Set("isFallbackRequest", false)
 			}
 
 			// Store tier config in context for later use

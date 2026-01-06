@@ -692,6 +692,13 @@ func handleStreamingDirect(
 		// Log tokens
 		sessionUsage := session.GetTokenUsage()
 		if sessionUsage != nil && trackingService != nil {
+			isFallbackRequest := false
+			if val, exists := c.Get("isFallbackRequest"); exists {
+				if boolVal, ok := val.(bool); ok {
+					isFallbackRequest = boolVal
+				}
+			}
+
 			tokenData := &request_tracking.TokenUsageWithMultiplier{
 				PromptTokens:     sessionUsage.PromptTokens,
 				CompletionTokens: sessionUsage.CompletionTokens,
@@ -700,10 +707,11 @@ func handleStreamingDirect(
 				PlanTokens:       int(float64(sessionUsage.TotalTokens) * provider.TokenMultiplier),
 			}
 			info := request_tracking.RequestInfo{
-				UserID:   userID,
-				Endpoint: requestPath,
-				Model:    model,
-				Provider: provider.Name,
+				UserID:            userID,
+				Endpoint:          requestPath,
+				Model:             model,
+				Provider:          provider.Name,
+				IsFallbackRequest: isFallbackRequest,
 			}
 			trackingService.LogRequestWithPlanTokensAsync(ctx, info, tokenData) //nolint:errcheck
 		}
@@ -939,11 +947,19 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 	}
 	endpoint := c.Request.URL.Path
 
+	isFallbackRequest := false
+	if val, exists := c.Get("isFallbackRequest"); exists {
+		if boolVal, ok := val.(bool); ok {
+			isFallbackRequest = boolVal
+		}
+	}
+
 	info := request_tracking.RequestInfo{
-		UserID:   userID,
-		Endpoint: endpoint,
-		Model:    model,
-		Provider: provider,
+		UserID:            userID,
+		Endpoint:          endpoint,
+		Model:             model,
+		Provider:          provider,
+		IsFallbackRequest: isFallbackRequest,
 	}
 
 	// Always log the request, even without token usage

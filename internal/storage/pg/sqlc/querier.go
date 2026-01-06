@@ -45,6 +45,8 @@ type Querier interface {
 	GetUnsentMessages(ctx context.Context, sessionID string) ([]DeepResearchMessage, error)
 	GetUserDeepResearchRunsLifetime(ctx context.Context, userID string) (int64, error)
 	GetUserDeepResearchRunsToday(ctx context.Context, userID string) (int64, error)
+	// Query fallback quota usage for current day
+	GetUserFallbackTokensToday(ctx context.Context, userID string) (int64, error)
 	GetUserLifetimeTokenUsage(ctx context.Context, userID string) (int64, error)
 	// Note: Queries request_logs directly (not materialized view) because monthly buckets aren't pre-aggregated.
 	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).

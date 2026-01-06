@@ -47,8 +47,8 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY user_token_usage_daily;
 INSERT INTO request_logs (
     user_id, endpoint, model, provider,
     prompt_tokens, completion_tokens, total_tokens,
-    plan_tokens, token_multiplier
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+    plan_tokens, token_multiplier, is_fallback_request
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
 
 -- name: GetUserPlanTokensToday :one
 SELECT COALESCE(SUM(total_plan_tokens), 0)::BIGINT as plan_tokens
@@ -74,4 +74,13 @@ SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
 FROM request_logs
 WHERE user_id = $1
   AND created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')
-  AND plan_tokens IS NOT NULL; 
+  AND plan_tokens IS NOT NULL;
+
+-- name: GetUserFallbackTokensToday :one
+-- Query fallback quota usage for current day
+SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
+FROM request_logs
+WHERE user_id = $1
+  AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
+  AND is_fallback_request = true
+  AND plan_tokens IS NOT NULL;
