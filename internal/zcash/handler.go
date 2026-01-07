@@ -83,8 +83,8 @@ func (h *Handler) GetInvoiceStatus(c *gin.Context) {
 		return
 	}
 
-	parts := strings.Split(invoiceID, "_")
-	if len(parts) == 0 || parts[0] != userID {
+	parts := strings.SplitN(invoiceID, "__", 3)
+	if len(parts) < 1 || parts[0] != userID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}

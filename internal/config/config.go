@@ -287,7 +287,7 @@ func LoadConfig() {
 		PushNotificationsEnabled: getEnvOrDefault("PUSH_NOTIFICATIONS_ENABLED", "true") == "true",
 
 		// ZCash Backend
-		ZCashBackendAPIKey: getEnvOrDefault("ZCASH_BACKEND_API_KEY", ""),
+		ZCashBackendAPIKey:   getEnvOrDefault("ZCASH_BACKEND_API_KEY", ""),
 		ZCashDebugMultiplier: getEnvFloat("ZCASH_DEBUG_MULTIPLIER", 0),
 
 		// Linear API (problem reports)
