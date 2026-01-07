@@ -3,6 +3,7 @@ package zcash
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -19,8 +20,7 @@ import (
 )
 
 const (
-	zcashBackendURL = "http://127.0.0.1:20002"
-	krakenAPIURL    = "https://api.kraken.com/0/public/Ticker?pair=ZECUSD"
+	krakenAPIURL = "https://api.kraken.com/0/public/Ticker?pair=ZECUSD"
 
 	ProductMonthlyPro   = "monthly_pro"
 	ProductLifetimePlus = "lifetime_plus"
@@ -36,12 +36,23 @@ type Service struct {
 }
 
 func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	if config.AppConfig.ZCashBackendSkipTLSVerify {
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		}
+		logger.Warn("zcash backend TLS verification disabled (dev only)")
+	}
+
 	return &Service{
 		queries: queries,
 		logger:  logger,
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		client:  client,
 	}
 }
 
@@ -193,7 +204,7 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 		return nil, 0, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", zcashBackendURL+"/invoices", bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", config.AppConfig.ZCashBackendURL+"/invoices", bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -224,7 +235,7 @@ func (s *Service) GetInvoiceStatus(ctx context.Context, invoiceID string) (*Invo
 		return nil, errors.New("zcash backend API key not configured")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", zcashBackendURL+"/invoices/"+invoiceID, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", config.AppConfig.ZCashBackendURL+"/invoices/"+invoiceID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

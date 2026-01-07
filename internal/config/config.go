@@ -127,8 +127,10 @@ type Config struct {
 	PushNotificationsEnabled bool // Enable/disable FCM push notifications for task completions (default: true)
 
 	// ZCash Backend
-	ZCashBackendAPIKey   string
-	ZCashDebugMultiplier float64 // Price multiplier for testing (e.g., 0.01 for 1% of normal price, 0 = disabled)
+	ZCashBackendURL           string  // URL of zcash-payment-backend (default: http://127.0.0.1:20002)
+	ZCashBackendAPIKey        string
+	ZCashBackendSkipTLSVerify bool    // Skip TLS verification (for local dev only)
+	ZCashDebugMultiplier      float64 // Price multiplier for testing (e.g., 0.01 for 1% of normal price, 0 = disabled)
 
 	// Linear API (problem reports)
 	LinearAPIKey    string
@@ -287,8 +289,10 @@ func LoadConfig() {
 		PushNotificationsEnabled: getEnvOrDefault("PUSH_NOTIFICATIONS_ENABLED", "true") == "true",
 
 		// ZCash Backend
-		ZCashBackendAPIKey:   getEnvOrDefault("ZCASH_BACKEND_API_KEY", ""),
-		ZCashDebugMultiplier: getEnvFloat("ZCASH_DEBUG_MULTIPLIER", 0),
+		ZCashBackendURL:           getEnvOrDefault("ZCASH_BACKEND_URL", "http://127.0.0.1:20002"),
+		ZCashBackendAPIKey:        getEnvOrDefault("ZCASH_BACKEND_API_KEY", ""),
+		ZCashBackendSkipTLSVerify: getEnvOrDefault("ZCASH_BACKEND_SKIP_TLS_VERIFY", "false") == "true",
+		ZCashDebugMultiplier:      getEnvFloat("ZCASH_DEBUG_MULTIPLIER", 0),
 
 		// Linear API (problem reports)
 		LinearAPIKey:    getEnvOrDefault("LINEAR_API_KEY", ""),
