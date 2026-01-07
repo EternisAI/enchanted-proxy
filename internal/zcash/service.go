@@ -22,10 +22,14 @@ import (
 const (
 	krakenAPIURL = "https://api.kraken.com/0/public/Ticker?pair=ZECUSD"
 
-	ProductMonthlyPro   = "monthly_pro"
-	ProductLifetimePlus = "lifetime_plus"
+	ProductWeeklyPro    = "silo.pro.weekly"
+	ProductMonthlyPro   = "silo.pro.monthly"
+	ProductYearlyPro    = "silo.pro.yearly"
+	ProductLifetimePlus = "silo.plus.lifetime"
 
-	PriceMonthlyProUSD   = 20
+	PriceWeeklyProUSD    = 4.99
+	PriceMonthlyProUSD   = 19.99
+	PriceYearlyProUSD    = 199.99
 	PriceLifetimePlusUSD = 500
 )
 
@@ -37,7 +41,7 @@ type Service struct {
 
 func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 60 * time.Second,
 	}
 
 	if config.AppConfig.ZCashBackendSkipTLSVerify {
@@ -92,18 +96,34 @@ func (s *Service) GetProducts() []Product {
 	}
 	return []Product{
 		{
+			ID:          ProductWeeklyPro,
+			Name:        "Pro Weekly",
+			Description: "Pro subscription for 1 week",
+			PriceUSD:    PriceWeeklyProUSD * multiplier,
+			Tier:        string(tiers.TierPro),
+			IsLifetime:  false,
+		},
+		{
 			ID:          ProductMonthlyPro,
 			Name:        "Pro Monthly",
 			Description: "Pro subscription for 1 month",
-			PriceUSD:    float64(PriceMonthlyProUSD) * multiplier,
+			PriceUSD:    PriceMonthlyProUSD * multiplier,
+			Tier:        string(tiers.TierPro),
+			IsLifetime:  false,
+		},
+		{
+			ID:          ProductYearlyPro,
+			Name:        "Pro Yearly",
+			Description: "Pro subscription for 1 year",
+			PriceUSD:    PriceYearlyProUSD * multiplier,
 			Tier:        string(tiers.TierPro),
 			IsLifetime:  false,
 		},
 		{
 			ID:          ProductLifetimePlus,
-			Name:        "Lifetime Plus",
+			Name:        "Plus Lifetime",
 			Description: "Plus subscription forever",
-			PriceUSD:    float64(PriceLifetimePlusUSD) * multiplier,
+			PriceUSD:    PriceLifetimePlusUSD * multiplier,
 			Tier:        string(tiers.TierPlus),
 			IsLifetime:  true,
 		},
@@ -294,8 +314,19 @@ func (s *Service) ConfirmPayment(ctx context.Context, userID, invoiceID string) 
 			Valid: true,
 		}
 	} else {
+		var duration time.Duration
+		switch product.ID {
+		case ProductWeeklyPro:
+			duration = 7 * 24 * time.Hour
+		case ProductMonthlyPro:
+			duration = 30 * 24 * time.Hour
+		case ProductYearlyPro:
+			duration = 365 * 24 * time.Hour
+		default:
+			duration = 30 * 24 * time.Hour
+		}
 		expiresAt = sql.NullTime{
-			Time:  time.Now().Add(30 * 24 * time.Hour),
+			Time:  time.Now().Add(duration),
 			Valid: true,
 		}
 	}
