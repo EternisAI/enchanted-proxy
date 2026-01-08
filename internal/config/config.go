@@ -129,7 +129,7 @@ type Config struct {
 	// ZCash Backend
 	ZCashBackendURL           string  // URL of zcash-payment-backend (default: http://127.0.0.1:20002)
 	ZCashBackendAPIKey        string
-	ZCashBackendSkipTLSVerify bool    // Skip TLS verification (for local dev only)
+	ZCashBackendSkipTLSVerify bool    // Skip TLS verification when connecting to zcash-payment-backend (for local dev with self-signed certs)
 	ZCashDebugMultiplier      float64 // Price multiplier for testing (e.g., 0.01 for 1% of normal price, 0 = disabled)
 
 	// Linear API (problem reports)
