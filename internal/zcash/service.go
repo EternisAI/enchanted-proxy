@@ -80,6 +80,10 @@ type InvoiceStatusResponse struct {
 	PaidHeight  *int32  `json:"paid_height,omitempty"`
 }
 
+type ListInvoicesResponse struct {
+	Invoices []InvoiceStatusResponse `json:"invoices"`
+}
+
 type Product struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
@@ -281,6 +285,36 @@ func (s *Service) GetInvoiceStatus(ctx context.Context, invoiceID string) (*Invo
 	}
 
 	return &result, nil
+}
+
+func (s *Service) ListUserInvoices(ctx context.Context, userID string) ([]InvoiceStatusResponse, error) {
+	apiKey := config.AppConfig.ZCashBackendAPIKey
+	if apiKey == "" {
+		return nil, errors.New("zcash backend API key not configured")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", config.AppConfig.ZCashBackendURL+"/users/"+userID+"/invoices", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call zcash backend: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("zcash backend returned status %d", resp.StatusCode)
+	}
+
+	var result ListInvoicesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Invoices, nil
 }
 
 func (s *Service) ConfirmPayment(ctx context.Context, userID, invoiceID string) error {

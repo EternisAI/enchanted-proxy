@@ -129,3 +129,20 @@ func (h *Handler) ConfirmPayment(c *gin.Context) {
 func (h *Handler) GetProducts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"products": h.service.GetProducts()})
 }
+
+func (h *Handler) ListUserInvoices(c *gin.Context) {
+	userID, ok := auth.GetUserID(c)
+	if !ok || userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	invoices, err := h.service.ListUserInvoices(c.Request.Context(), userID)
+	if err != nil {
+		h.logger.Error("failed to list user invoices", "error", err.Error(), "user_id", userID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list invoices"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"invoices": invoices})
+}
