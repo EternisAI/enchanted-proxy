@@ -103,7 +103,8 @@ func (s *Service) processLogRequest(ctx context.Context, info RequestInfo) {
 			// Note: TokenMultiplier uses string formatting because sqlc generates sql.NullString
 			// for NUMERIC(8,2) columns. PostgreSQL converts strings to NUMERIC on insert.
 			// This is standard sqlc behavior for NUMERIC types.
-			TokenMultiplier: sql.NullString{String: fmt.Sprintf("%.2f", *info.Multiplier), Valid: true},
+			TokenMultiplier:  sql.NullString{String: fmt.Sprintf("%.2f", *info.Multiplier), Valid: true},
+			IsFallbackRequest: info.IsFallbackRequest,
 		}
 
 		if err := s.queries.CreateRequestLogWithPlanTokens(ctx, params); err != nil {
@@ -194,15 +195,16 @@ func (s *Service) handleLogRequest(lr logRequest) {
 }
 
 type RequestInfo struct {
-	UserID           string
-	Endpoint         string
-	Model            string
-	Provider         string
-	PromptTokens     *int
-	CompletionTokens *int
-	TotalTokens      *int     // Raw tokens from API (existing field)
-	PlanTokens       *int     // NEW: Weighted tokens (TotalTokens × Multiplier)
-	Multiplier       *float64 // NEW: Cost multiplier
+	UserID            string
+	Endpoint          string
+	Model             string
+	Provider          string
+	PromptTokens      *int
+	CompletionTokens  *int
+	TotalTokens       *int     // Raw tokens from API (existing field)
+	PlanTokens        *int     // Weighted tokens (TotalTokens × Multiplier)
+	Multiplier        *float64 // Cost multiplier
+	IsFallbackRequest bool     // Whether this request used fallback quota
 }
 
 func (s *Service) CheckRateLimit(ctx context.Context, userID string, maxTokensPerDay int64) (bool, error) {
@@ -414,6 +416,15 @@ func (s *Service) GetUserPlanTokensToday(ctx context.Context, userID string) (in
 	result, err := s.queries.GetUserPlanTokensToday(ctx, userID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get daily plan tokens: %w", err)
+	}
+	return result, nil
+}
+
+// GetUserFallbackTokensToday returns fallback plan tokens used today.
+func (s *Service) GetUserFallbackTokensToday(ctx context.Context, userID string) (int64, error) {
+	result, err := s.queries.GetUserFallbackTokensToday(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get daily fallback tokens: %w", err)
 	}
 	return result, nil
 }

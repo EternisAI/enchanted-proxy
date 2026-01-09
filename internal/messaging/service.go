@@ -188,6 +188,7 @@ func (s *Service) handleMessage(msg MessageToStore) {
 		Model:               msg.Model,
 		GenerationState:     msg.GenerationState,
 		GenerationError:     msg.GenerationError,
+		FallbackModeUsed:    msg.FallbackModeUsed,
 	}
 
 	// Set generation timestamps if provided

@@ -144,6 +144,14 @@ func saveCompletedStreamMessage(c *gin.Context, session *streaming.StreamSession
 		}
 	}
 
+	// Extract fallback flag
+	isFallbackRequest := false
+	if val, exists := c.Get("isFallbackRequest"); exists {
+		if boolVal, ok := val.(bool); ok {
+			isFallbackRequest = boolVal
+		}
+	}
+
 	// Extract content from session
 	content := session.GetContent()
 	if content == "" {
@@ -161,7 +169,8 @@ func saveCompletedStreamMessage(c *gin.Context, session *streaming.StreamSession
 		slog.Int("content_length", len(content)),
 		slog.Bool("stopped", stopped),
 		slog.String("stopped_by", stoppedBy),
-		slog.String("stop_reason", string(stopReason)))
+		slog.String("stop_reason", string(stopReason)),
+		slog.Bool("fallback_mode", isFallbackRequest))
 
 	// Build message with stop metadata
 	msg := messaging.MessageToStore{
@@ -175,6 +184,7 @@ func saveCompletedStreamMessage(c *gin.Context, session *streaming.StreamSession
 		Stopped:           stopped,
 		StoppedBy:         stoppedBy,
 		StopReason:        string(stopReason),
+		FallbackModeUsed:  isFallbackRequest,
 	}
 
 	// Store asynchronously (with background context - shouldn't be tied to request)

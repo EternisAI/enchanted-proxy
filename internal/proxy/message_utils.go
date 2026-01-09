@@ -156,6 +156,14 @@ func saveUserMessageAsync(c *gin.Context, messageService *messaging.Service, req
 		}
 	}
 
+	// Extract fallback flag
+	isFallbackRequest := false
+	if val, exists := c.Get("isFallbackRequest"); exists {
+		if boolVal, ok := val.(bool); ok {
+			isFallbackRequest = boolVal
+		}
+	}
+
 	// Build message (user message)
 	msg := messaging.MessageToStore{
 		UserID:            userID,
@@ -165,6 +173,7 @@ func saveUserMessageAsync(c *gin.Context, messageService *messaging.Service, req
 		Content:           content,
 		IsError:           false,
 		EncryptionEnabled: encryptionEnabled,
+		FallbackModeUsed:  isFallbackRequest,
 	}
 
 	// Store asynchronously using background context
@@ -214,6 +223,14 @@ func saveMessageAsync(c *gin.Context, messageService *messaging.Service, content
 		}
 	}
 
+	// Extract fallback flag
+	isFallbackRequest := false
+	if val, exists := c.Get("isFallbackRequest"); exists {
+		if boolVal, ok := val.(bool); ok {
+			isFallbackRequest = boolVal
+		}
+	}
+
 	// Build message (assistant response)
 	msg := messaging.MessageToStore{
 		UserID:            userID,
@@ -223,6 +240,7 @@ func saveMessageAsync(c *gin.Context, messageService *messaging.Service, content
 		Content:           content,
 		IsError:           isError,
 		EncryptionEnabled: encryptionEnabled,
+		FallbackModeUsed:  isFallbackRequest,
 	}
 
 	// Store asynchronously using background context

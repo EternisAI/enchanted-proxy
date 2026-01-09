@@ -23,6 +23,9 @@ type ChatMessage struct {
 	GenerationStartedAt   time.Time `firestore:"generationStartedAt,omitempty"`   // When generation started
 	GenerationCompletedAt time.Time `firestore:"generationCompletedAt,omitempty"` // When generation completed/failed
 	GenerationError       string    `firestore:"generationError,omitempty"`       // Error message if failed
+
+	// Fallback rate limiting
+	FallbackModeUsed bool `firestore:"fallbackModeUsed,omitempty"` // true if fallback quota was used
 }
 
 // UserPublicKey represents a user's ECDSA P-256 public key
@@ -64,6 +67,9 @@ type MessageToStore struct {
 	GenerationStartedAt   *time.Time
 	GenerationCompletedAt *time.Time
 	GenerationError       string
+
+	// Fallback rate limiting
+	FallbackModeUsed bool // true if fallback quota was used
 }
 
 // ChatTitle represents a stored chat title in Firestore
