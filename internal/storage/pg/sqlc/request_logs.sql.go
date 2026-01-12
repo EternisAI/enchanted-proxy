@@ -74,6 +74,24 @@ func (q *Queries) CreateRequestLogWithPlanTokens(ctx context.Context, arg Create
 	return err
 }
 
+const getUserFallbackPlanTokensToday = `-- name: GetUserFallbackPlanTokensToday :one
+SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
+FROM request_logs
+WHERE user_id = $1
+  AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
+  AND plan_tokens IS NOT NULL
+  AND model ILIKE '%qwen%'
+`
+
+// Returns plan tokens used today on fallback models (qwen).
+// Used for tracking fallback quota when normal quota is exceeded.
+func (q *Queries) GetUserFallbackPlanTokensToday(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserFallbackPlanTokensToday, userID)
+	var plan_tokens int64
+	err := row.Scan(&plan_tokens)
+	return plan_tokens, err
+}
+
 const getUserLifetimeTokenUsage = `-- name: GetUserLifetimeTokenUsage :one
 SELECT COALESCE(SUM(total_tokens), 0)::BIGINT as total_tokens
 FROM request_logs

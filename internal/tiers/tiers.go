@@ -36,6 +36,10 @@ type Config struct {
 	WeeklyPlanTokens  int64 `json:"weekly_plan_tokens"`  // Resets 00:00 UTC every Monday
 	DailyPlanTokens   int64 `json:"daily_plan_tokens"`   // Resets 00:00 UTC daily
 
+	// Fallback quota (when normal quota exceeded, paid users can continue with fallback models)
+	FallbackDailyPlanTokens int64    `json:"fallback_daily_plan_tokens"` // 0 = no fallback (free tier)
+	FallbackModels          []string `json:"fallback_models"`            // Models available in fallback mode
+
 	// Model access (allowlist only - empty array means all models allowed)
 	AllowedModels []string `json:"allowed_models"` // Models allowed for this tier (empty = all allowed)
 
@@ -88,11 +92,15 @@ var Configs = map[Tier]Config{
 		AllowedFeatures: []Feature{}, // No special features
 	},
 	TierPlus: {
-		Name:              "plus",
-		DisplayName:       "Plus",
-		MonthlyPlanTokens: 0,
-		WeeklyPlanTokens:  0,
-		DailyPlanTokens:   40_000, // 40k tokens/day
+		Name:                    "plus",
+		DisplayName:             "Plus",
+		MonthlyPlanTokens:       0,
+		WeeklyPlanTokens:        0,
+		DailyPlanTokens:         40_000, // 40k tokens/day
+		FallbackDailyPlanTokens: 40_000, // 40k fallback tokens/day
+		FallbackModels: []string{
+			"Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3-30b", "qwen-30b",
+		},
 		AllowedModels: []string{
 			"zai-org/GLM-4.6", "glm-4.6", // GLM 4.6
 			"z-ai/glm-4.7", "zhipu/glm-4.7", "glm-4.7", // GLM-4.7 (dev/testing)
@@ -105,18 +113,21 @@ var Configs = map[Tier]Config{
 		AllowedFeatures:               []Feature{},
 	},
 	TierPro: {
-		Name:                          "pro",
-		DisplayName:                   "Pro",
-		MonthlyPlanTokens:             0, // No monthly limit
-		WeeklyPlanTokens:              0, // No weekly limit
-		DailyPlanTokens:               500_000,
+		Name:                    "pro",
+		DisplayName:             "Pro",
+		MonthlyPlanTokens:       0, // No monthly limit
+		WeeklyPlanTokens:        0, // No weekly limit
+		DailyPlanTokens:         500_000,
+		FallbackDailyPlanTokens: 500_000, // 500k fallback tokens/day
+		FallbackModels: []string{
+			"Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3-30b", "qwen-30b",
+		},
 		AllowedModels:                 []string{}, // Empty = all models allowed
 		DeepResearchDailyRuns:         10,
 		DeepResearchLifetimeRuns:      0, // Check daily only
 		DeepResearchTokenCap:          10_000,
 		DeepResearchMaxActiveSessions: 0, // 0 = unlimited concurrent sessions
-		// Pro tier has all features including document upload
-		AllowedFeatures: []Feature{FeatureDocumentUpload},
+		AllowedFeatures:               []Feature{FeatureDocumentUpload},
 	},
 }
 
@@ -141,6 +152,16 @@ func (c Config) IsModelAllowed(modelID string) bool {
 	// Check if model is in the allowed list
 	for _, allowed := range c.AllowedModels {
 		if allowed == modelID {
+			return true
+		}
+	}
+	return false
+}
+
+// IsFallbackModel checks if a model is a fallback model for this tier.
+func (c Config) IsFallbackModel(modelID string) bool {
+	for _, fallback := range c.FallbackModels {
+		if fallback == modelID {
 			return true
 		}
 	}

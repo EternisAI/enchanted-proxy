@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/common"
@@ -147,19 +148,79 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger) 
 						slog.String("error", err.Error()),
 						slog.String("user_id", userID))
 				} else if used >= tierConfig.DailyPlanTokens {
-					log.Warn("daily rate limit exceeded",
-						slog.String("user_id", userID),
-						slog.String("tier", tierConfig.Name),
-						slog.Int64("limit", tierConfig.DailyPlanTokens),
-						slog.Int64("used", used))
-					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-						"error":     fmt.Sprintf("%s daily plan token limit exceeded", tierConfig.DisplayName),
-						"tier":      tierConfig.Name,
-						"limit":     tierConfig.DailyPlanTokens,
-						"used":      used,
-						"resets_at": tierConfig.GetDailyResetTime(),
-					})
-					return
+					// Normal quota exceeded - check if fallback is available
+					isFallbackModel := tierConfig.IsFallbackModel(model)
+					hasFallback := tierConfig.FallbackDailyPlanTokens > 0
+
+					if hasFallback && isFallbackModel {
+						// User is requesting a fallback model - check fallback quota
+						fallbackUsed, fallbackErr := trackingService.GetUserFallbackPlanTokensToday(c.Request.Context(), userID)
+						if fallbackErr != nil {
+							log.Error("failed to get fallback plan token usage",
+								slog.String("error", fallbackErr.Error()),
+								slog.String("user_id", userID))
+						} else if fallbackUsed >= tierConfig.FallbackDailyPlanTokens {
+							// Fallback quota also exceeded - hard limit
+							log.Warn("fallback rate limit exceeded (hard limit)",
+								slog.String("user_id", userID),
+								slog.String("tier", tierConfig.Name),
+								slog.Int64("fallback_limit", tierConfig.FallbackDailyPlanTokens),
+								slog.Int64("fallback_used", fallbackUsed))
+							c.Header("X-Rate-Limit-Type", "hard")
+							c.Header("X-Rate-Limit-Resets-At", tierConfig.GetDailyResetTime().Format(time.RFC3339))
+							c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+								"error":     fmt.Sprintf("%s daily fallback limit exceeded", tierConfig.DisplayName),
+								"tier":      tierConfig.Name,
+								"limit":     tierConfig.FallbackDailyPlanTokens,
+								"used":      fallbackUsed,
+								"resets_at": tierConfig.GetDailyResetTime(),
+							})
+							return
+						}
+						// Fallback quota available - allow request to proceed
+						log.Info("using fallback quota",
+							slog.String("user_id", userID),
+							slog.String("model", model),
+							slog.Int64("fallback_used", fallbackUsed),
+							slog.Int64("fallback_limit", tierConfig.FallbackDailyPlanTokens))
+					} else if hasFallback && !isFallbackModel {
+						// Soft limit - user should switch to fallback model
+						log.Warn("daily rate limit exceeded (soft limit)",
+							slog.String("user_id", userID),
+							slog.String("tier", tierConfig.Name),
+							slog.Int64("limit", tierConfig.DailyPlanTokens),
+							slog.Int64("used", used),
+							slog.String("model", model))
+						c.Header("X-Rate-Limit-Type", "soft")
+						c.Header("X-Fallback-Model", "qwen3-30b")
+						c.Header("X-Rate-Limit-Resets-At", tierConfig.GetDailyResetTime().Format(time.RFC3339))
+						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+							"error":          fmt.Sprintf("%s daily plan token limit exceeded", tierConfig.DisplayName),
+							"tier":           tierConfig.Name,
+							"limit":          tierConfig.DailyPlanTokens,
+							"used":           used,
+							"resets_at":      tierConfig.GetDailyResetTime(),
+							"fallback_model": "qwen3-30b",
+						})
+						return
+					} else {
+						// No fallback available (free tier) - hard limit
+						log.Warn("daily rate limit exceeded (hard limit, no fallback)",
+							slog.String("user_id", userID),
+							slog.String("tier", tierConfig.Name),
+							slog.Int64("limit", tierConfig.DailyPlanTokens),
+							slog.Int64("used", used))
+						c.Header("X-Rate-Limit-Type", "hard")
+						c.Header("X-Rate-Limit-Resets-At", tierConfig.GetDailyResetTime().Format(time.RFC3339))
+						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+							"error":     fmt.Sprintf("%s daily plan token limit exceeded", tierConfig.DisplayName),
+							"tier":      tierConfig.Name,
+							"limit":     tierConfig.DailyPlanTokens,
+							"used":      used,
+							"resets_at": tierConfig.GetDailyResetTime(),
+						})
+						return
+					}
 				}
 			}
 
