@@ -77,11 +77,11 @@ WHERE user_id = $1
   AND plan_tokens IS NOT NULL;
 
 -- name: GetUserFallbackPlanTokensToday :one
--- Returns plan tokens used today on fallback models (qwen).
+-- Returns plan tokens used today on the fallback model.
 -- Used for tracking fallback quota when normal quota is exceeded.
 SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
 FROM request_logs
 WHERE user_id = $1
   AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
   AND plan_tokens IS NOT NULL
-  AND model ILIKE '%qwen%';
+  AND model = $2;

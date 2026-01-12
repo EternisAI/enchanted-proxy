@@ -154,7 +154,7 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger) 
 
 					if hasFallback && isFallbackModel {
 						// User is requesting a fallback model - check fallback quota
-						fallbackUsed, fallbackErr := trackingService.GetUserFallbackPlanTokensToday(c.Request.Context(), userID)
+						fallbackUsed, fallbackErr := trackingService.GetUserFallbackPlanTokensToday(c.Request.Context(), userID, tierConfig.FallbackModel)
 						if fallbackErr != nil {
 							log.Error("failed to get fallback plan token usage",
 								slog.String("error", fallbackErr.Error()),
@@ -192,15 +192,13 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger) 
 							slog.Int64("used", used),
 							slog.String("model", model))
 						c.Header("X-Rate-Limit-Type", "soft")
-						c.Header("X-Fallback-Model", "qwen3-30b")
 						c.Header("X-Rate-Limit-Resets-At", tierConfig.GetDailyResetTime().Format(time.RFC3339))
 						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-							"error":          fmt.Sprintf("%s daily plan token limit exceeded", tierConfig.DisplayName),
-							"tier":           tierConfig.Name,
-							"limit":          tierConfig.DailyPlanTokens,
-							"used":           used,
-							"resets_at":      tierConfig.GetDailyResetTime(),
-							"fallback_model": "qwen3-30b",
+							"error":     fmt.Sprintf("%s daily plan token limit exceeded", tierConfig.DisplayName),
+							"tier":      tierConfig.Name,
+							"limit":     tierConfig.DailyPlanTokens,
+							"used":      used,
+							"resets_at": tierConfig.GetDailyResetTime(),
 						})
 						return
 					} else {

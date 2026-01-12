@@ -80,13 +80,18 @@ FROM request_logs
 WHERE user_id = $1
   AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
   AND plan_tokens IS NOT NULL
-  AND model ILIKE '%qwen%'
+  AND model = $2
 `
 
-// Returns plan tokens used today on fallback models (qwen).
+type GetUserFallbackPlanTokensTodayParams struct {
+	UserID string  `json:"userId"`
+	Model  *string `json:"model"`
+}
+
+// Returns plan tokens used today on the fallback model.
 // Used for tracking fallback quota when normal quota is exceeded.
-func (q *Queries) GetUserFallbackPlanTokensToday(ctx context.Context, userID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserFallbackPlanTokensToday, userID)
+func (q *Queries) GetUserFallbackPlanTokensToday(ctx context.Context, arg GetUserFallbackPlanTokensTodayParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserFallbackPlanTokensToday, arg.UserID, arg.Model)
 	var plan_tokens int64
 	err := row.Scan(&plan_tokens)
 	return plan_tokens, err
