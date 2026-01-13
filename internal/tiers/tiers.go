@@ -38,7 +38,7 @@ type Config struct {
 
 	// Fallback quota (when normal quota exceeded, paid users can continue with fallback model)
 	FallbackDailyPlanTokens int64  `json:"fallback_daily_plan_tokens"` // 0 = no fallback (free tier)
-	FallbackModel           string `json:"fallback_model"`             // Model available in fallback mode
+	FallbackModel           string `json:"fallback_model"`             // Model available in fallback mode (canonical name)
 
 	// Model access (allowlist only - empty array means all models allowed)
 	AllowedModels []string `json:"allowed_models"` // Models allowed for this tier (empty = all allowed)
@@ -70,9 +70,9 @@ var Configs = map[Tier]Config{
 	TierFree: {
 		Name:              "free",
 		DisplayName:       "Free",
-		MonthlyPlanTokens: 20_000,
-		WeeklyPlanTokens:  0, // No weekly limit
-		DailyPlanTokens:   0, // No daily limit
+		MonthlyPlanTokens: 500, // TESTING: reduced from 20_000
+		WeeklyPlanTokens:  0,   // No weekly limit
+		DailyPlanTokens:   0,   // No daily limit
 		// Note: AllowedModels must match exactly what clients send in the "model" field
 		// Includes all known aliases to prevent blocking users
 		// Free tier can only use: DeepSeek R1, Llama 3.3 70B, GLM-4.6, GLM-4.7, Dolphin Mistral (uncensored)
@@ -96,8 +96,8 @@ var Configs = map[Tier]Config{
 		DisplayName:             "Plus",
 		MonthlyPlanTokens:       0,
 		WeeklyPlanTokens:        0,
-		DailyPlanTokens:         40_000, // 40k tokens/day
-		FallbackDailyPlanTokens: 40_000, // 40k fallback tokens/day
+		DailyPlanTokens:         500, // TESTING: reduced from 40_000
+		FallbackDailyPlanTokens: 500, // TESTING: reduced from 40_000
 		FallbackModel:           "Qwen/Qwen3-30B-A3B-Instruct-2507",
 		AllowedModels: []string{
 			"zai-org/GLM-4.6", "glm-4.6", // GLM 4.6
@@ -113,10 +113,10 @@ var Configs = map[Tier]Config{
 	TierPro: {
 		Name:                          "pro",
 		DisplayName:                   "Pro",
-		MonthlyPlanTokens:             0, // No monthly limit
-		WeeklyPlanTokens:              0, // No weekly limit
-		DailyPlanTokens:               500_000,
-		FallbackDailyPlanTokens:       500_000, // 500k fallback tokens/day
+		MonthlyPlanTokens:             0,           // No monthly limit
+		WeeklyPlanTokens:              0,           // No weekly limit
+		DailyPlanTokens:               1_000,       // TESTING: low to trigger soft limit
+		FallbackDailyPlanTokens:       10_000_000,  // TESTING: very high so we never hit hard limit
 		FallbackModel:                 "Qwen/Qwen3-30B-A3B-Instruct-2507",
 		AllowedModels:                 []string{}, // Empty = all models allowed
 		DeepResearchDailyRuns:         10,
@@ -155,6 +155,7 @@ func (c Config) IsModelAllowed(modelID string) bool {
 }
 
 // IsFallbackModel checks if a model is the fallback model for this tier.
+// Note: The model ID should be resolved to its canonical name before calling this.
 func (c Config) IsFallbackModel(modelID string) bool {
 	return c.FallbackModel != "" && c.FallbackModel == modelID
 }

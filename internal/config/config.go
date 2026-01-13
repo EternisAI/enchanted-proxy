@@ -212,7 +212,7 @@ func LoadConfig() {
 
 		// Rate Limiting
 		RateLimitEnabled:    getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
-		RateLimitLogOnly:    getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
+		RateLimitLogOnly:    getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "false") == "true", // TESTING: changed default from true
 		RateLimitFailClosed: getEnvOrDefault("RATE_LIMIT_FAIL_CLOSED", "false") == "true",
 
 		// Deep Research Rate Limiting

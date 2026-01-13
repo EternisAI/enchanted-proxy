@@ -54,6 +54,20 @@ func (mr *ModelRouter) SetRoutes(routes map[string]ModelRoute) {
 	mr.routes.Store(&routes)
 }
 
+// ResolveAlias resolves a model ID to its canonical name using the alias map.
+// Returns the canonical model name if an alias exists, otherwise returns the input unchanged.
+// This is useful for consistent model identification across the codebase (e.g., rate limiting).
+func (mr *ModelRouter) ResolveAlias(modelID string) string {
+	if modelID == "" {
+		return modelID
+	}
+	normalizedModel := strings.ToLower(strings.TrimSpace(modelID))
+	if canonicalModel, exists := mr.aliases[normalizedModel]; exists {
+		return canonicalModel
+	}
+	return modelID
+}
+
 // ModelRoute maintains actual lists of provider endpoints where the requests for this model
 // can be routed.
 type ModelRoute struct {
