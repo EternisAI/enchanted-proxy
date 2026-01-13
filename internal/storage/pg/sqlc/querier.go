@@ -22,9 +22,12 @@ type Querier interface {
 	CreateRequestLogWithPlanTokens(ctx context.Context, arg CreateRequestLogWithPlanTokensParams) error
 	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
 	CreateTelegramChat(ctx context.Context, arg CreateTelegramChatParams) (TelegramChat, error)
+	CreateUserFact(ctx context.Context, arg CreateUserFactParams) (UsersFact, error)
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	DeleteTask(ctx context.Context, arg DeleteTaskParams) (sql.Result, error)
 	DeleteTelegramChat(ctx context.Context, chatID int64) error
+	DeleteUserFact(ctx context.Context, arg DeleteUserFactParams) error
+	DeleteUserFactsByUserID(ctx context.Context, userID string) error
 	GetActiveDeepResearchRun(ctx context.Context, arg GetActiveDeepResearchRunParams) (GetActiveDeepResearchRunRow, error)
 	GetAllActiveTasks(ctx context.Context) ([]Task, error)
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
@@ -45,6 +48,9 @@ type Querier interface {
 	GetUnsentMessages(ctx context.Context, sessionID string) ([]DeepResearchMessage, error)
 	GetUserDeepResearchRunsLifetime(ctx context.Context, userID string) (int64, error)
 	GetUserDeepResearchRunsToday(ctx context.Context, userID string) (int64, error)
+	GetUserFactByID(ctx context.Context, id string) (UsersFact, error)
+	GetUserFactsByUserID(ctx context.Context, userID string) ([]UsersFact, error)
+	GetUserFactsByUserIDAndType(ctx context.Context, arg GetUserFactsByUserIDAndTypeParams) ([]UsersFact, error)
 	GetUserLifetimeTokenUsage(ctx context.Context, userID string) (int64, error)
 	// Note: Queries request_logs directly (not materialized view) because monthly buckets aren't pre-aggregated.
 	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).

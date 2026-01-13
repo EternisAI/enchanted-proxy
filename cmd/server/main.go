@@ -28,6 +28,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/keyshare"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/mcp"
+	"github.com/eternisai/enchanted-proxy/internal/memory"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/oauth"
@@ -232,7 +233,16 @@ func main() {
 		log.Error("failed to register scheduled tasks tool", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
+	factExtractionTool := tools.NewFactExtractionTool(db.Queries, logger)
+	if err := toolRegistry.Register(factExtractionTool); err != nil {
+		log.Error("failed to register fact extraction tool", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 	log.Info("tool system initialized", slog.Int("registered_tools", len(toolRegistry.List())))
+
+	// Initialize memory service for user facts/memory
+	memoryService := memory.NewService(db.Queries, logger)
+	log.Info("memory service initialized")
 
 	// Initialize stream manager for broadcast streaming
 	// CRITICAL: Always create streamManager to ensure streaming continues after client disconnect
@@ -385,6 +395,7 @@ func main() {
 		firestoreClient:        firestoreClient,
 		requestTrackingService: requestTrackingService,
 		messageService:         messageService,
+		memoryService:          memoryService,
 		titleService:           titleService,
 		notificationService:    notificationService,
 		streamManager:          streamManager,
@@ -511,6 +522,7 @@ type restServerInput struct {
 	firestoreClient        *messaging.FirestoreClient
 	requestTrackingService *request_tracking.Service
 	messageService         *messaging.Service
+	memoryService          *memory.Service
 	titleService           *title_generation.Service
 	notificationService    *notifications.Service
 	streamManager          *streaming.StreamManager
@@ -669,13 +681,13 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger))
 	{
 		// AI service endpoints
-		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.memoryService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.memoryService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.memoryService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.memoryService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.memoryService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.memoryService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.memoryService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
 	}
 
 	return router

@@ -20,6 +20,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/background"
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
+	"github.com/eternisai/enchanted-proxy/internal/memory"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"github.com/eternisai/enchanted-proxy/internal/routing"
@@ -68,6 +69,7 @@ func ProxyHandler(
 	logger *logger.Logger,
 	trackingService *request_tracking.Service,
 	messageService *messaging.Service,
+	memoryService *memory.Service,
 	titleService *title_generation.Service,
 	streamManager *streaming.StreamManager,
 	pollingManager *background.PollingManager,
@@ -110,6 +112,16 @@ func ProxyHandler(
 				// Check if this is a streaming request
 				if stream, ok := reqBody["stream"].(bool); ok && stream {
 					isStreamingRequest = true
+				}
+			}
+
+			// Inject user memory into system prompt
+			if memoryService != nil {
+				userID, exists := auth.GetUserID(c)
+				if exists {
+					requestBody = InjectMemoryIntoRequest(c.Request.Context(), requestBody, userID, memoryService, log)
+					c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
+					c.Request.ContentLength = int64(len(requestBody))
 				}
 			}
 		}

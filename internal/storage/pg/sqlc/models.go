@@ -132,3 +132,11 @@ type UserTokenUsageDaily struct {
 	TotalTokensUsed       int64     `json:"totalTokensUsed"`
 	TotalPlanTokens       int64     `json:"totalPlanTokens"`
 }
+
+type UsersFact struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"userId"`
+	FactBody  string    `json:"factBody"`
+	FactType  string    `json:"factType"`
+	CreatedAt time.Time `json:"createdAt"`
+}
