@@ -21,17 +21,6 @@ type StandardClaims struct {
 	jwt.RegisteredClaims
 }
 
-// UserInfo contains extracted user information from a token.
-type UserInfo struct {
-	UserID         string
-	SignInProvider string // e.g., "anonymous", "google.com", "password"
-}
-
-// IsAnonymous returns true if the user authenticated anonymously.
-func (u UserInfo) IsAnonymous() bool {
-	return u.SignInProvider == "anonymous"
-}
-
 type TokenValidator interface {
-	ExtractUserInfo(tokenString string) (UserInfo, error)
+	ExtractUserID(tokenString string) (string, error)
 }

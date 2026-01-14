@@ -459,8 +459,3 @@ func (s *Service) GetMetrics() map[string]int64 {
 		"queue_capacity":         int64(config.AppConfig.RequestTrackingBufferSize),
 	}
 }
-
-// GetUserLifetimeRequestCount returns total requests made by a user (lifetime).
-func (s *Service) GetUserLifetimeRequestCount(ctx context.Context, userID string) (int64, error) {
-	return s.queries.GetUserLifetimeRequestCount(ctx, userID)
-}

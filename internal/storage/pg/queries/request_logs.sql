@@ -85,10 +85,3 @@ WHERE user_id = $1
   AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
   AND plan_tokens IS NOT NULL
   AND model = $2;
-
--- name: GetUserLifetimeRequestCount :one
--- Returns total request count for a user (lifetime).
--- Used for anonymous user rate limiting.
-SELECT COALESCE(SUM(request_count), 0)::BIGINT as request_count
-FROM user_request_counts_daily
-WHERE user_id = $1;

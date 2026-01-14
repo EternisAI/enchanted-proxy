@@ -51,11 +51,10 @@ type Config struct {
 	ReplicateAPIToken string
 
 	// Rate Limiting
-	RateLimitEnabled              bool
-	RateLimitLogOnly              bool    // If true, only log violations, don't block.
-	RateLimitFailClosed           bool    // If true, fail closed when tier config unavailable (503 error).
-	RateLimitSoftMultiplier       float64 // Multiplier for soft limits (DailyPlanTokens). Default 1.0. Set to 0.1 to reduce limits by 10x for testing.
-	AnonymousLifetimeMessageLimit int     // Max messages for anonymous users before requiring signup. Default 2.
+	RateLimitEnabled        bool
+	RateLimitLogOnly        bool    // If true, only log violations, don't block.
+	RateLimitFailClosed     bool    // If true, fail closed when tier config unavailable (503 error).
+	RateLimitSoftMultiplier float64 // Multiplier for soft limits (DailyPlanTokens). Default 1.0. Set to 0.1 to reduce limits by 10x for testing.
 
 	// Deep Research Rate Limiting
 	DeepResearchRateLimitEnabled bool // If false, skip freemium quota checks
@@ -215,11 +214,10 @@ func LoadConfig() {
 		ReplicateAPIToken: getEnvOrDefault("REPLICATE_API_TOKEN", ""),
 
 		// Rate Limiting
-		RateLimitEnabled:              getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
-		RateLimitLogOnly:              getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "false") == "true", // TESTING: changed default from true
-		RateLimitFailClosed:           getEnvOrDefault("RATE_LIMIT_FAIL_CLOSED", "false") == "true",
-		RateLimitSoftMultiplier:       getEnvFloat("RATE_LIMIT_SOFT_MULTIPLIER", 1.0),
-		AnonymousLifetimeMessageLimit: getEnvAsInt("ANONYMOUS_LIFETIME_MESSAGE_LIMIT", 2),
+		RateLimitEnabled:        getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
+		RateLimitLogOnly:        getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "false") == "true", // TESTING: changed default from true
+		RateLimitFailClosed:     getEnvOrDefault("RATE_LIMIT_FAIL_CLOSED", "false") == "true",
+		RateLimitSoftMultiplier: getEnvFloat("RATE_LIMIT_SOFT_MULTIPLIER", 1.0),
 
 		// Deep Research Rate Limiting
 		DeepResearchRateLimitEnabled: getEnvOrDefault("DEEP_RESEARCH_RATE_LIMIT_ENABLED", "true") == "true",

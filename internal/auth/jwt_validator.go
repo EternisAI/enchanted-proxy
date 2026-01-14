@@ -55,16 +55,7 @@ func (v *JWTTokenValidator) RefreshKeys() error {
 	return nil
 }
 
-func (v *JWTTokenValidator) ExtractUserInfo(tokenString string) (UserInfo, error) {
-	userID, err := v.extractUserID(tokenString)
-	if err != nil {
-		return UserInfo{}, err
-	}
-	// JWT validator doesn't have Firebase sign_in_provider info
-	return UserInfo{UserID: userID}, nil
-}
-
-func (v *JWTTokenValidator) extractUserID(tokenString string) (string, error) {
+func (v *JWTTokenValidator) ExtractUserID(tokenString string) (string, error) {
 	// In development mode, extract user ID without validation
 	if v.devMode {
 		// Parse without verification
@@ -74,7 +65,7 @@ func (v *JWTTokenValidator) extractUserID(tokenString string) (string, error) {
 		}
 
 		if claims, ok := token.Claims.(*StandardClaims); ok {
-			// Prioritize sub, then user_id, then email as fallback
+			// Prioritize sub, then user_id, then email as fallback.
 			if claims.Sub != "" {
 				return claims.Sub, nil
 			}
@@ -95,12 +86,13 @@ func (v *JWTTokenValidator) extractUserID(tokenString string) (string, error) {
 		return "", ErrNoJWKS
 	}
 
-	// Parse the token header to get the key ID
+	// First, parse the token header to get the key ID without validation
 	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, &StandardClaims{})
 	if err != nil {
 		return "", fmt.Errorf("%w: failed to parse token header: %v", ErrInvalidToken, err)
 	}
 
+	// Get the key ID from the token header
 	kid, ok := token.Header["kid"].(string)
 	if !ok {
 		return "", fmt.Errorf("%w: token header missing kid", ErrInvalidToken)
@@ -113,8 +105,11 @@ func (v *JWTTokenValidator) extractUserID(tokenString string) (string, error) {
 		if err := v.RefreshKeys(); err != nil {
 			return "", fmt.Errorf("%w: key with ID %s not found and failed to refresh keys: %v", ErrInvalidToken, kid, err)
 		}
+
+		// Try again after refresh
 		key, found = v.keySet.LookupKeyID(kid)
 		if !found {
+			// Log all available key IDs for debugging
 			var availableKeys []string
 			for i := 0; i < v.keySet.Len(); i++ {
 				k, _ := v.keySet.Get(i)
@@ -124,12 +119,13 @@ func (v *JWTTokenValidator) extractUserID(tokenString string) (string, error) {
 		}
 	}
 
+	// Get the raw key
 	var rawKey interface{}
 	if err := key.Raw(&rawKey); err != nil {
 		return "", fmt.Errorf("%w: failed to get raw key: %v", ErrInvalidToken, err)
 	}
 
-	// Validate the token with the found key
+	// Now validate the token with the found key
 	validatedToken, err := jwt.ParseWithClaims(
 		tokenString,
 		&StandardClaims{},
@@ -146,17 +142,20 @@ func (v *JWTTokenValidator) extractUserID(tokenString string) (string, error) {
 		return "", ErrInvalidToken
 	}
 
+	// Check if token is expired
 	if !claims.VerifyExpiresAt(time.Now(), true) {
 		return "", ErrExpiredToken
 	}
 
-	// Prioritize sub, then user_id, then email as fallback
+	// Prioritize sub, then user_id, then email as fallback.
 	if claims.Sub != "" {
 		return claims.Sub, nil
 	}
+
 	if claims.UserId != "" {
 		return claims.UserId, nil
 	}
+
 	if claims.Email != "" {
 		return claims.Email, nil
 	}

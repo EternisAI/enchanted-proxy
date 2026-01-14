@@ -48,9 +48,6 @@ type Querier interface {
 	// Returns plan tokens used today on the fallback model.
 	// Used for tracking fallback quota when normal quota is exceeded.
 	GetUserFallbackPlanTokensToday(ctx context.Context, arg GetUserFallbackPlanTokensTodayParams) (int64, error)
-	// Returns total request count for a user (lifetime).
-	// Used for anonymous user rate limiting.
-	GetUserLifetimeRequestCount(ctx context.Context, userID string) (int64, error)
 	GetUserLifetimeTokenUsage(ctx context.Context, userID string) (int64, error)
 	// Note: Queries request_logs directly (not materialized view) because monthly buckets aren't pre-aggregated.
 	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
