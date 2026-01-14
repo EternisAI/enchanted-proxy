@@ -30,20 +30,22 @@ func NewFirebaseTokenValidator(ctx context.Context, credJSON string) (*FirebaseT
 	}, nil
 }
 
-// Checks that this user's auth token is valid and extracts + returns the user's Firebase ID
-// from "sub" - which according to Firebase docs should always be present: https://firebase.google.com/docs/auth/admin/verify-id-tokens#go
-func (f *FirebaseTokenValidator) ExtractUserID(tokenString string) (string, error) {
+// ExtractUserInfo validates the token and extracts user ID and sign-in provider.
+// The sign_in_provider field identifies how the user authenticated (e.g., "anonymous", "google.com").
+func (f *FirebaseTokenValidator) ExtractUserInfo(tokenString string) (UserInfo, error) {
 	ctx := context.Background()
 
 	token, err := f.authClient.VerifyIDToken(ctx, tokenString)
 	if err != nil {
-		return "", err
+		return UserInfo{}, err
 	}
 
-	sub := token.Subject
-	if sub != "" {
-		return sub, nil
+	if token.Subject == "" {
+		return UserInfo{}, fmt.Errorf("no Firebase UID (sub claim) found in token")
 	}
 
-	return "", fmt.Errorf("no Firebase UID (sub claim) found in token")
+	return UserInfo{
+		UserID:         token.Subject,
+		SignInProvider: token.Firebase.SignInProvider,
+	}, nil
 }

@@ -40,6 +40,29 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 		log := logger.WithContext(c.Request.Context()).WithComponent("request_tracking")
 
 		if config.AppConfig.RateLimitEnabled {
+			// Check anonymous user limit first (before tier-based limits)
+			if userInfo, ok := auth.GetUserInfo(c); ok && userInfo.IsAnonymous() {
+				limit := int64(config.AppConfig.AnonymousLifetimeMessageLimit)
+				count, err := trackingService.GetUserLifetimeRequestCount(c.Request.Context(), userID)
+				if err != nil {
+					log.Error("failed to get anonymous user request count", slog.String("error", err.Error()))
+					if config.AppConfig.RateLimitFailClosed {
+						c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+							"error": "Rate limit service temporarily unavailable",
+						})
+						return
+					}
+				} else if count >= limit {
+					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+						"error":           "Anonymous user message limit exceeded. Please sign up to continue.",
+						"rate_limit_type": "anonymous_limit",
+						"limit":           limit,
+						"used":            count,
+					})
+					return
+				}
+			}
+
 			// Get user's tier and config
 			tierConfig, expiresAt, err := trackingService.GetUserTierConfig(c.Request.Context(), userID)
 			if err != nil {

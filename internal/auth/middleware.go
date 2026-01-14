@@ -12,7 +12,8 @@ import (
 type contextKey string
 
 const (
-	UserIDKey contextKey = "user_id"
+	UserIDKey   contextKey = "user_id"
+	UserInfoKey contextKey = "user_info"
 )
 
 type FirebaseAuthMiddleware struct {
@@ -62,16 +63,17 @@ func (f *FirebaseAuthMiddleware) RequireAuth() gin.HandlerFunc {
 			return
 		}
 
-		userID, err := f.validator.ExtractUserID(token)
+		userInfo, err := f.validator.ExtractUserInfo(token)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
 			c.Abort()
 			return
 		}
 
-		ctx := logger.WithUserID(c.Request.Context(), userID)
+		ctx := logger.WithUserID(c.Request.Context(), userInfo.UserID)
 		c.Request = c.Request.WithContext(ctx)
-		c.Set(string(UserIDKey), userID)
+		c.Set(string(UserIDKey), userInfo.UserID)
+		c.Set(string(UserInfoKey), userInfo)
 
 		c.Next()
 	}
@@ -85,4 +87,14 @@ func GetUserID(c *gin.Context) (string, bool) {
 
 	id, ok := userID.(string)
 	return id, ok
+}
+
+func GetUserInfo(c *gin.Context) (UserInfo, bool) {
+	info, exists := c.Get(string(UserInfoKey))
+	if !exists {
+		return UserInfo{}, false
+	}
+
+	userInfo, ok := info.(UserInfo)
+	return userInfo, ok
 }

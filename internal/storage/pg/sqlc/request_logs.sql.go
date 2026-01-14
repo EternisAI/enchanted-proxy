@@ -97,6 +97,21 @@ func (q *Queries) GetUserFallbackPlanTokensToday(ctx context.Context, arg GetUse
 	return plan_tokens, err
 }
 
+const getUserLifetimeRequestCount = `-- name: GetUserLifetimeRequestCount :one
+SELECT COALESCE(SUM(request_count), 0)::BIGINT as request_count
+FROM user_request_counts_daily
+WHERE user_id = $1
+`
+
+// Returns total request count for a user (lifetime).
+// Used for anonymous user rate limiting.
+func (q *Queries) GetUserLifetimeRequestCount(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserLifetimeRequestCount, userID)
+	var request_count int64
+	err := row.Scan(&request_count)
+	return request_count, err
+}
+
 const getUserLifetimeTokenUsage = `-- name: GetUserLifetimeTokenUsage :one
 SELECT COALESCE(SUM(total_tokens), 0)::BIGINT as total_tokens
 FROM request_logs
