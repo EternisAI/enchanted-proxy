@@ -3,6 +3,8 @@ package tiers
 import (
 	"fmt"
 	"time"
+
+	"github.com/eternisai/enchanted-proxy/internal/config"
 )
 
 // Tier represents a subscription tier.
@@ -128,12 +130,20 @@ var Configs = map[Tier]Config{
 }
 
 // Get returns the config for a tier.
+// Applies RATE_LIMIT_SOFT_MULTIPLIER to DailyPlanTokens for testing.
 func Get(tier Tier) (Config, error) {
-	config, exists := Configs[tier]
+	cfg, exists := Configs[tier]
 	if !exists {
 		return Config{}, fmt.Errorf("unknown tier: %s", tier)
 	}
-	return config, nil
+
+	// Apply soft limit multiplier (for staging/testing)
+	multiplier := config.AppConfig.RateLimitSoftMultiplier
+	if multiplier > 0 && multiplier != 1.0 && cfg.DailyPlanTokens > 0 {
+		cfg.DailyPlanTokens = int64(float64(cfg.DailyPlanTokens) * multiplier)
+	}
+
+	return cfg, nil
 }
 
 // IsModelAllowed checks if a model is allowed for this tier.
