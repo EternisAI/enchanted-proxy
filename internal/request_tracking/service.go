@@ -418,6 +418,21 @@ func (s *Service) GetUserPlanTokensToday(ctx context.Context, userID string) (in
 	return result, nil
 }
 
+// GetUserFallbackPlanTokensToday returns plan tokens used today on the fallback model.
+func (s *Service) GetUserFallbackPlanTokensToday(ctx context.Context, userID string, fallbackModel string) (int64, error) {
+	if fallbackModel == "" {
+		return 0, nil
+	}
+	result, err := s.queries.GetUserFallbackPlanTokensToday(ctx, pgdb.GetUserFallbackPlanTokensTodayParams{
+		UserID: userID,
+		Model:  &fallbackModel,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to get daily fallback plan tokens: %w", err)
+	}
+	return result, nil
+}
+
 // GetUserDeepResearchRunsToday returns deep research runs today.
 func (s *Service) GetUserDeepResearchRunsToday(ctx context.Context, userID string) (int64, error) {
 	result, err := s.queries.GetUserDeepResearchRunsToday(ctx, userID)

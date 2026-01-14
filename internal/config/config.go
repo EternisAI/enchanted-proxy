@@ -51,9 +51,10 @@ type Config struct {
 	ReplicateAPIToken string
 
 	// Rate Limiting
-	RateLimitEnabled    bool
-	RateLimitLogOnly    bool // If true, only log violations, don't block.
-	RateLimitFailClosed bool // If true, fail closed when tier config unavailable (503 error).
+	RateLimitEnabled        bool
+	RateLimitLogOnly        bool    // If true, only log violations, don't block.
+	RateLimitFailClosed     bool    // If true, fail closed when tier config unavailable (503 error).
+	RateLimitSoftMultiplier float64 // Multiplier for soft limits (DailyPlanTokens). Default 1.0. Set to 0.1 to reduce limits by 10x for testing.
 
 	// Deep Research Rate Limiting
 	DeepResearchRateLimitEnabled bool // If false, skip freemium quota checks
@@ -127,7 +128,7 @@ type Config struct {
 	PushNotificationsEnabled bool // Enable/disable FCM push notifications for task completions (default: true)
 
 	// ZCash Backend
-	ZCashBackendURL           string  // URL of zcash-payment-backend (default: http://127.0.0.1:20002)
+	ZCashBackendURL           string // URL of zcash-payment-backend (default: http://127.0.0.1:20002)
 	ZCashBackendAPIKey        string
 	ZCashBackendSkipTLSVerify bool    // Skip TLS verification (for local dev only)
 	ZCashDebugMultiplier      float64 // Price multiplier for testing (e.g., 0.01 for 1% of normal price, 0 = disabled)
@@ -213,9 +214,10 @@ func LoadConfig() {
 		ReplicateAPIToken: getEnvOrDefault("REPLICATE_API_TOKEN", ""),
 
 		// Rate Limiting
-		RateLimitEnabled:    getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
-		RateLimitLogOnly:    getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "true") == "true",
-		RateLimitFailClosed: getEnvOrDefault("RATE_LIMIT_FAIL_CLOSED", "false") == "true",
+		RateLimitEnabled:        getEnvOrDefault("RATE_LIMIT_ENABLED", "true") == "true",
+		RateLimitLogOnly:        getEnvOrDefault("RATE_LIMIT_LOG_ONLY", "false") == "true", // TESTING: changed default from true
+		RateLimitFailClosed:     getEnvOrDefault("RATE_LIMIT_FAIL_CLOSED", "false") == "true",
+		RateLimitSoftMultiplier: getEnvFloat("RATE_LIMIT_SOFT_MULTIPLIER", 1.0),
 
 		// Deep Research Rate Limiting
 		DeepResearchRateLimitEnabled: getEnvOrDefault("DEEP_RESEARCH_RATE_LIMIT_ENABLED", "true") == "true",
