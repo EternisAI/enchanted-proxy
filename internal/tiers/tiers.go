@@ -70,9 +70,9 @@ var Configs = map[Tier]Config{
 	TierFree: {
 		Name:              "free",
 		DisplayName:       "Free",
-		MonthlyPlanTokens: 500, // TESTING: reduced from 20_000
-		WeeklyPlanTokens:  0,   // No weekly limit
-		DailyPlanTokens:   0,   // No daily limit
+		MonthlyPlanTokens: 20_000,
+		WeeklyPlanTokens:  0, // No weekly limit
+		DailyPlanTokens:   0, // No daily limit
 		// Note: AllowedModels must match exactly what clients send in the "model" field
 		// Includes all known aliases to prevent blocking users
 		// Free tier can only use: DeepSeek R1, Llama 3.3 70B, GLM-4.6, GLM-4.7, Dolphin Mistral (uncensored)
@@ -96,8 +96,8 @@ var Configs = map[Tier]Config{
 		DisplayName:             "Plus",
 		MonthlyPlanTokens:       0,
 		WeeklyPlanTokens:        0,
-		DailyPlanTokens:         500, // TESTING: reduced from 40_000
-		FallbackDailyPlanTokens: 500, // TESTING: reduced from 40_000
+		DailyPlanTokens:         40_000,
+		FallbackDailyPlanTokens: 40_000,
 		FallbackModel:           "Qwen/Qwen3-30B-A3B-Instruct-2507",
 		AllowedModels: []string{
 			"zai-org/GLM-4.6", "glm-4.6", // GLM 4.6
@@ -113,10 +113,10 @@ var Configs = map[Tier]Config{
 	TierPro: {
 		Name:                          "pro",
 		DisplayName:                   "Pro",
-		MonthlyPlanTokens:             0,           // No monthly limit
-		WeeklyPlanTokens:              0,           // No weekly limit
-		DailyPlanTokens:               1_000,       // TESTING: low to trigger soft limit
-		FallbackDailyPlanTokens:       10_000_000,  // TESTING: very high so we never hit hard limit
+		MonthlyPlanTokens:             0, // No monthly limit
+		WeeklyPlanTokens:              0, // No weekly limit
+		DailyPlanTokens:               500_000,
+		FallbackDailyPlanTokens:       500_000,
 		FallbackModel:                 "Qwen/Qwen3-30B-A3B-Instruct-2507",
 		AllowedModels:                 []string{}, // Empty = all models allowed
 		DeepResearchDailyRuns:         10,
