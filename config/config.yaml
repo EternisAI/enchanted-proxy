@@ -76,12 +76,12 @@ model_router:
             and (max_over_time((max(vllm:kv_cache_usage_perc{model_name="zai-org/GLM-4.6"}))[5m:15s]) < 0.8)
     - name: NEAR AI
 
-  # Qwen3 30B A3B - Free & Pro - via NEAR AI (0.8× multiplier)
+  # Qwen3 30B A3B - Free & Pro - via NEAR AI (0.04× multiplier, fallback model)
   - name: Qwen/Qwen3-30B-A3B-Instruct-2507
     aliases:
     - qwen3-30b
     - qwen-30b
-    token_multiplier: 0.8
+    token_multiplier: 0.04
     providers:
     - name: NEAR AI
 

@@ -666,7 +666,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 
 	// Protected proxy routes
 	proxyGroup := router.Group("/")
-	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger))
+	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger, input.modelRouter))
 	{
 		// AI service endpoints
 		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
