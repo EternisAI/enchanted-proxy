@@ -132,3 +132,11 @@ type UserTokenUsageDaily struct {
 	TotalTokensUsed       int64     `json:"totalTokensUsed"`
 	TotalPlanTokens       int64     `json:"totalPlanTokens"`
 }
+
+type ZcashPayment struct {
+	InvoiceID  string    `json:"invoiceId"`
+	UserID     string    `json:"userId"`
+	ProductID  string    `json:"productId"`
+	AmountZat  int64     `json:"amountZat"`
+	RedeemedAt time.Time `json:"redeemedAt"`
+}

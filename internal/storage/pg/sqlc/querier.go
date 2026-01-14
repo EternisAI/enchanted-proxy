@@ -64,8 +64,11 @@ type Querier interface {
 	GetUserTokenUsageInLastDay(ctx context.Context, userID string) (int64, error)
 	GetUserTokenUsageInTimeWindow(ctx context.Context, arg GetUserTokenUsageInTimeWindowParams) (int64, error)
 	GetUserTokenUsageToday(ctx context.Context, userID string) (int64, error)
+	GetZcashPayment(ctx context.Context, invoiceID string) (ZcashPayment, error)
 	HasActiveDeepResearchRun(ctx context.Context, userID string) (bool, error)
+	InsertZcashPayment(ctx context.Context, arg InsertZcashPaymentParams) error
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
+	ListZcashPaymentsByUser(ctx context.Context, userID string) ([]ZcashPayment, error)
 	MarkAllMessagesAsSent(ctx context.Context, sessionID string) error
 	MarkMessageAsSent(ctx context.Context, id string) error
 	RefreshUserRequestCountsView(ctx context.Context) error

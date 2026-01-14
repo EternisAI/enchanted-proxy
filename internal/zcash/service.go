@@ -284,6 +284,20 @@ func (s *Service) GetInvoiceStatus(ctx context.Context, invoiceID string) (*Invo
 }
 
 func (s *Service) ConfirmPayment(ctx context.Context, userID, invoiceID string) error {
+	// Check if invoice was already redeemed (idempotency check)
+	_, err := s.queries.GetZcashPayment(ctx, invoiceID)
+	if err == nil {
+		// Invoice already redeemed - return success (idempotent)
+		s.logger.Info("zcash invoice already redeemed (idempotent)",
+			"user_id", userID,
+			"invoice_id", invoiceID,
+		)
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("failed to check invoice redemption: %w", err)
+	}
+
 	status, err := s.GetInvoiceStatus(ctx, invoiceID)
 	if err != nil {
 		return fmt.Errorf("failed to get invoice status: %w", err)
@@ -305,6 +319,29 @@ func (s *Service) ConfirmPayment(ctx context.Context, userID, invoiceID string) 
 	product := s.GetProduct(parts.productID)
 	if product == nil {
 		return fmt.Errorf("unknown product: %s", parts.productID)
+	}
+
+	// Record the redemption first (prevents replay attacks)
+	amountZat := int64(0)
+	if status.PaidZat != nil {
+		amountZat = *status.PaidZat
+	}
+	err = s.queries.InsertZcashPayment(ctx, pgdb.InsertZcashPaymentParams{
+		InvoiceID: invoiceID,
+		UserID:    userID,
+		ProductID: parts.productID,
+		AmountZat: amountZat,
+	})
+	if err != nil {
+		// Check for unique constraint violation (concurrent redemption)
+		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique constraint") {
+			s.logger.Info("zcash invoice already redeemed (concurrent)",
+				"user_id", userID,
+				"invoice_id", invoiceID,
+			)
+			return nil
+		}
+		return fmt.Errorf("failed to record payment: %w", err)
 	}
 
 	var expiresAt sql.NullTime
@@ -348,6 +385,7 @@ func (s *Service) ConfirmPayment(ctx context.Context, userID, invoiceID string) 
 		"product_id", parts.productID,
 		"tier", product.Tier,
 		"is_lifetime", product.IsLifetime,
+		"amount_zat", amountZat,
 	)
 
 	return nil
