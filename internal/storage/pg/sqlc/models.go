@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+type AppleTransaction struct {
+	OriginalTransactionID string    `json:"originalTransactionId"`
+	UserID                string    `json:"userId"`
+	ProductID             string    `json:"productId"`
+	Tier                  string    `json:"tier"`
+	RedeemedAt            time.Time `json:"redeemedAt"`
+}
+
 type DeepResearchMessage struct {
 	ID          string       `json:"id"`
 	UserID      string       `json:"userId"`

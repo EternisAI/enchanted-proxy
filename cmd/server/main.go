@@ -140,7 +140,7 @@ func main() {
 	composioService := composio.NewService(logger.WithComponent("composio"))
 	inviteCodeService := invitecode.NewService(db.Queries)
 	requestTrackingService := request_tracking.NewService(db.Queries, logger.WithComponent("request_tracking"))
-	iapService := iap.NewService(db.Queries)
+	iapService := iap.NewService(db.Queries, logger.WithComponent("iap"))
 	stripeService := stripe.NewService(db.Queries, logger.WithComponent("stripe"))
 	zcashService := zcash.NewService(db.Queries, logger.WithComponent("zcash"))
 	mcpService := mcp.NewService()

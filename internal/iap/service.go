@@ -3,11 +3,13 @@ package iap
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/logger"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
 	appstore "github.com/richzw/appstore"
@@ -15,11 +17,12 @@ import (
 
 type Service struct {
 	queries      pgdb.Querier
+	logger       *logger.Logger
 	storeProd    *appstore.StoreClient
 	storeSandbox *appstore.StoreClient
 }
 
-func NewService(queries pgdb.Querier) *Service {
+func NewService(queries pgdb.Querier, log *logger.Logger) *Service {
 	// Normalize P8: support both literal newlines and \n-escaped forms.
 	key := config.AppConfig.AppStoreAPIKeyP8
 	if strings.Contains(key, "\\n") && !strings.Contains(key, "\n") {
@@ -42,7 +45,7 @@ func NewService(queries pgdb.Querier) *Service {
 		Sandbox:    true,
 	})
 
-	return &Service{queries: queries, storeProd: prodClient, storeSandbox: sandboxClient}
+	return &Service{queries: queries, logger: log, storeProd: prodClient, storeSandbox: sandboxClient}
 }
 
 // AttachAppStoreSubscription verifies the JWS and upserts entitlement.
@@ -53,6 +56,27 @@ func (s *Service) AttachAppStoreSubscription(ctx context.Context, userID string,
 		if err != nil {
 			return nil, time.Time{}, err
 		}
+	}
+
+	// Check if transaction was already redeemed (idempotency check)
+	existing, err := s.queries.GetAppleTransaction(ctx, p.OriginalTransactionId)
+	if err == nil {
+		// Transaction already redeemed - return success (idempotent)
+		s.logger.Info("apple transaction already redeemed (idempotent)",
+			"user_id", userID,
+			"original_transaction_id", p.OriginalTransactionId,
+		)
+		// Return the previously granted expiration based on tier
+		var expiresAt time.Time
+		if existing.Tier == string(tiers.TierPlus) {
+			expiresAt = time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC)
+		} else if p.ExpiresDate > 0 {
+			expiresAt = time.UnixMilli(p.ExpiresDate)
+		}
+		return p, expiresAt, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, time.Time{}, fmt.Errorf("failed to check transaction redemption: %w", err)
 	}
 
 	// Determine tier based on product ID
@@ -70,6 +94,25 @@ func (s *Service) AttachAppStoreSubscription(ctx context.Context, userID string,
 		expiresAt = sql.NullTime{Time: time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC), Valid: true}
 	} else {
 		return nil, time.Time{}, fmt.Errorf("missing expiresDate for non-lifetime product")
+	}
+
+	// Record the redemption first (prevents replay attacks)
+	err = s.queries.InsertAppleTransaction(ctx, pgdb.InsertAppleTransactionParams{
+		OriginalTransactionID: p.OriginalTransactionId,
+		UserID:                userID,
+		ProductID:             p.ProductID,
+		Tier:                  tier,
+	})
+	if err != nil {
+		// Check for unique constraint violation (concurrent redemption)
+		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique constraint") {
+			s.logger.Info("apple transaction already redeemed (concurrent)",
+				"user_id", userID,
+				"original_transaction_id", p.OriginalTransactionId,
+			)
+			return p, expiresAt.Time, nil
+		}
+		return nil, time.Time{}, fmt.Errorf("failed to record transaction: %w", err)
 	}
 
 	provider := "apple"

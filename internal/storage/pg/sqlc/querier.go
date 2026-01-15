@@ -28,6 +28,7 @@ type Querier interface {
 	GetActiveDeepResearchRun(ctx context.Context, arg GetActiveDeepResearchRunParams) (GetActiveDeepResearchRunRow, error)
 	GetAllActiveTasks(ctx context.Context) ([]Task, error)
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
+	GetAppleTransaction(ctx context.Context, originalTransactionID string) (AppleTransaction, error)
 	GetDeepResearchRunCountForChat(ctx context.Context, arg GetDeepResearchRunCountForChatParams) (int64, error)
 	GetEntitlement(ctx context.Context, userID string) (GetEntitlementRow, error)
 	GetInviteCodeByCodeHash(ctx context.Context, codeHash string) (InviteCode, error)
@@ -66,7 +67,9 @@ type Querier interface {
 	GetUserTokenUsageToday(ctx context.Context, userID string) (int64, error)
 	GetZcashPayment(ctx context.Context, invoiceID string) (ZcashPayment, error)
 	HasActiveDeepResearchRun(ctx context.Context, userID string) (bool, error)
+	InsertAppleTransaction(ctx context.Context, arg InsertAppleTransactionParams) error
 	InsertZcashPayment(ctx context.Context, arg InsertZcashPaymentParams) error
+	ListAppleTransactionsByUser(ctx context.Context, userID string) ([]AppleTransaction, error)
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
 	ListZcashPaymentsByUser(ctx context.Context, userID string) ([]ZcashPayment, error)
 	MarkAllMessagesAsSent(ctx context.Context, sessionID string) error
