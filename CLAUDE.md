@@ -34,10 +34,10 @@ make sqlc         # Regenerate SQL after editing queries/
 | Tier | Plan Tokens | Reset | Deep Research | Fallback |
 |------|-------------|-------|---------------|----------|
 | Free | 20k monthly | 1st of month | 1 lifetime | None |
-| Plus | 100k monthly | 1st of month | 5/day | Yes |
-| Pro | 500k daily | Daily 00:00 UTC | 10/day | 50k/day |
+| Plus | 40k daily | Daily 00:00 UTC | Unlimited | 40k/day |
+| Pro | 500k daily | Daily 00:00 UTC | 10/day | 500k/day |
 
-**Model multipliers**: Cheap (0.5-0.8×), Standard (1×), Premium (4-6×), GPT-5 Pro (50×)
+**Model multipliers**: 0.04× (Qwen3), 0.5× (Dolphin), 1× (DeepSeek, Llama), 3× (GLM-4.6), 4× (GPT-4.1)
 
 See `TIER_LIMITS.md` for complete reference.
 
@@ -72,7 +72,7 @@ Cross-platform tests: `test-vectors/encryption-compatibility.json`
 
 **Add a tier**: Edit `internal/tiers/tiers.go` + add Stripe product
 
-**Add an endpoint**: Create handler in `internal/<feature>/handlers.go` → register in `main.go`
+**Add an endpoint**: Create handler in `internal/<feature>/handlers.go` → register in `cmd/server/main.go`
 
 **Database changes**: Edit `internal/storage/pg/queries/*.sql` → `make sqlc` → use generated methods
 
