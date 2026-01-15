@@ -2,7 +2,6 @@ package zcash
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -87,16 +86,15 @@ func (h *Handler) GetInvoice(c *gin.Context) {
 		return
 	}
 
-	parts := strings.SplitN(invoiceID, "__", 3)
-	if len(parts) < 1 || parts[0] != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-		return
-	}
-
 	invoice, err := h.service.GetInvoice(c.Request.Context(), invoiceID)
 	if err != nil {
 		h.logger.Error("failed to get invoice", "error", err.Error(), "invoice_id", invoiceID)
 		c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
+		return
+	}
+
+	if invoice.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
