@@ -234,7 +234,7 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		return nil, 0, fmt.Errorf("zcash backend returned status %d", resp.StatusCode)
 	}
 
