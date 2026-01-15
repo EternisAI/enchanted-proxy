@@ -617,7 +617,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		{
 			zcashGroup.GET("/products", input.zcashHandler.GetProducts)
 			zcashGroup.POST("/invoice", input.zcashHandler.CreateInvoice)
-			zcashGroup.GET("/invoice/:invoiceId", input.zcashHandler.GetInvoiceStatus)
+			zcashGroup.GET("/invoice/:invoiceId", input.zcashHandler.GetInvoice)
 			zcashGroup.POST("/confirm", input.zcashHandler.ConfirmPayment)
 		}
 

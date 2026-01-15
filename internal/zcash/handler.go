@@ -56,13 +56,17 @@ func (h *Handler) CreateInvoice(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create invoice"})
 		return
 	}
+	if invoice.Address == nil {
+		h.logger.Error("failed to generate zcash address for invoice", "user_id", userID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate zcash address for invoice"})
+	}
 
 	zecAmount := product.PriceUSD / zecPriceUSD
 	zatAmount := int64(zecAmount * 100_000_000)
 
 	c.JSON(http.StatusOK, CreateInvoiceResponseBody{
-		InvoiceID: invoice.InvoiceID,
-		Address:   invoice.Address,
+		InvoiceID: invoice.ID,
+		Address:   *invoice.Address,
 		ProductID: body.ProductID,
 		PriceUSD:  product.PriceUSD,
 		ZecAmount: zecAmount,
@@ -70,7 +74,7 @@ func (h *Handler) CreateInvoice(c *gin.Context) {
 	})
 }
 
-func (h *Handler) GetInvoiceStatus(c *gin.Context) {
+func (h *Handler) GetInvoice(c *gin.Context) {
 	invoiceID := c.Param("invoiceId")
 	if invoiceID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invoice_id required"})
@@ -89,14 +93,14 @@ func (h *Handler) GetInvoiceStatus(c *gin.Context) {
 		return
 	}
 
-	status, err := h.service.GetInvoiceStatus(c.Request.Context(), invoiceID)
+	invoice, err := h.service.GetInvoice(c.Request.Context(), invoiceID)
 	if err != nil {
-		h.logger.Error("failed to get invoice status", "error", err.Error(), "invoice_id", invoiceID)
+		h.logger.Error("failed to get invoice", "error", err.Error(), "invoice_id", invoiceID)
 		c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
 		return
 	}
 
-	c.JSON(http.StatusOK, status)
+	c.JSON(http.StatusOK, invoice)
 }
 
 type ConfirmPaymentRequestBody struct {

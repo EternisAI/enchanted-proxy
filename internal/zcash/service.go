@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
@@ -61,23 +60,23 @@ func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
 }
 
 type CreateInvoiceRequest struct {
-	InvoiceID   string `json:"invoice_id,omitempty"`
-	ExpectedZat int64  `json:"expected_zat,omitempty"`
+	UserID    string `json:"user_id"`
+	ProductID string `json:"product_id"`
+	AmountZat int64  `json:"amount_zatoshis"`
 }
 
-type CreateInvoiceResponse struct {
-	InvoiceID string `json:"invoice_id"`
-	Address   string `json:"address"`
-}
-
-type InvoiceStatusResponse struct {
-	InvoiceID   string  `json:"invoice_id"`
-	Address     string  `json:"address"`
-	ExpectedZat *int64  `json:"expected_zat,omitempty"`
-	Status      string  `json:"status"` // "paid" | "unpaid"
-	PaidZat     *int64  `json:"paid_zat,omitempty"`
-	PaidTxID    *string `json:"paid_txid,omitempty"`
-	PaidHeight  *int32  `json:"paid_height,omitempty"`
+type Invoice struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	ProductID  string    `json:"product_id"`
+	AmountZat  int64     `json:"amount_zatoshis"`
+	Paid       bool      `json:"paid"`
+	Processing bool      `json:"processing"`
+	Confirmed  bool      `json:"confirmed"`
+	Address    *string   `json:"receiving_address,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	PaidAt     time.Time `json:"paid_at"`
 }
 
 type Product struct {
@@ -176,11 +175,11 @@ func (s *Service) GetZecPriceUSD(ctx context.Context) (float64, error) {
 	// Kraken uses X-prefixed asset names (XZEC for Zcash)
 	tickerData, ok := result.Result["XZECZUSD"]
 	if !ok {
-		return 0, fmt.Errorf("XZECZUSD pair not found in kraken response")
+		return 0, errors.New("XZECZUSD pair not found in kraken response")
 	}
 
 	if len(tickerData.LastTrade) == 0 {
-		return 0, fmt.Errorf("no last trade data in kraken response")
+		return 0, errors.New("no last trade data in kraken response")
 	}
 
 	price, err := strconv.ParseFloat(tickerData.LastTrade[0], 64)
@@ -191,11 +190,8 @@ func (s *Service) GetZecPriceUSD(ctx context.Context) (float64, error) {
 	return price, nil
 }
 
-func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (*CreateInvoiceResponse, float64, error) {
+func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (*Invoice, float64, error) {
 	apiKey := config.AppConfig.ZCashBackendAPIKey
-	if apiKey == "" {
-		return nil, 0, errors.New("zcash backend API key not configured")
-	}
 
 	product := s.GetProduct(productID)
 	if product == nil {
@@ -212,11 +208,10 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 	zecAmount := priceUSD / zecPriceUSD
 	zatAmount := int64(zecAmount * 100_000_000)
 
-	invoiceID := fmt.Sprintf("%s__%s__%d", userID, productID, time.Now().Unix())
-
 	reqBody := CreateInvoiceRequest{
-		InvoiceID:   invoiceID,
-		ExpectedZat: zatAmount,
+		UserID:    userID,
+		ProductID: productID,
+		AmountZat: zatAmount,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -229,7 +224,9 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -241,25 +238,24 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 		return nil, 0, fmt.Errorf("zcash backend returned status %d", resp.StatusCode)
 	}
 
-	var result CreateInvoiceResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	var invoice Invoice
+	if err := json.NewDecoder(resp.Body).Decode(&invoice); err != nil {
 		return nil, 0, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return &result, zecPriceUSD, nil
+	return &invoice, zecPriceUSD, nil
 }
 
-func (s *Service) GetInvoiceStatus(ctx context.Context, invoiceID string) (*InvoiceStatusResponse, error) {
+func (s *Service) GetInvoice(ctx context.Context, invoiceID string) (*Invoice, error) {
 	apiKey := config.AppConfig.ZCashBackendAPIKey
-	if apiKey == "" {
-		return nil, errors.New("zcash backend API key not configured")
-	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", config.AppConfig.ZCashBackendURL+"/invoices/"+invoiceID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -268,43 +264,44 @@ func (s *Service) GetInvoiceStatus(ctx context.Context, invoiceID string) (*Invo
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("invoice not found")
+		return nil, errors.New("invoice not found")
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("zcash backend returned status %d", resp.StatusCode)
 	}
 
-	var result InvoiceStatusResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	var invoice Invoice
+	if err := json.NewDecoder(resp.Body).Decode(&invoice); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return &result, nil
+	return &invoice, nil
 }
 
 func (s *Service) ConfirmPayment(ctx context.Context, userID, invoiceID string) error {
-	status, err := s.GetInvoiceStatus(ctx, invoiceID)
+	apiKey := config.AppConfig.ZCashBackendAPIKey
+
+	invoice, err := s.GetInvoice(ctx, invoiceID)
 	if err != nil {
-		return fmt.Errorf("failed to get invoice status: %w", err)
+		return fmt.Errorf("failed to get invoice: %w", err)
 	}
 
-	if status.Status != "paid" {
-		return fmt.Errorf("invoice not paid yet")
+	if !invoice.Paid {
+		return errors.New("invoice not paid yet")
 	}
 
-	parts := parseInvoiceID(invoiceID)
-	if parts == nil {
-		return fmt.Errorf("invalid invoice ID format")
+	if invoice.Confirmed {
+		return errors.New("invoice is already confirmed")
 	}
 
-	if parts.userID != userID {
-		return fmt.Errorf("invoice does not belong to user")
+	if invoice.UserID != userID {
+		return errors.New("invoice does not belong to user")
 	}
 
-	product := s.GetProduct(parts.productID)
+	product := s.GetProduct(invoice.ProductID)
 	if product == nil {
-		return fmt.Errorf("unknown product: %s", parts.productID)
+		return fmt.Errorf("unknown product: %s", invoice.ProductID)
 	}
 
 	var expiresAt sql.NullTime
@@ -326,7 +323,7 @@ func (s *Service) ConfirmPayment(ctx context.Context, userID, invoiceID string) 
 			duration = 30 * 24 * time.Hour
 		}
 		expiresAt = sql.NullTime{
-			Time:  time.Now().Add(duration),
+			Time:  invoice.UpdatedAt.Add(duration),
 			Valid: true,
 		}
 	}
@@ -342,31 +339,37 @@ func (s *Service) ConfirmPayment(ctx context.Context, userID, invoiceID string) 
 		return fmt.Errorf("failed to update entitlement: %w", err)
 	}
 
+	s.logger.Info("user entitlement updated",
+		"user_id", userID,
+		"invoice_id", invoiceID,
+		"product_id", invoice.ProductID,
+		"tier", product.Tier,
+		"is_lifetime", product.IsLifetime,
+		"expires_at", expiresAt,
+	)
+
+	req, err := http.NewRequestWithContext(ctx, "PATCH", config.AppConfig.ZCashBackendURL+"/invoices/"+invoiceID+"/confirmed", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call zcash backend: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("zcash backend returned status %d", resp.StatusCode)
+	}
+
 	s.logger.Info("zcash payment confirmed",
 		"user_id", userID,
 		"invoice_id", invoiceID,
-		"product_id", parts.productID,
-		"tier", product.Tier,
-		"is_lifetime", product.IsLifetime,
 	)
 
 	return nil
-}
-
-type invoiceParts struct {
-	userID    string
-	productID string
-	timestamp string
-}
-
-func parseInvoiceID(invoiceID string) *invoiceParts {
-	parts := strings.SplitN(invoiceID, "__", 3)
-	if len(parts) != 3 {
-		return nil
-	}
-	return &invoiceParts{
-		userID:    parts[0],
-		productID: parts[1],
-		timestamp: parts[2],
-	}
 }
