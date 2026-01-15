@@ -59,10 +59,6 @@ type Config struct {
 	// Deep Research Rate Limiting
 	DeepResearchRateLimitEnabled bool // If false, skip freemium quota checks
 
-	// Usage Tiers - Plan Token Quotas
-	FreeMonthlyPlanTokens int64 // Free tier: 20k plan tokens/month
-	ProDailyPlanTokens    int64 // Pro tier: 500k plan tokens/day
-
 	// App Store (IAP)
 	AppStoreAPIKeyP8 string
 	AppStoreAPIKeyID string
@@ -221,10 +217,6 @@ func LoadConfig() {
 
 		// Deep Research Rate Limiting
 		DeepResearchRateLimitEnabled: getEnvOrDefault("DEEP_RESEARCH_RATE_LIMIT_ENABLED", "true") == "true",
-
-		// Usage Tiers - Plan Token Quotas
-		FreeMonthlyPlanTokens: getEnvAsInt64("FREE_MONTHLY_PLAN_TOKENS", 20000),
-		ProDailyPlanTokens:    getEnvAsInt64("PRO_DAILY_PLAN_TOKENS", 500000),
 
 		// App Store (IAP)
 		AppStoreAPIKeyP8: getEnvOrDefault("APPSTORE_API_KEY_P8", ""),
