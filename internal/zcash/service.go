@@ -322,7 +322,12 @@ func (s *Service) HandlePaymentCallback(ctx context.Context, invoiceIDStr, statu
 		return fmt.Errorf("invalid status: %s", status)
 	}
 
-	// If payment complete (3 confirmations), grant entitlement
+	// Validate payment amount before marking as paid
+	if status == "paid" && accumulatedZatoshis < row.AmountZatoshis {
+		return fmt.Errorf("insufficient payment: got %d zatoshis, expected %d", accumulatedZatoshis, row.AmountZatoshis)
+	}
+
+	// If payment complete, grant entitlement
 	if status == "paid" {
 		if err := s.grantEntitlement(ctx, row); err != nil {
 			return fmt.Errorf("failed to grant entitlement: %w", err)
