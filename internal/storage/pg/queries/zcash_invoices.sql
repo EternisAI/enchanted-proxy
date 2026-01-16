@@ -23,12 +23,12 @@ WHERE id = $1;
 -- name: UpdateZcashInvoiceToProcessing :exec
 UPDATE zcash_invoices
 SET status = 'processing', updated_at = NOW()
-WHERE id = $1;
+WHERE id = $1 AND status = 'pending';
 
 -- name: UpdateZcashInvoiceToPaid :exec
 UPDATE zcash_invoices
 SET status = 'paid', paid_at = NOW(), updated_at = NOW()
-WHERE id = $1;
+WHERE id = $1 AND status IN ('pending', 'processing');
 
 -- name: GetExpiredPendingInvoices :many
 SELECT * FROM zcash_invoices
@@ -40,4 +40,4 @@ LIMIT $1;
 -- name: UpdateZcashInvoiceToExpired :exec
 UPDATE zcash_invoices
 SET status = 'expired', updated_at = NOW()
-WHERE id = $1;
+WHERE id = $1 AND status = 'pending';

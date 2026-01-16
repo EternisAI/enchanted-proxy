@@ -14,8 +14,8 @@ CREATE TABLE zcash_invoices (
 );
 
 CREATE INDEX idx_zcash_invoices_user_id ON zcash_invoices (user_id);
-CREATE INDEX idx_zcash_invoices_status ON zcash_invoices (status);
-CREATE INDEX idx_zcash_invoices_created_at ON zcash_invoices (created_at);
+CREATE INDEX idx_zcash_invoices_user_status ON zcash_invoices (user_id, status);
+CREATE INDEX idx_zcash_invoices_status_created ON zcash_invoices (status, created_at);
 
 -- +goose Down
 DROP TABLE zcash_invoices;

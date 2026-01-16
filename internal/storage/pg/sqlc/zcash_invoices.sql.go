@@ -200,7 +200,7 @@ func (q *Queries) UpdateZcashInvoiceStatus(ctx context.Context, arg UpdateZcashI
 const updateZcashInvoiceToExpired = `-- name: UpdateZcashInvoiceToExpired :exec
 UPDATE zcash_invoices
 SET status = 'expired', updated_at = NOW()
-WHERE id = $1
+WHERE id = $1 AND status = 'pending'
 `
 
 func (q *Queries) UpdateZcashInvoiceToExpired(ctx context.Context, id uuid.UUID) error {
@@ -211,7 +211,7 @@ func (q *Queries) UpdateZcashInvoiceToExpired(ctx context.Context, id uuid.UUID)
 const updateZcashInvoiceToPaid = `-- name: UpdateZcashInvoiceToPaid :exec
 UPDATE zcash_invoices
 SET status = 'paid', paid_at = NOW(), updated_at = NOW()
-WHERE id = $1
+WHERE id = $1 AND status IN ('pending', 'processing')
 `
 
 func (q *Queries) UpdateZcashInvoiceToPaid(ctx context.Context, id uuid.UUID) error {
@@ -222,7 +222,7 @@ func (q *Queries) UpdateZcashInvoiceToPaid(ctx context.Context, id uuid.UUID) er
 const updateZcashInvoiceToProcessing = `-- name: UpdateZcashInvoiceToProcessing :exec
 UPDATE zcash_invoices
 SET status = 'processing', updated_at = NOW()
-WHERE id = $1
+WHERE id = $1 AND status = 'pending'
 `
 
 func (q *Queries) UpdateZcashInvoiceToProcessing(ctx context.Context, id uuid.UUID) error {
