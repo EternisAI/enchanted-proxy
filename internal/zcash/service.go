@@ -21,6 +21,11 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
 )
 
+var (
+	ErrInvalidInvoiceID = errors.New("invalid invoice ID")
+	ErrInvoiceNotFound  = errors.New("invoice not found")
+)
+
 const (
 	krakenAPIURL = "https://api.kraken.com/0/public/Ticker?pair=ZECUSD"
 
@@ -275,7 +280,7 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 func (s *Service) GetInvoiceForUser(ctx context.Context, invoiceIDStr, userID string) (*Invoice, error) {
 	invoiceID, err := uuid.Parse(invoiceIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid invoice ID: %w", err)
+		return nil, ErrInvalidInvoiceID
 	}
 
 	row, err := s.queries.GetZcashInvoiceForUser(ctx, pgdb.GetZcashInvoiceForUserParams{
@@ -283,7 +288,7 @@ func (s *Service) GetInvoiceForUser(ctx context.Context, invoiceIDStr, userID st
 		UserID: userID,
 	})
 	if err != nil {
-		return nil, err
+		return nil, ErrInvoiceNotFound
 	}
 
 	var paidAt *time.Time
@@ -335,21 +340,19 @@ func (s *Service) HandlePaymentCallback(ctx context.Context, invoiceIDStr, statu
 		return fmt.Errorf("insufficient payment: got %d zatoshis, expected %d", accumulatedZatoshis, row.AmountZatoshis)
 	}
 
-	// If payment complete, grant entitlement
+	// Update DB status first to prevent re-processing on retry
 	if status == "paid" {
+		if err := s.queries.UpdateZcashInvoiceToPaid(ctx, invoiceID); err != nil {
+			return fmt.Errorf("failed to update invoice status: %w", err)
+		}
+		// Grant entitlement after DB update (upsert is idempotent if retry needed)
 		if err := s.grantEntitlement(ctx, row); err != nil {
 			return fmt.Errorf("failed to grant entitlement: %w", err)
 		}
-	}
-
-	// Update local DB
-	if status == "processing" {
-		err = s.queries.UpdateZcashInvoiceToProcessing(ctx, invoiceID)
-	} else {
-		err = s.queries.UpdateZcashInvoiceToPaid(ctx, invoiceID)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to update invoice status: %w", err)
+	} else if status == "processing" {
+		if err := s.queries.UpdateZcashInvoiceToProcessing(ctx, invoiceID); err != nil {
+			return fmt.Errorf("failed to update invoice status: %w", err)
+		}
 	}
 
 	// Update Firestore
