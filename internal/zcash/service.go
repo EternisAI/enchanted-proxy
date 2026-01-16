@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -174,11 +175,11 @@ func (s *Service) GetZecPriceUSD(ctx context.Context) (float64, error) {
 	// Kraken uses X-prefixed asset names (XZEC for Zcash)
 	tickerData, ok := result.Result["XZECZUSD"]
 	if !ok {
-		return 0, fmt.Errorf("XZECZUSD pair not found in kraken response")
+		return 0, errors.New("XZECZUSD pair not found in kraken response")
 	}
 
 	if len(tickerData.LastTrade) == 0 {
-		return 0, fmt.Errorf("no last trade data in kraken response")
+		return 0, errors.New("no last trade data in kraken response")
 	}
 
 	price, err := strconv.ParseFloat(tickerData.LastTrade[0], 64)
