@@ -390,8 +390,10 @@ func (s *Service) grantEntitlement(ctx context.Context, invoice pgdb.ZcashInvoic
 		default:
 			duration = 30 * 24 * time.Hour
 		}
+		// Use invoice.CreatedAt as base for stable expiration calculation
+		// This prevents race conditions where duplicate callbacks would calculate different expirations
 		expiresAt = sql.NullTime{
-			Time:  time.Now().Add(duration),
+			Time:  invoice.CreatedAt.Add(duration),
 			Valid: true,
 		}
 	}
