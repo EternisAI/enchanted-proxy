@@ -759,6 +759,10 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 	originalBody := resp.Body
 	resp.Body = pr
 
+	// Copy gin.Context for safe use in goroutine (Gin recycles contexts after handler returns)
+	cCopy := c.Copy()
+	clientCtx := c.Request.Context()
+
 	go func() {
 		defer pw.Close()           //nolint:errcheck
 		defer originalBody.Close() //nolint:errcheck
@@ -768,7 +772,7 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 				log.Error("panic in streaming response handler",
 					slog.Any("panic", r),
 					slog.String("target_url", resp.Request.URL.String()),
-					slog.String("provider", request_tracking.GetProviderFromBaseURL(c.GetHeader("X-BASE-URL"))),
+					slog.String("provider", request_tracking.GetProviderFromBaseURL(cCopy.GetHeader("X-BASE-URL"))),
 				)
 			}
 		}()
@@ -792,21 +796,19 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 					slog.String("reason", "client_disconnect_or_missing_usage_chunk"))
 			}
 
-			logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, nil, c.Request.Context())
+			logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, nil, clientCtx)
 
 			// Log with multiplier if provider is available
 			if provider != nil {
-				logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
+				logRequestToDatabaseWithProvider(cCopy, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
 			} else {
-				logRequestToDatabase(c, trackingService, model, tokenUsage)
+				logRequestToDatabase(cCopy, trackingService, model, tokenUsage)
 			}
 
 			// Save message to Firestore asynchronously
 			isError := resp.StatusCode >= 400
-			saveMessageAsync(c, messageService, fullContent.String(), isError)
+			saveMessageAsync(cCopy, messageService, fullContent.String(), isError)
 		}()
-
-		clientCtx := c.Request.Context()
 		clientDisconnected := false
 
 		for scanner.Scan() {
