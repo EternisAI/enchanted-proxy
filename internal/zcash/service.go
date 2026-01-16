@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -210,9 +211,9 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 		return nil, fmt.Errorf("failed to get ZEC price: %w", err)
 	}
 
-	// Calculate amounts
+	// Calculate amounts (round up to avoid underpayment)
 	zecAmount := product.PriceUSD / zecPriceUSD
-	zatAmount := int64(zecAmount * 100_000_000)
+	zatAmount := int64(math.Ceil(zecAmount * 100_000_000))
 
 	// Generate invoice ID
 	invoiceID := uuid.New()
@@ -288,7 +289,10 @@ func (s *Service) GetInvoiceForUser(ctx context.Context, invoiceIDStr, userID st
 		UserID: userID,
 	})
 	if err != nil {
-		return nil, ErrInvoiceNotFound
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrInvoiceNotFound
+		}
+		return nil, err
 	}
 
 	var paidAt *time.Time
@@ -321,7 +325,10 @@ func (s *Service) HandlePaymentCallback(ctx context.Context, invoiceIDStr, statu
 	// Get invoice from local DB
 	row, err := s.queries.GetZcashInvoice(ctx, invoiceID)
 	if err != nil {
-		return fmt.Errorf("invoice not found: %w", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvoiceNotFound
+		}
+		return err
 	}
 
 	// Idempotency: if already paid, just return success
