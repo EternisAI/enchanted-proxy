@@ -51,36 +51,49 @@ func (w *ExpiryWorker) Run(ctx context.Context) {
 }
 
 func (w *ExpiryWorker) expireInvoices(ctx context.Context) {
-	invoices, err := w.queries.GetExpiredPendingInvoices(ctx, w.batchSize)
-	if err != nil {
-		w.logger.Error("failed to get expired invoices", "error", err.Error())
-		return
-	}
-
-	if len(invoices) == 0 {
-		return
-	}
-
-	w.logger.Info("expiring old invoices", "count", len(invoices))
-
-	for _, inv := range invoices {
-		// Update DB
-		if err := w.queries.UpdateZcashInvoiceToExpired(ctx, inv.ID); err != nil {
-			w.logger.Error("failed to expire invoice", "error", err.Error(), "invoice_id", inv.ID.String())
-			continue
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
 		}
 
-		// Update Firestore
-		if w.firestoreClient != nil {
-			_, err := w.firestoreClient.Collection("zcash_invoices").Doc(inv.ID.String()).Update(ctx, []firestore.Update{
-				{Path: "status", Value: "expired"},
-				{Path: "updated_at", Value: time.Now()},
-			})
-			if err != nil {
-				w.logger.Error("failed to update Firestore for expired invoice", "error", err.Error(), "invoice_id", inv.ID.String())
+		invoices, err := w.queries.GetExpiredPendingInvoices(ctx, w.batchSize)
+		if err != nil {
+			w.logger.Error("failed to get expired invoices", "error", err.Error())
+			return
+		}
+
+		if len(invoices) == 0 {
+			return
+		}
+
+		w.logger.Info("expiring old invoices", "count", len(invoices))
+
+		for _, inv := range invoices {
+			// Update DB
+			if err := w.queries.UpdateZcashInvoiceToExpired(ctx, inv.ID); err != nil {
+				w.logger.Error("failed to expire invoice", "error", err.Error(), "invoice_id", inv.ID.String())
+				continue
 			}
+
+			// Update Firestore
+			if w.firestoreClient != nil {
+				_, err := w.firestoreClient.Collection("zcash_invoices").Doc(inv.ID.String()).Update(ctx, []firestore.Update{
+					{Path: "status", Value: "expired"},
+					{Path: "updated_at", Value: firestore.ServerTimestamp},
+				})
+				if err != nil {
+					w.logger.Error("failed to update Firestore for expired invoice", "error", err.Error(), "invoice_id", inv.ID.String())
+				}
+			}
+
+			w.logger.Info("invoice expired", "invoice_id", inv.ID.String(), "user_id", inv.UserID)
 		}
 
-		w.logger.Info("invoice expired", "invoice_id", inv.ID.String(), "user_id", inv.UserID)
+		// If we got fewer than batch size, we're done
+		if int32(len(invoices)) < w.batchSize {
+			return
+		}
 	}
 }

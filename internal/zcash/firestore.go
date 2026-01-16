@@ -38,13 +38,12 @@ func (s *Service) UpdateInvoiceStatusInFirestore(ctx context.Context, invoiceID,
 	if s.firestoreClient == nil {
 		return nil
 	}
-	now := time.Now()
 	updates := []firestore.Update{
 		{Path: "status", Value: status},
-		{Path: "updated_at", Value: now},
+		{Path: "updated_at", Value: firestore.ServerTimestamp},
 	}
 	if status == "paid" {
-		updates = append(updates, firestore.Update{Path: "paid_at", Value: now})
+		updates = append(updates, firestore.Update{Path: "paid_at", Value: firestore.ServerTimestamp})
 	}
 	_, err := s.firestoreClient.Collection("zcash_invoices").Doc(invoiceID).Update(ctx, updates)
 	return err
