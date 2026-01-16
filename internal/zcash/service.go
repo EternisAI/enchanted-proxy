@@ -76,6 +76,7 @@ type Invoice struct {
 	Status           string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	PaidAt           *time.Time
 }
 
 // Product represents a purchasable product.
@@ -285,6 +286,11 @@ func (s *Service) GetInvoiceForUser(ctx context.Context, invoiceIDStr, userID st
 		return nil, err
 	}
 
+	var paidAt *time.Time
+	if row.PaidAt.Valid {
+		paidAt = &row.PaidAt.Time
+	}
+
 	return &Invoice{
 		ID:               row.ID,
 		UserID:           row.UserID,
@@ -296,6 +302,7 @@ func (s *Service) GetInvoiceForUser(ctx context.Context, invoiceIDStr, userID st
 		Status:           row.Status,
 		CreatedAt:        row.CreatedAt,
 		UpdatedAt:        row.UpdatedAt,
+		PaidAt:           paidAt,
 	}, nil
 }
 
