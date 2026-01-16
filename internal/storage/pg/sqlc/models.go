@@ -7,6 +7,8 @@ package pgdb
 import (
 	"database/sql"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type DeepResearchMessage struct {
@@ -131,4 +133,18 @@ type UserTokenUsageDaily struct {
 	TotalCompletionTokens int64     `json:"totalCompletionTokens"`
 	TotalTokensUsed       int64     `json:"totalTokensUsed"`
 	TotalPlanTokens       int64     `json:"totalPlanTokens"`
+}
+
+type ZcashInvoice struct {
+	ID               uuid.UUID    `json:"id"`
+	UserID           string       `json:"userId"`
+	ProductID        string       `json:"productId"`
+	AmountZatoshis   int64        `json:"amountZatoshis"`
+	ZecAmount        float64      `json:"zecAmount"`
+	PriceUsd         float64      `json:"priceUsd"`
+	ReceivingAddress string       `json:"receivingAddress"`
+	Status           string       `json:"status"`
+	CreatedAt        time.Time    `json:"createdAt"`
+	UpdatedAt        time.Time    `json:"updatedAt"`
+	PaidAt           sql.NullTime `json:"paidAt"`
 }
