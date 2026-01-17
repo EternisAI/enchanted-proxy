@@ -347,14 +347,17 @@ func (s *Service) HandlePaymentCallback(ctx context.Context, invoiceIDStr, statu
 		return fmt.Errorf("insufficient payment: got %d zatoshis, expected %d", accumulatedZatoshis, row.AmountZatoshis)
 	}
 
-	// Update DB status first to prevent re-processing on retry
+	// For paid status: grant entitlement first, then mark invoice as paid.
+	// This ordering ensures retries work correctly - if grantEntitlement succeeds
+	// but UpdateZcashInvoiceToPaid fails, the retry will re-grant (idempotent upsert)
+	// and then mark as paid. The invoice only reaches "paid" status after entitlement
+	// is granted, so the idempotency check above is safe.
 	if status == "paid" {
-		if err := s.queries.UpdateZcashInvoiceToPaid(ctx, invoiceID); err != nil {
-			return fmt.Errorf("failed to update invoice status: %w", err)
-		}
-		// Grant entitlement after DB update (upsert is idempotent if retry needed)
 		if err := s.grantEntitlement(ctx, row); err != nil {
 			return fmt.Errorf("failed to grant entitlement: %w", err)
+		}
+		if err := s.queries.UpdateZcashInvoiceToPaid(ctx, invoiceID); err != nil {
+			return fmt.Errorf("failed to update invoice status: %w", err)
 		}
 	} else if status == "processing" {
 		if err := s.queries.UpdateZcashInvoiceToProcessing(ctx, invoiceID); err != nil {
