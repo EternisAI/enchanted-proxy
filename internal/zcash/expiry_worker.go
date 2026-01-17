@@ -71,13 +71,7 @@ func (w *ExpiryWorker) expireInvoices(ctx context.Context) {
 		w.logger.Info("expiring old invoices", "count", len(invoices))
 
 		for _, inv := range invoices {
-			// Update DB
-			if err := w.queries.UpdateZcashInvoiceToExpired(ctx, inv.ID); err != nil {
-				w.logger.Error("failed to expire invoice", "error", err.Error(), "invoice_id", inv.ID.String())
-				continue
-			}
-
-			// Update Firestore
+			// Update Firestore first - if this fails, skip DB update so we retry next cycle
 			if w.firestoreClient != nil {
 				_, err := w.firestoreClient.Collection("zcash_invoices").Doc(inv.ID.String()).Update(ctx, []firestore.Update{
 					{Path: "status", Value: "expired"},
@@ -85,7 +79,15 @@ func (w *ExpiryWorker) expireInvoices(ctx context.Context) {
 				})
 				if err != nil {
 					w.logger.Error("failed to update Firestore for expired invoice", "error", err.Error(), "invoice_id", inv.ID.String())
+					continue
 				}
+			}
+
+			// Update DB only after Firestore succeeds
+			if err := w.queries.UpdateZcashInvoiceToExpired(ctx, inv.ID); err != nil {
+				w.logger.Error("failed to expire invoice in DB", "error", err.Error(), "invoice_id", inv.ID.String())
+				// Firestore shows "expired" but DB still "pending" - will retry next cycle
+				continue
 			}
 
 			w.logger.Info("invoice expired", "invoice_id", inv.ID.String(), "user_id", inv.UserID)
