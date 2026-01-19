@@ -111,7 +111,7 @@ static_resources:
           access_log_options:
             flush_access_log_on_connected: true
   # internal inference endpoints
-  - name: internal_glm-46
+  - name: internal_glm-47
     internal_listener: {}
     filter_chains:
     - filters:
@@ -121,7 +121,7 @@ static_resources:
           stat_prefix: tcp_proxy
           cluster: enclaver_odyn_egress
           tunneling_config:
-            hostname: glm-46.llm.eternisai.net:443
+            hostname: glm-47.llm.eternisai.net:443
           access_log: *access_log_tcp
           access_log_options:
             flush_access_log_on_connected: true
@@ -153,7 +153,7 @@ static_resources:
           access_log: *access_log_tcp
           access_log_options:
             flush_access_log_on_connected: true
-  - name: egress_glm-46
+  - name: egress_glm-47
     address:
       socket_address:
         address: 0.0.0.0
@@ -229,7 +229,7 @@ static_resources:
                 match:
                   prefix: /
                 route:
-                  cluster: internal_glm-46
+                  cluster: internal_glm-47
                   timeout: 0s
                   retry_policy:
                     retry_on: gateway-error
@@ -455,20 +455,20 @@ static_resources:
                 address: 127.0.0.1
                 port_value: 9901
   # internal endpoints
-  - name: internal_glm-46
+  - name: internal_glm-47
     load_assignment:
-      cluster_name: internal_glm-46
+      cluster_name: internal_glm-47
       endpoints:
       - lb_endpoints:
         - endpoint:
             address:
               envoy_internal_address:
-                server_listener_name: internal_glm-46
+                server_listener_name: internal_glm-47
     transport_socket:
       name: envoy.transport_sockets.tls
       typed_config:
         '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
-        sni: glm-46.llm.eternisai.net
+        sni: glm-47.llm.eternisai.net
         common_tls_context:
           validation_context:
             trusted_ca:
