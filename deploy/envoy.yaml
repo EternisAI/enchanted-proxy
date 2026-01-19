@@ -470,6 +470,14 @@ static_resources:
         '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
         sni: glm-47.llm.eternisai.net
         common_tls_context:
+          alpn_protocols: ["h2", "http/1.1"]
+          tls_params: &tls_params
+            tls_minimum_protocol_version: TLSv1_3
+            tls_maximum_protocol_version: TLSv1_3
+            ecdh_curves:
+            - X25519
+            - P-256
+            - P-384
           validation_context:
             trusted_ca:
               filename: /etc/ssl/certs/eternis/llm-ca.pem
@@ -498,13 +506,7 @@ static_resources:
         common_tls_context:
           # Negotiate HTTP/2 via ALPN
           alpn_protocols: ["h2", "http/1.1"]
-          tls_params:
-            tls_minimum_protocol_version: TLSv1_3
-            tls_maximum_protocol_version: TLSv1_3
-            ecdh_curves:
-            - X25519
-            - P-256
-            - P-384
+          tls_params: *tls_params
           validation_context:
             trusted_ca:
               filename: /etc/ssl/certs/ca-certificates.crt
