@@ -7,6 +7,8 @@ package pgdb
 import (
 	"context"
 	"database/sql"
+
+	"github.com/google/uuid"
 )
 
 type Querier interface {
@@ -22,6 +24,7 @@ type Querier interface {
 	CreateRequestLogWithPlanTokens(ctx context.Context, arg CreateRequestLogWithPlanTokensParams) error
 	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
 	CreateTelegramChat(ctx context.Context, arg CreateTelegramChatParams) (TelegramChat, error)
+	CreateZcashInvoice(ctx context.Context, arg CreateZcashInvoiceParams) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	DeleteTask(ctx context.Context, arg DeleteTaskParams) (sql.Result, error)
 	DeleteTelegramChat(ctx context.Context, chatID int64) error
@@ -30,6 +33,7 @@ type Querier interface {
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
 	GetDeepResearchRunCountForChat(ctx context.Context, arg GetDeepResearchRunCountForChatParams) (int64, error)
 	GetEntitlement(ctx context.Context, userID string) (GetEntitlementRow, error)
+	GetExpiredPendingInvoices(ctx context.Context, limit int32) ([]ZcashInvoice, error)
 	GetInviteCodeByCodeHash(ctx context.Context, codeHash string) (InviteCode, error)
 	GetInviteCodeByID(ctx context.Context, id int64) (InviteCode, error)
 	GetProblemReportByID(ctx context.Context, id string) (ProblemReport, error)
@@ -45,6 +49,9 @@ type Querier interface {
 	GetUnsentMessages(ctx context.Context, sessionID string) ([]DeepResearchMessage, error)
 	GetUserDeepResearchRunsLifetime(ctx context.Context, userID string) (int64, error)
 	GetUserDeepResearchRunsToday(ctx context.Context, userID string) (int64, error)
+	// Returns plan tokens used today on the fallback model.
+	// Used for tracking fallback quota when normal quota is exceeded.
+	GetUserFallbackPlanTokensToday(ctx context.Context, arg GetUserFallbackPlanTokensTodayParams) (int64, error)
 	GetUserLifetimeTokenUsage(ctx context.Context, userID string) (int64, error)
 	// Note: Queries request_logs directly (not materialized view) because monthly buckets aren't pre-aggregated.
 	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
@@ -61,6 +68,9 @@ type Querier interface {
 	GetUserTokenUsageInLastDay(ctx context.Context, userID string) (int64, error)
 	GetUserTokenUsageInTimeWindow(ctx context.Context, arg GetUserTokenUsageInTimeWindowParams) (int64, error)
 	GetUserTokenUsageToday(ctx context.Context, userID string) (int64, error)
+	GetZcashInvoice(ctx context.Context, id uuid.UUID) (ZcashInvoice, error)
+	GetZcashInvoiceForUser(ctx context.Context, arg GetZcashInvoiceForUserParams) (ZcashInvoice, error)
+	GetZcashInvoicesByUserAndStatus(ctx context.Context, arg GetZcashInvoicesByUserAndStatusParams) ([]ZcashInvoice, error)
 	HasActiveDeepResearchRun(ctx context.Context, userID string) (bool, error)
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
 	MarkAllMessagesAsSent(ctx context.Context, sessionID string) error
@@ -73,6 +83,10 @@ type Querier interface {
 	UpdateInviteCodeActive(ctx context.Context, arg UpdateInviteCodeActiveParams) error
 	UpdateInviteCodeUsage(ctx context.Context, arg UpdateInviteCodeUsageParams) error
 	UpdateTaskStatus(ctx context.Context, arg UpdateTaskStatusParams) error
+	UpdateZcashInvoiceStatus(ctx context.Context, arg UpdateZcashInvoiceStatusParams) error
+	UpdateZcashInvoiceToExpired(ctx context.Context, id uuid.UUID) error
+	UpdateZcashInvoiceToPaid(ctx context.Context, id uuid.UUID) error
+	UpdateZcashInvoiceToProcessing(ctx context.Context, id uuid.UUID) error
 	UpsertEntitlement(ctx context.Context, arg UpsertEntitlementParams) error
 	UpsertEntitlementWithTier(ctx context.Context, arg UpsertEntitlementWithTierParams) error
 }

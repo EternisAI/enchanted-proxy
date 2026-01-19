@@ -236,7 +236,6 @@ func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSear
 				return
 			}
 
-			// Set headers
 			httpReq.Header.Set("Content-Type", "application/json")
 			httpReq.Header.Set("x-api-key", s.exaAPIKey)
 

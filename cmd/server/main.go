@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/extension"
@@ -142,7 +143,13 @@ func main() {
 	requestTrackingService := request_tracking.NewService(db.Queries, logger.WithComponent("request_tracking"))
 	iapService := iap.NewService(db.Queries)
 	stripeService := stripe.NewService(db.Queries, logger.WithComponent("stripe"))
-	zcashService := zcash.NewService(db.Queries, logger.WithComponent("zcash"))
+
+	// Initialize zcash service with Firestore client for real-time updates
+	var zcashFirestoreClient *firestore.Client
+	if firebaseClient != nil {
+		zcashFirestoreClient = firebaseClient.GetFirestoreClient()
+	}
+	zcashService := zcash.NewService(db.Queries, zcashFirestoreClient, logger.WithComponent("zcash"))
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
 
@@ -281,6 +288,16 @@ func main() {
 	} else {
 		log.Info("background polling disabled (requires message storage and BACKGROUND_POLLING_ENABLED=true)")
 	}
+
+	// Initialize ZCash invoice expiry worker
+	expiryWorkerCtx, expiryWorkerCancel := context.WithCancel(context.Background())
+	zcashExpiryWorker := zcash.NewExpiryWorker(db.Queries, zcashFirestoreClient, logger.WithComponent("zcash-expiry"))
+	go zcashExpiryWorker.Run(expiryWorkerCtx)
+	log.Info("zcash invoice expiry worker started")
+	defer func() {
+		log.Info("stopping zcash invoice expiry worker")
+		expiryWorkerCancel()
+	}()
 
 	// Initialize model router for automatic provider routing
 	modelRouter := routing.NewModelRouter(config.AppConfig, logger.WithComponent("routing"))
@@ -561,6 +578,9 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	// Stripe webhook endpoint (no auth, signature verified)
 	router.POST("/stripe/webhook", input.stripeHandler.HandleWebhook)
 
+	// WARNING: ZCash callback endpoint has no auth - MUST be protected by network policy in production
+	router.POST("/internal/zcash/callback", input.zcashHandler.HandleCallback)
+
 	// All routes use Firebase/JWT auth
 	router.Use(input.firebaseAuth.RequireAuth())
 
@@ -617,8 +637,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		{
 			zcashGroup.GET("/products", input.zcashHandler.GetProducts)
 			zcashGroup.POST("/invoice", input.zcashHandler.CreateInvoice)
-			zcashGroup.GET("/invoice/:invoiceId", input.zcashHandler.GetInvoiceStatus)
-			zcashGroup.POST("/confirm", input.zcashHandler.ConfirmPayment)
+			zcashGroup.GET("/invoice/:invoiceId", input.zcashHandler.GetInvoice)
 		}
 
 		// Search API routes (protected)
@@ -666,7 +685,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 
 	// Protected proxy routes
 	proxyGroup := router.Group("/")
-	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger))
+	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger, input.modelRouter))
 	{
 		// AI service endpoints
 		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))

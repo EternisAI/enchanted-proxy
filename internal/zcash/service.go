@@ -3,14 +3,18 @@ package zcash
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
+
+	"cloud.google.com/go/firestore"
+	"github.com/google/uuid"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -18,53 +22,70 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
 )
 
+var (
+	ErrInvalidInvoiceID = errors.New("invalid invoice ID")
+	ErrInvoiceNotFound  = errors.New("invoice not found")
+)
+
 const (
-	zcashBackendURL = "http://127.0.0.1:20002"
-	krakenAPIURL    = "https://api.kraken.com/0/public/Ticker?pair=ZECUSD"
+	krakenAPIURL = "https://api.kraken.com/0/public/Ticker?pair=ZECUSD"
 
-	ProductMonthlyPro   = "monthly_pro"
-	ProductLifetimePlus = "lifetime_plus"
+	ProductWeeklyPro    = "silo.pro.weekly"
+	ProductMonthlyPro   = "silo.pro.monthly"
+	ProductYearlyPro    = "silo.pro.yearly"
+	ProductLifetimePlus = "silo.plus.lifetime"
 
-	PriceMonthlyProUSD   = 20
+	PriceWeeklyProUSD    = 4.99
+	PriceMonthlyProUSD   = 19.99
+	PriceYearlyProUSD    = 199.99
 	PriceLifetimePlusUSD = 500
 )
 
 type Service struct {
-	queries pgdb.Querier
-	logger  *logger.Logger
-	client  *http.Client
+	queries         pgdb.Querier
+	logger          *logger.Logger
+	httpClient      *http.Client
+	firestoreClient *firestore.Client
 }
 
-func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
+func NewService(queries pgdb.Querier, firestoreClient *firestore.Client, logger *logger.Logger) *Service {
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+	}
+
+	if config.AppConfig.ZCashBackendSkipTLSVerify {
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		}
+		logger.Warn("zcash backend TLS verification disabled (dev only)")
+	}
+
 	return &Service{
-		queries: queries,
-		logger:  logger,
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		queries:         queries,
+		logger:          logger,
+		httpClient:      client,
+		firestoreClient: firestoreClient,
 	}
 }
 
-type CreateInvoiceRequest struct {
-	InvoiceID   string `json:"invoice_id,omitempty"`
-	ExpectedZat int64  `json:"expected_zat,omitempty"`
+// Invoice represents an invoice stored in the local database.
+type Invoice struct {
+	ID               uuid.UUID
+	UserID           string
+	ProductID        string
+	AmountZatoshis   int64
+	ZecAmount        float64
+	PriceUSD         float64
+	ReceivingAddress string
+	Status           string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	PaidAt           *time.Time
 }
 
-type CreateInvoiceResponse struct {
-	InvoiceID string `json:"invoice_id"`
-	Address   string `json:"address"`
-}
-
-type InvoiceStatusResponse struct {
-	InvoiceID   string  `json:"invoice_id"`
-	Address     string  `json:"address"`
-	ExpectedZat *int64  `json:"expected_zat,omitempty"`
-	Status      string  `json:"status"` // "paid" | "unpaid"
-	PaidZat     *int64  `json:"paid_zat,omitempty"`
-	PaidTxID    *string `json:"paid_txid,omitempty"`
-	PaidHeight  *int32  `json:"paid_height,omitempty"`
-}
-
+// Product represents a purchasable product.
 type Product struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
@@ -81,18 +102,34 @@ func (s *Service) GetProducts() []Product {
 	}
 	return []Product{
 		{
+			ID:          ProductWeeklyPro,
+			Name:        "Pro Weekly",
+			Description: "Pro subscription for 1 week",
+			PriceUSD:    PriceWeeklyProUSD * multiplier,
+			Tier:        string(tiers.TierPro),
+			IsLifetime:  false,
+		},
+		{
 			ID:          ProductMonthlyPro,
 			Name:        "Pro Monthly",
 			Description: "Pro subscription for 1 month",
-			PriceUSD:    float64(PriceMonthlyProUSD) * multiplier,
+			PriceUSD:    PriceMonthlyProUSD * multiplier,
+			Tier:        string(tiers.TierPro),
+			IsLifetime:  false,
+		},
+		{
+			ID:          ProductYearlyPro,
+			Name:        "Pro Yearly",
+			Description: "Pro subscription for 1 year",
+			PriceUSD:    PriceYearlyProUSD * multiplier,
 			Tier:        string(tiers.TierPro),
 			IsLifetime:  false,
 		},
 		{
 			ID:          ProductLifetimePlus,
-			Name:        "Lifetime Plus",
+			Name:        "Plus Lifetime",
 			Description: "Plus subscription forever",
-			PriceUSD:    float64(PriceLifetimePlusUSD) * multiplier,
+			PriceUSD:    PriceLifetimePlusUSD * multiplier,
 			Tier:        string(tiers.TierPlus),
 			IsLifetime:  true,
 		},
@@ -123,7 +160,7 @@ func (s *Service) GetZecPriceUSD(ctx context.Context) (float64, error) {
 		return 0, fmt.Errorf("failed to create kraken request: %w", err)
 	}
 
-	resp, err := s.client.Do(req)
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("failed to call kraken API: %w", err)
 	}
@@ -145,11 +182,11 @@ func (s *Service) GetZecPriceUSD(ctx context.Context) (float64, error) {
 	// Kraken uses X-prefixed asset names (XZEC for Zcash)
 	tickerData, ok := result.Result["XZECZUSD"]
 	if !ok {
-		return 0, fmt.Errorf("XZECZUSD pair not found in kraken response")
+		return 0, errors.New("XZECZUSD pair not found in kraken response")
 	}
 
 	if len(tickerData.LastTrade) == 0 {
-		return 0, fmt.Errorf("no last trade data in kraken response")
+		return 0, errors.New("no last trade data in kraken response")
 	}
 
 	price, err := strconv.ParseFloat(tickerData.LastTrade[0], 64)
@@ -160,120 +197,192 @@ func (s *Service) GetZecPriceUSD(ctx context.Context) (float64, error) {
 	return price, nil
 }
 
-func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (*CreateInvoiceResponse, float64, error) {
-	apiKey := config.AppConfig.ZCashBackendAPIKey
-	if apiKey == "" {
-		return nil, 0, errors.New("zcash backend API key not configured")
-	}
-
+// CreateInvoice creates a new invoice, stores it locally, writes to Firestore,
+// and calls the zcash-backend to get a receiving address.
+func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (*Invoice, error) {
 	product := s.GetProduct(productID)
 	if product == nil {
-		return nil, 0, fmt.Errorf("unknown product: %s", productID)
+		return nil, fmt.Errorf("unknown product: %s", productID)
 	}
 
+	// Get ZEC price from Kraken
 	zecPriceUSD, err := s.GetZecPriceUSD(ctx)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to get ZEC price: %w", err)
+		return nil, fmt.Errorf("failed to get ZEC price: %w", err)
 	}
 
-	priceUSD := float64(product.PriceUSD)
+	// Calculate amounts (round up to avoid underpayment)
+	zecAmount := product.PriceUSD / zecPriceUSD
+	zatAmount := int64(math.Ceil(zecAmount * 100_000_000))
 
-	zecAmount := priceUSD / zecPriceUSD
-	zatAmount := int64(zecAmount * 100_000_000)
+	// Generate invoice ID
+	invoiceID := uuid.New()
 
-	invoiceID := fmt.Sprintf("%s__%s__%d", userID, productID, time.Now().Unix())
-
-	reqBody := CreateInvoiceRequest{
-		InvoiceID:   invoiceID,
-		ExpectedZat: zatAmount,
-	}
-
-	jsonBody, err := json.Marshal(reqBody)
+	// Call zcash-backend to create invoice and get address
+	address, err := s.createBackendInvoice(ctx, invoiceID.String(), userID, productID, zatAmount)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("failed to create backend invoice: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", zcashBackendURL+"/invoices", bytes.NewReader(jsonBody))
+	// Store in local database
+	err = s.queries.CreateZcashInvoice(ctx, pgdb.CreateZcashInvoiceParams{
+		ID:               invoiceID,
+		UserID:           userID,
+		ProductID:        productID,
+		AmountZatoshis:   zatAmount,
+		ZecAmount:        zecAmount,
+		PriceUsd:         product.PriceUSD,
+		ReceivingAddress: address,
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to call zcash backend: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("zcash backend returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("failed to store invoice: %w", err)
 	}
 
-	var result CreateInvoiceResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, 0, fmt.Errorf("failed to decode response: %w", err)
+	// Write to Firestore for real-time client updates
+	now := time.Now()
+	firestoreData := &ZcashInvoiceFirestore{
+		UserID:           userID,
+		ProductID:        productID,
+		AmountZatoshis:   zatAmount,
+		ZecAmount:        zecAmount,
+		PriceUSD:         product.PriceUSD,
+		ReceivingAddress: address,
+		Status:           "pending",
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := s.WriteInvoiceToFirestore(ctx, invoiceID.String(), firestoreData); err != nil {
+		s.logger.Error("failed to write invoice to Firestore", "error", err.Error(), "invoice_id", invoiceID.String())
 	}
 
-	return &result, zecPriceUSD, nil
+	s.logger.Info("zcash invoice created",
+		"invoice_id", invoiceID.String(),
+		"user_id", userID,
+		"product_id", productID,
+		"zec_amount", zecAmount,
+		"zat_amount", zatAmount,
+	)
+
+	return &Invoice{
+		ID:               invoiceID,
+		UserID:           userID,
+		ProductID:        productID,
+		AmountZatoshis:   zatAmount,
+		ZecAmount:        zecAmount,
+		PriceUSD:         product.PriceUSD,
+		ReceivingAddress: address,
+		Status:           "pending",
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}, nil
 }
 
-func (s *Service) GetInvoiceStatus(ctx context.Context, invoiceID string) (*InvoiceStatusResponse, error) {
-	apiKey := config.AppConfig.ZCashBackendAPIKey
-	if apiKey == "" {
-		return nil, errors.New("zcash backend API key not configured")
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "GET", zcashBackendURL+"/invoices/"+invoiceID, nil)
+// GetInvoiceForUser retrieves an invoice, verifying it belongs to the user.
+func (s *Service) GetInvoiceForUser(ctx context.Context, invoiceIDStr, userID string) (*Invoice, error) {
+	invoiceID, err := uuid.Parse(invoiceIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, ErrInvalidInvoiceID
 	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	resp, err := s.client.Do(req)
+	row, err := s.queries.GetZcashInvoiceForUser(ctx, pgdb.GetZcashInvoiceForUserParams{
+		ID:     invoiceID,
+		UserID: userID,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to call zcash backend: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("invoice not found")
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrInvoiceNotFound
+		}
+		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("zcash backend returned status %d", resp.StatusCode)
+	var paidAt *time.Time
+	if row.PaidAt.Valid {
+		paidAt = &row.PaidAt.Time
 	}
 
-	var result InvoiceStatusResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &result, nil
+	return &Invoice{
+		ID:               row.ID,
+		UserID:           row.UserID,
+		ProductID:        row.ProductID,
+		AmountZatoshis:   row.AmountZatoshis,
+		ZecAmount:        row.ZecAmount,
+		PriceUSD:         row.PriceUsd,
+		ReceivingAddress: row.ReceivingAddress,
+		Status:           row.Status,
+		CreatedAt:        row.CreatedAt,
+		UpdatedAt:        row.UpdatedAt,
+		PaidAt:           paidAt,
+	}, nil
 }
 
-func (s *Service) ConfirmPayment(ctx context.Context, userID, invoiceID string) error {
-	status, err := s.GetInvoiceStatus(ctx, invoiceID)
+// HandlePaymentCallback processes a callback from zcash-payment-backend.
+func (s *Service) HandlePaymentCallback(ctx context.Context, invoiceIDStr, status string, accumulatedZatoshis int64) error {
+	invoiceID, err := uuid.Parse(invoiceIDStr)
 	if err != nil {
-		return fmt.Errorf("failed to get invoice status: %w", err)
+		return fmt.Errorf("invalid invoice ID: %w", err)
 	}
 
-	if status.Status != "paid" {
-		return fmt.Errorf("invoice not paid yet")
+	// Get invoice from local DB
+	row, err := s.queries.GetZcashInvoice(ctx, invoiceID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvoiceNotFound
+		}
+		return err
 	}
 
-	parts := parseInvoiceID(invoiceID)
-	if parts == nil {
-		return fmt.Errorf("invalid invoice ID format")
+	// Idempotency: if already paid, just return success
+	if row.Status == "paid" {
+		s.logger.Debug("invoice already paid, ignoring callback", "invoice_id", invoiceIDStr)
+		return nil
 	}
 
-	if parts.userID != userID {
-		return fmt.Errorf("invoice does not belong to user")
+	// Validate status
+	if status != "processing" && status != "paid" {
+		return fmt.Errorf("invalid status: %s", status)
 	}
 
-	product := s.GetProduct(parts.productID)
+	// Validate payment amount before marking as paid
+	if status == "paid" && accumulatedZatoshis < row.AmountZatoshis {
+		return fmt.Errorf("insufficient payment: got %d zatoshis, expected %d", accumulatedZatoshis, row.AmountZatoshis)
+	}
+
+	// For paid status: grant entitlement first, then mark invoice as paid.
+	// This ordering ensures retries work correctly - if grantEntitlement succeeds
+	// but UpdateZcashInvoiceToPaid fails, the retry will re-grant (idempotent upsert)
+	// and then mark as paid. The invoice only reaches "paid" status after entitlement
+	// is granted, so the idempotency check above is safe.
+	if status == "paid" {
+		if err := s.grantEntitlement(ctx, row); err != nil {
+			return fmt.Errorf("failed to grant entitlement: %w", err)
+		}
+		if err := s.queries.UpdateZcashInvoiceToPaid(ctx, invoiceID); err != nil {
+			return fmt.Errorf("failed to update invoice status: %w", err)
+		}
+	} else if status == "processing" {
+		if err := s.queries.UpdateZcashInvoiceToProcessing(ctx, invoiceID); err != nil {
+			return fmt.Errorf("failed to update invoice status: %w", err)
+		}
+	}
+
+	// Update Firestore
+	if err := s.UpdateInvoiceStatusInFirestore(ctx, invoiceIDStr, status); err != nil {
+		s.logger.Error("failed to update Firestore", "error", err.Error(), "invoice_id", invoiceIDStr)
+	}
+
+	s.logger.Info("zcash payment callback processed",
+		"invoice_id", invoiceIDStr,
+		"status", status,
+		"accumulated_zatoshis", accumulatedZatoshis,
+	)
+
+	return nil
+}
+
+func (s *Service) grantEntitlement(ctx context.Context, invoice pgdb.ZcashInvoice) error {
+	product := s.GetProduct(invoice.ProductID)
 	if product == nil {
-		return fmt.Errorf("unknown product: %s", parts.productID)
+		return fmt.Errorf("unknown product: %s", invoice.ProductID)
 	}
 
 	var expiresAt sql.NullTime
@@ -283,48 +392,91 @@ func (s *Service) ConfirmPayment(ctx context.Context, userID, invoiceID string) 
 			Valid: true,
 		}
 	} else {
+		var duration time.Duration
+		switch product.ID {
+		case ProductWeeklyPro:
+			duration = 7 * 24 * time.Hour
+		case ProductMonthlyPro:
+			duration = 30 * 24 * time.Hour
+		case ProductYearlyPro:
+			duration = 365 * 24 * time.Hour
+		default:
+			duration = 30 * 24 * time.Hour
+		}
+		// Use invoice.CreatedAt as base for stable expiration calculation
+		// This prevents race conditions where duplicate callbacks would calculate different expirations
 		expiresAt = sql.NullTime{
-			Time:  time.Now().Add(30 * 24 * time.Hour),
+			Time:  invoice.CreatedAt.Add(duration),
 			Valid: true,
 		}
 	}
 
-	err = s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
-		UserID:                userID,
+	err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
+		UserID:                invoice.UserID,
 		SubscriptionTier:      product.Tier,
 		SubscriptionExpiresAt: expiresAt,
 		SubscriptionProvider:  "zcash",
 		StripeCustomerID:      nil,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to update entitlement: %w", err)
+		return err
 	}
 
-	s.logger.Info("zcash payment confirmed",
-		"user_id", userID,
-		"invoice_id", invoiceID,
-		"product_id", parts.productID,
+	s.logger.Info("entitlement granted",
+		"user_id", invoice.UserID,
+		"invoice_id", invoice.ID.String(),
 		"tier", product.Tier,
-		"is_lifetime", product.IsLifetime,
+		"expires_at", expiresAt.Time,
 	)
 
 	return nil
 }
 
-type invoiceParts struct {
-	userID    string
-	productID string
-	timestamp string
-}
+// createBackendInvoice calls zcash-backend to create invoice and get receiving address.
+func (s *Service) createBackendInvoice(ctx context.Context, invoiceID, userID, productID string, zatAmount int64) (string, error) {
+	backendURL := config.AppConfig.ZCashBackendURL + "/invoices"
+	apiKey := config.AppConfig.ZCashBackendAPIKey
 
-func parseInvoiceID(invoiceID string) *invoiceParts {
-	parts := strings.SplitN(invoiceID, "__", 3)
-	if len(parts) != 3 {
-		return nil
+	reqBody := map[string]any{
+		"id":              invoiceID,
+		"user_id":         userID,
+		"product_id":      productID,
+		"amount_zatoshis": zatAmount,
 	}
-	return &invoiceParts{
-		userID:    parts[0],
-		productID: parts[1],
-		timestamp: parts[2],
+
+	reqJSON, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", err
 	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", backendURL, bytes.NewBuffer(reqJSON))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("backend returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		ID               string `json:"id"`
+		ReceivingAddress string `json:"receiving_address"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	return result.ReceivingAddress, nil
 }

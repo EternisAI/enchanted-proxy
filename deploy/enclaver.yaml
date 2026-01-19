@@ -49,6 +49,10 @@ egress:
   # Internal API endpoints
   - 7697efc6.igw.ghostagent.org
   - glm-46.llm.eternisai.net
+  - glm-47.llm.eternisai.net
+  - server-dev.zcash-payment-backend.svc
+  - server-staging.zcash-payment-backend.svc
+  - server.zcash-payment-backend.svc
   - zcash.eternisai.net
   # Internal deepresearch API endpoint
   - flow-dev.dr-use1.ghostagent.org
@@ -95,7 +99,6 @@ env:
 - FALLBACK_PROMETHEUS_URL
 - FIREBASE_CRED_JSON
 - FIREBASE_PROJECT_ID
-- FREE_MONTHLY_PLAN_TOKENS
 - GIN_MODE
 - GOOGLE_CLIENT_ID
 - GOOGLE_CLIENT_SECRET
@@ -120,9 +123,9 @@ env:
 - OPENROUTER_MOBILE_API_KEY
 - PERPLEXITY_API_KEY
 - PORT
-- PRO_DAILY_PLAN_TOKENS
 - RATE_LIMIT_ENABLED
 - RATE_LIMIT_LOG_ONLY
+- RATE_LIMIT_SOFT_MULTIPLIER
 - REPLICATE_API_TOKEN
 - REQUEST_TRACKING_BUFFER_SIZE
 - REQUEST_TRACKING_TIMEOUT_SECONDS
@@ -142,6 +145,8 @@ env:
 - TWITTER_CLIENT_ID
 - VALIDATOR_TYPE
 - ZCASH_BACKEND_API_KEY
+- ZCASH_BACKEND_SKIP_TLS_VERIFY
+- ZCASH_BACKEND_URL
 - ZCASH_DEBUG_MULTIPLIER
 files:
 - /etc/ssl/certs/eternis/llm-ca.pem
