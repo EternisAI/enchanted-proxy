@@ -48,6 +48,7 @@ egress:
   - us-east-1.aws.api.temporal.io
   # Internal API endpoints
   - 7697efc6.igw.ghostagent.org
+  - glm-46.llm.eternisai.net
   - glm-47.llm.eternisai.net
   - server-dev.zcash-payment-backend.svc
   - server-staging.zcash-payment-backend.svc

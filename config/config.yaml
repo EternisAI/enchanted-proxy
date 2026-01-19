@@ -41,13 +41,39 @@ model_router:
     - name: Tinfoil
       model: llama3-3-70b
 
-  # GLM-4.6 - Free & Pro - via NEAR AI (0.6× multiplier)
+  # GLM-4.6 - Free & Pro - via local/our IPs, fallback to NEAR AI (0.6× multiplier)
   - name: zai-org/GLM-4.6
     aliases:
     - z-ai/glm-4.6
     - glm-4.6
     token_multiplier: 0.6
     providers:
+    - name: Eternis
+      base_url: http://127.0.0.1:20001/v1
+      fallback:
+        trigger:
+          # Trigger if any of the following conditions held true throughout the last 2-minute window:
+          # TTFT p95 > 1s, ITL p95 > 150ms, queue time p95 > 750ms, queue non-empty at least 75% of the time, KV cache > 85%
+          # Keep the traffic on fallback for at least 2m
+          dwell_time: 2m
+          query: >-
+            (min_over_time((((histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{model_name="zai-org/GLM-4.6"}[1m]))) > bool 1) and on() (sum(rate(vllm:time_to_first_token_seconds_bucket{model_name="zai-org/GLM-4.6", le="+Inf"}[1m])) > bool 0)) or on() vector(0))[2m:15s]) == 1)
+            or (min_over_time((((histogram_quantile(0.95, sum by (le) (rate(vllm:inter_token_latency_seconds_bucket{model_name="zai-org/GLM-4.6"}[1m]))) > bool 0.15) and on() (sum(rate(vllm:inter_token_latency_seconds_bucket{model_name="zai-org/GLM-4.6", le="+Inf"}[1m])) > bool 0)) or on() vector(0))[2m:15s]) == 1)
+            or (min_over_time((((histogram_quantile(0.95, sum by (le) (rate(vllm:request_queue_time_seconds_bucket{model_name="zai-org/GLM-4.6"}[1m]))) > bool 0.75) and on() (sum(rate(vllm:request_queue_time_seconds_bucket{model_name="zai-org/GLM-4.6", le="+Inf"}[1m])) > bool 0)) or on() vector(0))[2m:15s]) == 1)
+            or (avg_over_time((sum(vllm:num_requests_waiting{model_name="zai-org/GLM-4.6"}) >= bool 1)[2m:15s]) > 0.75)
+            or (min_over_time((max(vllm:kv_cache_usage_perc{model_name="zai-org/GLM-4.6"}))[2m:15s]) > 0.85)
+        # Recover if all of the following conditions held true throughout the last 5-minute window:
+        # TTFT p95 < 500ms, ITL p95 < 75ms, queue time p95 < 350ms, Queue non-empty at most 40% of the time, KV cache < 80%
+        # Treat missing data points as satisfying the conditions (when traffic is shifted away)
+        # Keep the traffic from fallback for at least 1m
+        recover:
+          dwell_time: 1m
+          query: >-
+            (min_over_time(((((sum(rate(vllm:time_to_first_token_seconds_bucket{model_name="zai-org/GLM-4.6", le="+Inf"}[1m])) == bool 0) + (histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{model_name="zai-org/GLM-4.6"}[1m]))) < bool 0.5)) >= bool 1) or on() vector(1))[5m:15s]) == 1)
+            and (min_over_time(((((sum(rate(vllm:inter_token_latency_seconds_bucket{model_name="zai-org/GLM-4.6", le="+Inf"}[1m])) == bool 0) + (histogram_quantile(0.95, sum by (le) (rate(vllm:inter_token_latency_seconds_bucket{model_name="zai-org/GLM-4.6"}[1m]))) < bool 0.075)) >= bool 1) or on() vector(1))[5m:15s]) == 1)
+            and (min_over_time(((((sum(rate(vllm:request_queue_time_seconds_bucket{model_name="zai-org/GLM-4.6", le="+Inf"}[1m])) == bool 0) + (histogram_quantile(0.95, sum by (le) (rate(vllm:request_queue_time_seconds_bucket{model_name="zai-org/GLM-4.6"}[1m]))) < bool 0.35)) >= bool 1) or on() vector(1))[5m:15s]) == 1)
+            and (avg_over_time((sum(vllm:num_requests_waiting{model_name="zai-org/GLM-4.6"}) >= bool 1)[5m:15s]) < 0.4)
+            and (max_over_time((max(vllm:kv_cache_usage_perc{model_name="zai-org/GLM-4.6"}))[5m:15s]) < 0.8)
     - name: NEAR AI
 
   # Qwen3 30B A3B - Free & Pro - via NEAR AI (0.04× multiplier, fallback model)
@@ -69,40 +95,14 @@ model_router:
     - name: Eternis
       base_url: http://34.30.193.13:8000/v1
 
-  # GLM-4.7 - Free & Pro - via local/our IPs, fallback to NEAR AI (0.6× multiplier)
+  # GLM-4.7 - Free & Pro - via NEAR AI (1× multiplier)
   - name: zai-org/GLM-4.7
     aliases:
     - z-ai/glm-4.7
     - zhipu/glm-4.7
     - glm-4.7
-    token_multiplier: 0.6
+    token_multiplier: 1.0
     providers:
-    - name: Eternis
-      base_url: http://127.0.0.1:20001/v1
-      fallback:
-        trigger:
-          # Trigger if any of the following conditions held true throughout the last 2-minute window:
-          # TTFT p95 > 1s, ITL p95 > 150ms, queue time p95 > 750ms, queue non-empty at least 75% of the time, KV cache > 85%
-          # Keep the traffic on fallback for at least 2m
-          dwell_time: 2m
-          query: >-
-            (min_over_time((((histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{model_name="zai-org/GLM-4.7"}[1m]))) > bool 1) and on() (sum(rate(vllm:time_to_first_token_seconds_bucket{model_name="zai-org/GLM-4.7", le="+Inf"}[1m])) > bool 0)) or on() vector(0))[2m:15s]) == 1)
-            or (min_over_time((((histogram_quantile(0.95, sum by (le) (rate(vllm:inter_token_latency_seconds_bucket{model_name="zai-org/GLM-4.7"}[1m]))) > bool 0.15) and on() (sum(rate(vllm:inter_token_latency_seconds_bucket{model_name="zai-org/GLM-4.7", le="+Inf"}[1m])) > bool 0)) or on() vector(0))[2m:15s]) == 1)
-            or (min_over_time((((histogram_quantile(0.95, sum by (le) (rate(vllm:request_queue_time_seconds_bucket{model_name="zai-org/GLM-4.7"}[1m]))) > bool 0.75) and on() (sum(rate(vllm:request_queue_time_seconds_bucket{model_name="zai-org/GLM-4.7", le="+Inf"}[1m])) > bool 0)) or on() vector(0))[2m:15s]) == 1)
-            or (avg_over_time((sum(vllm:num_requests_waiting{model_name="zai-org/GLM-4.7"}) >= bool 1)[2m:15s]) > 0.75)
-            or (min_over_time((max(vllm:kv_cache_usage_perc{model_name="zai-org/GLM-4.7"}))[2m:15s]) > 0.85)
-        # Recover if all of the following conditions held true throughout the last 5-minute window:
-        # TTFT p95 < 500ms, ITL p95 < 75ms, queue time p95 < 350ms, Queue non-empty at most 40% of the time, KV cache < 80%
-        # Treat missing data points as satisfying the conditions (when traffic is shifted away)
-        # Keep the traffic from fallback for at least 1m
-        recover:
-          dwell_time: 1m
-          query: >-
-            (min_over_time(((((sum(rate(vllm:time_to_first_token_seconds_bucket{model_name="zai-org/GLM-4.7", le="+Inf"}[1m])) == bool 0) + (histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{model_name="zai-org/GLM-4.7"}[1m]))) < bool 0.5)) >= bool 1) or on() vector(1))[5m:15s]) == 1)
-            and (min_over_time(((((sum(rate(vllm:inter_token_latency_seconds_bucket{model_name="zai-org/GLM-4.7", le="+Inf"}[1m])) == bool 0) + (histogram_quantile(0.95, sum by (le) (rate(vllm:inter_token_latency_seconds_bucket{model_name="zai-org/GLM-4.7"}[1m]))) < bool 0.075)) >= bool 1) or on() vector(1))[5m:15s]) == 1)
-            and (min_over_time(((((sum(rate(vllm:request_queue_time_seconds_bucket{model_name="zai-org/GLM-4.7", le="+Inf"}[1m])) == bool 0) + (histogram_quantile(0.95, sum by (le) (rate(vllm:request_queue_time_seconds_bucket{model_name="zai-org/GLM-4.7"}[1m]))) < bool 0.35)) >= bool 1) or on() vector(1))[5m:15s]) == 1)
-            and (avg_over_time((sum(vllm:num_requests_waiting{model_name="zai-org/GLM-4.7"}) >= bool 1)[5m:15s]) < 0.4)
-            and (max_over_time((max(vllm:kv_cache_usage_perc{model_name="zai-org/GLM-4.7"}))[5m:15s]) < 0.8)
     - name: NEAR AI
 
   # GPT-4.1 - Pro only - via OpenRouter (4× multiplier)
