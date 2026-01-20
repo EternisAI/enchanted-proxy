@@ -330,7 +330,7 @@ func ProxyHandler(
 			// Create pending session if we have valid IDs
 			if chatID != "" && messageID != "" {
 				streamManager.CreatePendingSession(chatID, messageID)
-				log.Debug("created pending session before upstream request",
+				log.Info("created pending session before upstream request",
 					slog.String("chat_id", chatID),
 					slog.String("message_id", messageID))
 			}
@@ -576,7 +576,7 @@ func handleStreamingDirect(
 
 	// Create pending session BEFORE making HTTP request
 	streamManager.CreatePendingSession(chatID, messageID)
-	log.Debug("created pending session for direct streaming",
+	log.Info("created pending session for direct streaming",
 		slog.String("chat_id", chatID),
 		slog.String("message_id", messageID))
 
