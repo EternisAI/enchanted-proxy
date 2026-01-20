@@ -80,6 +80,9 @@ func waHandler(logger *logger.Logger) gin.HandlerFunc {
 func main() {
 	config.LoadConfig()
 
+	// Capture instance ID before logger variable shadows the package
+	instanceID := logger.GetInstanceID()
+
 	loggerConfig := logger.FromConfig(config.AppConfig.LogLevel, config.AppConfig.LogFormat)
 	logger := logger.New(loggerConfig)
 	log := logger.WithComponent("main")
@@ -353,7 +356,7 @@ func main() {
 	)
 	problemReportsHandler := problem_reports.NewHandler(problemReportsService, logger.WithComponent("problem-reports"))
 
-	// Initialize NATS for Telegram
+	// Initialize NATS for Telegram and distributed stream cancellation
 	var natsClient *nats.Conn
 	if config.AppConfig.NatsURL != "" {
 		nc, err := nats.Connect(config.AppConfig.NatsURL)
@@ -362,6 +365,30 @@ func main() {
 		} else {
 			natsClient = nc
 			log.Info("connected to nats", slog.String("url", config.AppConfig.NatsURL))
+		}
+	}
+
+	// Initialize distributed cancel service for cross-instance stream cancellation
+	if natsClient != nil {
+		distCancelService := streaming.NewDistributedCancelService(
+			natsClient,
+			streamManager,
+			logger.WithComponent("streaming"),
+			instanceID,
+		)
+		if err := distCancelService.Start(); err != nil {
+			log.Error("failed to start distributed cancel service", slog.String("error", err.Error()))
+		} else {
+			streamManager.SetDistributedCancel(distCancelService)
+			log.Info("distributed cancel service started",
+				slog.String("instance_id", instanceID))
+
+			// Ensure cleanup on shutdown
+			defer func() {
+				if err := distCancelService.Stop(); err != nil {
+					log.Error("failed to stop distributed cancel service", slog.String("error", err.Error()))
+				}
+			}()
 		}
 	}
 

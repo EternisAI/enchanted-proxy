@@ -86,10 +86,75 @@ func StopStreamHandler(
 			slog.String("session_key", sessionKey),
 			slog.String("user_id", userID))
 
-		// Get existing session
+		// Get existing session (local lookup first)
 		session := streamManager.GetSession(chatID, messageID)
 		if session == nil {
-			// Get metrics to see what sessions exist
+			// Session not on this instance - try distributed cancel via NATS
+			distCancel := streamManager.GetDistributedCancel()
+			if distCancel != nil {
+				log.Info("session not local, attempting distributed cancel",
+					slog.String("chat_id", chatID),
+					slog.String("message_id", messageID))
+
+				resp, err := distCancel.RequestCancel(c.Request.Context(), chatID, messageID, userID)
+				if err != nil {
+					log.Error("distributed cancel failed",
+						slog.String("error", err.Error()),
+						slog.String("chat_id", chatID),
+						slog.String("message_id", messageID))
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":      "Failed to stop stream",
+						"details":    err.Error(),
+						"message_id": messageID,
+					})
+					return
+				}
+
+				// Handle distributed cancel response
+				if resp.Found {
+					if resp.Success {
+						log.Info("stream stopped via distributed cancel",
+							slog.String("chat_id", chatID),
+							slog.String("message_id", messageID),
+							slog.String("remote_instance", resp.InstanceID),
+							slog.Int("chunks_generated", resp.ChunksGenerated))
+						c.JSON(http.StatusOK, gin.H{
+							"stopped":          true,
+							"message_id":       messageID,
+							"chunks_generated": resp.ChunksGenerated,
+							"stopped_at":       time.Now().UTC().Format(time.RFC3339),
+							"remote_instance":  resp.InstanceID,
+						})
+						return
+					}
+
+					// Found but couldn't stop
+					if resp.AlreadyComplete {
+						c.JSON(http.StatusConflict, gin.H{
+							"error":      "Stream already completed",
+							"message_id": messageID,
+							"completed":  true,
+						})
+						return
+					}
+					if resp.AlreadyStopped {
+						c.JSON(http.StatusConflict, gin.H{
+							"error":      "Stream already stopped",
+							"message_id": messageID,
+							"stopped":    true,
+						})
+						return
+					}
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":      "Failed to stop stream",
+						"details":    resp.Error,
+						"message_id": messageID,
+					})
+					return
+				}
+			}
+
+			// Not found locally or via distributed cancel
 			metrics := streamManager.GetMetrics()
 			log.Error("stream not found",
 				slog.String("chat_id", chatID),
