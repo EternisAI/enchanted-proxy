@@ -13,6 +13,12 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// TitleGenerationConfig contains system prompts for title generation
+type TitleGenerationConfig struct {
+	InitialPrompt      string `yaml:"initial_prompt"`
+	RegenerationPrompt string `yaml:"regeneration_prompt"`
+}
+
 type Config struct {
 	Port                    string
 	GinMode                 string
@@ -37,6 +43,9 @@ type Config struct {
 	ValidatorType           string // "jwk" or "firebase"
 	JWTJWKSURL              string
 	FirebaseCredJSON        string
+
+	// Title Generation
+	TitleGeneration *TitleGenerationConfig `yaml:"title_generation"`
 
 	// Model Router
 	ModelRouterConfig *ModelRouterConfig `yaml:"model_router"`
@@ -322,6 +331,10 @@ func LoadConfig() {
 	// Validate required configs
 	if AppConfig.ModelRouterConfig == nil {
 		log.Fatal("Model Router configuration is empty")
+	}
+
+	if AppConfig.TitleGeneration == nil {
+		log.Fatal("Title Generation configuration is empty")
 	}
 
 	if AppConfig.GoogleClientID == "" || AppConfig.SlackClientID == "" || AppConfig.TwitterClientID == "" {

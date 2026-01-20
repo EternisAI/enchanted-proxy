@@ -2,9 +2,15 @@ package proxy
 
 import "encoding/json"
 
-// isFirstUserMessage checks if this is the first user message in a chat
-// Returns true and the message content if exactly one user message exists (may have system/assistant messages)
-func isFirstUserMessage(requestBody []byte) (bool, string) {
+// ConversationContext holds extracted conversation messages for title regeneration
+type ConversationContext struct {
+	FirstUserMessage  string
+	FirstAIResponse   string
+	SecondUserMessage string
+}
+
+// countUserMessages parses the request body and returns message counts
+func countUserMessages(requestBody []byte) (userMsgs []string, assistantMsgs []string, ok bool) {
 	var parsed struct {
 		Messages []struct {
 			Role    string `json:"role"`
@@ -13,21 +19,51 @@ func isFirstUserMessage(requestBody []byte) (bool, string) {
 	}
 
 	if err := json.Unmarshal(requestBody, &parsed); err != nil {
-		return false, ""
+		return nil, nil, false
 	}
 
-	// Count user messages and get the first one
-	var userMessages []string
 	for _, msg := range parsed.Messages {
-		if msg.Role == "user" {
-			userMessages = append(userMessages, msg.Content)
+		switch msg.Role {
+		case "user":
+			userMsgs = append(userMsgs, msg.Content)
+		case "assistant":
+			assistantMsgs = append(assistantMsgs, msg.Content)
 		}
 	}
 
-	// Return true only if there's exactly one user message
-	if len(userMessages) == 1 {
-		return true, userMessages[0]
+	return userMsgs, assistantMsgs, true
+}
+
+// IsFirstUserMessage checks if this is the first user message in a chat
+// Returns true and the message content if exactly one user message exists
+func IsFirstUserMessage(requestBody []byte) (bool, string) {
+	userMsgs, _, ok := countUserMessages(requestBody)
+	if !ok {
+		return false, ""
+	}
+
+	if len(userMsgs) == 1 {
+		return true, userMsgs[0]
 	}
 
 	return false, ""
+}
+
+// IsSecondUserMessage checks if this is the second user message in a chat
+// Returns true and the conversation context for title regeneration
+func IsSecondUserMessage(requestBody []byte) (bool, ConversationContext) {
+	userMsgs, assistantMsgs, ok := countUserMessages(requestBody)
+	if !ok {
+		return false, ConversationContext{}
+	}
+
+	if len(userMsgs) == 2 && len(assistantMsgs) >= 1 {
+		return true, ConversationContext{
+			FirstUserMessage:  userMsgs[0],
+			FirstAIResponse:   assistantMsgs[0],
+			SecondUserMessage: userMsgs[1],
+		}
+	}
+
+	return false, ConversationContext{}
 }
