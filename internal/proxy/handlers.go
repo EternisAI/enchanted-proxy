@@ -252,38 +252,17 @@ func ProxyHandler(
 			saveUserMessageAsync(c, messageService, requestBody)
 		}
 
-		// Check if this is the first user message and trigger title generation
-		if titleService != nil && len(requestBody) > 0 {
-			if isFirst, firstMessage := isFirstUserMessage(requestBody); isFirst {
-				chatID := c.GetHeader("X-Chat-ID")
-				userID, exists := auth.GetUserID(c)
-
-				if exists && chatID != "" {
-					// Get encryption flag from context
-					var encryptionEnabled *bool
-					if val, exists := c.Get("encryptionEnabled"); exists {
-						if boolPtr, ok := val.(*bool); ok {
-							encryptionEnabled = boolPtr
-						}
-					}
-
-					// Queue async title generation (non-blocking)
-					// Use background context since this runs async and shouldn't be tied to request lifecycle
-					go titleService.QueueTitleGeneration(context.Background(), title_generation.TitleGenerationRequest{
-						UserID:            userID,
-						ChatID:            chatID,
-						FirstMessage:      firstMessage,
-						Model:             provider.Model,
-						BaseURL:           baseURL,
-						Platform:          platform,
-						EncryptionEnabled: encryptionEnabled,
-					}, apiKey)
-
-					log.Debug("queued title generation",
-						slog.String("chat_id", chatID),
-						slog.String("model", model))
-				}
-			}
+		// Trigger title generation/regeneration if applicable
+		if userID, exists := auth.GetUserID(c); exists {
+			TriggerTitleGeneration(c, titleService, requestBody, TitleGenerationParams{
+				UserID:            userID,
+				ChatID:            c.GetHeader("X-Chat-ID"),
+				Model:             provider.Model,
+				BaseURL:           baseURL,
+				APIKey:            apiKey,
+				Platform:          platform,
+				EncryptionEnabled: GetEncryptionEnabled(c),
+			})
 		}
 
 		// Parse the target URL

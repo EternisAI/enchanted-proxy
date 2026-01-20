@@ -137,7 +137,6 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 					log.Warn("GLM 4.6 not configured for deep research title generation",
 						slog.String("error", err.Error()))
 				} else {
-					// Get platform for title generation
 					platform := c.GetHeader("X-Client-Platform")
 					if platform == "" {
 						platform = "mobile"
@@ -147,17 +146,21 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 						slog.String("chat_id", req.ChatID),
 						slog.String("model", "zai-org/GLM-4.6"))
 
-					// Queue async title generation (non-blocking)
-					go titleService.QueueTitleGeneration(context.Background(), title_generation.TitleGenerationRequest{
-						UserID:       userID,
-						ChatID:       req.ChatID,
-						FirstMessage: req.Query,
-						Model:        "zai-org/GLM-4.6", // Use GLM 4.6 for cost savings (MUST be uppercase GLM - vLLM is case-sensitive)
-						BaseURL:      titleConfig.BaseURL,
-						Platform:     platform,
-						// Deep research may not support encryption yet - leave nil for now
-						EncryptionEnabled: nil,
-					}, titleConfig.APIKey)
+					go titleService.GenerateAndStore(
+						context.Background(),
+						title_generation.GenerateRequest{
+							Model:       "zai-org/GLM-4.6",
+							BaseURL:     titleConfig.BaseURL,
+							APIKey:      titleConfig.APIKey,
+							UserContent: req.Query,
+						},
+						title_generation.StorageRequest{
+							UserID:            userID,
+							ChatID:            req.ChatID,
+							Platform:          platform,
+							EncryptionEnabled: nil, // Deep research may not support encryption yet
+						},
+					)
 				}
 			}
 		}

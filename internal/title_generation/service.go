@@ -15,50 +15,56 @@ import (
 // Service handles async title generation with encryption
 type Service struct {
 	logger          *logger.Logger
-	messageService  *messaging.Service // For encryption
+	generator       *Generator
+	messageService  *messaging.Service
 	firestoreClient *messaging.FirestoreClient
-	titleChan       chan TitleGenerationRequest
+	storageChan     chan StorageRequest
 	workerPool      sync.WaitGroup
 	shutdown        chan struct{}
 	closed          atomic.Bool
 }
 
 // NewService creates a new title generation service
-func NewService(logger *logger.Logger, messageService *messaging.Service, firestoreClient *messaging.FirestoreClient) *Service {
+func NewService(
+	logger *logger.Logger,
+	generator *Generator,
+	messageService *messaging.Service,
+	firestoreClient *messaging.FirestoreClient,
+) *Service {
 	s := &Service{
 		logger:          logger,
+		generator:       generator,
 		messageService:  messageService,
 		firestoreClient: firestoreClient,
-		titleChan:       make(chan TitleGenerationRequest, 100), // Buffer for title gen jobs
+		storageChan:     make(chan StorageRequest, 100),
 		shutdown:        make(chan struct{}),
 	}
 
-	// Start worker pool (fewer workers than message storage)
-	workerPoolSize := 2 // Title generation is less frequent
+	// Start worker pool for storage operations
+	const workerPoolSize = 2
 	for i := 0; i < workerPoolSize; i++ {
 		s.workerPool.Add(1)
-		go s.worker()
+		go s.storageWorker()
 	}
 
 	logger.Info("title generation service started", slog.Int("worker_pool_size", workerPoolSize))
-
 	return s
 }
 
-// worker processes title generation requests
-func (s *Service) worker() {
+// storageWorker processes title storage requests
+func (s *Service) storageWorker() {
 	defer s.workerPool.Done()
 
 	for {
 		select {
-		case req := <-s.titleChan:
-			s.handleTitleGeneration(req)
+		case req := <-s.storageChan:
+			s.storeTitle(req)
 		case <-s.shutdown:
 			// Drain remaining jobs
 			for {
 				select {
-				case req := <-s.titleChan:
-					s.handleTitleGeneration(req)
+				case req := <-s.storageChan:
+					s.storeTitle(req)
 				default:
 					return
 				}
@@ -67,225 +73,216 @@ func (s *Service) worker() {
 	}
 }
 
-// handleTitleGeneration processes a single title generation request
-func (s *Service) handleTitleGeneration(req TitleGenerationRequest) {
+// storeTitle encrypts and saves a title to Firestore
+func (s *Service) storeTitle(req StorageRequest) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	log := s.logger.WithContext(ctx)
 
-	log.Debug("generating title",
+	log.Debug("storing title",
 		slog.String("user_id", req.UserID),
-		slog.String("chat_id", req.ChatID),
-		slog.String("model", req.Model))
+		slog.String("chat_id", req.ChatID))
 
-	// Handle encryption based on client's explicit signal (same logic as message storage)
-	var chatTitle *messaging.ChatTitle
-
-	// Case 1: Client explicitly requests encryption (encryptionEnabled = true)
-	if req.EncryptionEnabled != nil && *req.EncryptionEnabled {
-		log.Debug("encryption explicitly enabled by client for title",
-			slog.String("user_id", req.UserID))
-
-		publicKey, err := s.messageService.GetPublicKey(ctx, req.UserID)
-		if err != nil {
-			// STRICT MODE: If client expects encryption, we MUST encrypt
-			log.Error("encryption enabled but failed to get public key for title",
-				slog.String("user_id", req.UserID),
-				slog.String("chat_id", req.ChatID),
-				slog.String("error", err.Error()))
-			return // Fail: don't store if client expects encryption
-		}
-		if publicKey == nil || publicKey.Public == "" {
-			log.Error("encryption enabled but public key is empty for title",
-				slog.String("user_id", req.UserID),
-				slog.String("chat_id", req.ChatID))
-			return // Fail: don't store if client expects encryption
-		}
-
-		encrypted, err := s.messageService.EncryptContent(req.FirstMessage, publicKey.Public)
-		if err != nil {
-			log.Error("title encryption failed (client expects encryption)",
-				slog.String("user_id", req.UserID),
-				slog.String("chat_id", req.ChatID),
-				slog.String("error", err.Error()))
-			return // Fail: don't store if encryption fails
-		}
-
-		// ENCRYPTED: Use encryptedTitle field only
-		chatTitle = &messaging.ChatTitle{
-			EncryptedTitle:           encrypted,
-			TitlePublicEncryptionKey: publicKey.Public,
-			UpdatedAt:                time.Now(),
-		}
-		log.Info("title encrypted per client request",
-			slog.String("user_id", req.UserID),
-			slog.String("chat_id", req.ChatID))
-	} else if req.EncryptionEnabled != nil && !*req.EncryptionEnabled {
-		// Case 2: Client explicitly disables encryption (encryptionEnabled = false)
-		log.Info("encryption explicitly disabled by client for title, storing plaintext",
-			slog.String("user_id", req.UserID),
-			slog.String("chat_id", req.ChatID))
-
-		// PLAINTEXT: Use title field only
-		chatTitle = &messaging.ChatTitle{
-			Title:     req.FirstMessage,
-			UpdatedAt: time.Now(),
-		}
-	} else {
-		// Case 3: Backward compatibility - header not provided (encryptionEnabled = nil)
-		// IMPORTANT: If user has public key, we MUST encrypt (no fallback to plaintext)
-		// Only save plaintext if user has NOT set up encryption
-		log.Debug("encryption header not provided for title, using backward compatible logic",
-			slog.String("user_id", req.UserID))
-
-		publicKey, err := s.messageService.GetPublicKey(ctx, req.UserID)
-		if err != nil {
-			// Failed to fetch public key - check if it's "not found" vs other error
-			log.Warn("failed to fetch public key for title (backward compat mode)",
-				slog.String("user_id", req.UserID),
-				slog.String("chat_id", req.ChatID),
-				slog.String("error", err.Error()))
-			// Assume no public key set up - save plaintext
-			chatTitle = &messaging.ChatTitle{
-				Title:     req.FirstMessage,
-				UpdatedAt: time.Now(),
-			}
-		} else if publicKey == nil || publicKey.Public == "" {
-			// User has NOT set up encryption - save plaintext
-			log.Info("no public key found for user, saving title as plaintext",
-				slog.String("user_id", req.UserID),
-				slog.String("chat_id", req.ChatID))
-			chatTitle = &messaging.ChatTitle{
-				Title:     req.FirstMessage,
-				UpdatedAt: time.Now(),
-			}
-		} else {
-			// User HAS public key - MUST encrypt (no fallback)
-			log.Info("public key found for user, encrypting title (backward compat mode)",
-				slog.String("user_id", req.UserID),
-				slog.String("chat_id", req.ChatID))
-
-			encrypted, err := s.messageService.EncryptContent(req.FirstMessage, publicKey.Public)
-			if err != nil {
-				log.Error("title encryption failed and user HAS public key - refusing to save plaintext",
-					slog.String("user_id", req.UserID),
-					slog.String("chat_id", req.ChatID),
-					slog.String("error", err.Error()))
-				return // FAIL: Don't save plaintext when encryption is expected
-			}
-
-			// ENCRYPTED: Use encryptedTitle field only
-			chatTitle = &messaging.ChatTitle{
-				EncryptedTitle:           encrypted,
-				TitlePublicEncryptionKey: publicKey.Public,
-				UpdatedAt:                time.Now(),
-			}
-			log.Info("title encrypted successfully (backward compat mode)",
-				slog.String("user_id", req.UserID),
-				slog.String("chat_id", req.ChatID))
-		}
+	chatTitle := s.buildChatTitle(ctx, req, log)
+	if chatTitle == nil {
+		return
 	}
 
 	if err := s.firestoreClient.SaveChatTitle(ctx, req.UserID, req.ChatID, chatTitle); err != nil {
-		// Check if error is due to chat document not existing yet
-		// This is expected if title generation completes before client creates the chat doc
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "FailedPrecondition") {
-			log.Warn("chat document not found - client hasn't created it yet, title will be set by client",
+			log.Warn("chat document not found - client hasn't created it yet",
 				slog.String("user_id", req.UserID),
 				slog.String("chat_id", req.ChatID))
 			return
 		}
-
-		// Unexpected error
-		log.Error("failed to save title to firestore",
+		log.Error("failed to save title",
 			slog.String("user_id", req.UserID),
 			slog.String("chat_id", req.ChatID),
 			slog.String("error", err.Error()))
 		return
 	}
 
-	log.Info("title saved successfully",
+	log.Info("title saved",
 		slog.String("user_id", req.UserID),
 		slog.String("chat_id", req.ChatID),
 		slog.Bool("encrypted", chatTitle.EncryptedTitle != ""))
 }
 
-// QueueTitleGeneration queues a title generation request
-func (s *Service) QueueTitleGeneration(ctx context.Context, req TitleGenerationRequest, apiKey string) {
+// buildChatTitle creates a ChatTitle with proper encryption based on settings
+func (s *Service) buildChatTitle(ctx context.Context, req StorageRequest, log *logger.Logger) *messaging.ChatTitle {
+	// Case 1: Client explicitly requests encryption
+	if req.EncryptionEnabled != nil && *req.EncryptionEnabled {
+		return s.buildEncryptedTitle(ctx, req, log, true)
+	}
+
+	// Case 2: Client explicitly disables encryption
+	if req.EncryptionEnabled != nil && !*req.EncryptionEnabled {
+		log.Info("storing plaintext title (encryption disabled)",
+			slog.String("user_id", req.UserID),
+			slog.String("chat_id", req.ChatID))
+		return &messaging.ChatTitle{
+			Title:     req.Title,
+			UpdatedAt: time.Now(),
+		}
+	}
+
+	// Case 3: Backward compatibility - check if user has public key
+	return s.buildEncryptedTitle(ctx, req, log, false)
+}
+
+// buildEncryptedTitle attempts to encrypt the title
+func (s *Service) buildEncryptedTitle(ctx context.Context, req StorageRequest, log *logger.Logger, strict bool) *messaging.ChatTitle {
+	publicKey, err := s.messageService.GetPublicKey(ctx, req.UserID)
+	if err != nil {
+		if strict {
+			log.Error("encryption required but failed to get public key",
+				slog.String("user_id", req.UserID),
+				slog.String("error", err.Error()))
+			return nil
+		}
+		log.Warn("failed to get public key, storing plaintext",
+			slog.String("user_id", req.UserID),
+			slog.String("error", err.Error()))
+		return &messaging.ChatTitle{
+			Title:     req.Title,
+			UpdatedAt: time.Now(),
+		}
+	}
+
+	if publicKey == nil || publicKey.Public == "" {
+		if strict {
+			log.Error("encryption required but public key is empty",
+				slog.String("user_id", req.UserID))
+			return nil
+		}
+		log.Info("no public key found, storing plaintext",
+			slog.String("user_id", req.UserID))
+		return &messaging.ChatTitle{
+			Title:     req.Title,
+			UpdatedAt: time.Now(),
+		}
+	}
+
+	encrypted, err := s.messageService.EncryptContent(req.Title, publicKey.Public)
+	if err != nil {
+		if strict {
+			log.Error("encryption required but failed",
+				slog.String("user_id", req.UserID),
+				slog.String("error", err.Error()))
+			return nil
+		}
+		log.Error("encryption failed, refusing to save plaintext when user has key",
+			slog.String("user_id", req.UserID),
+			slog.String("error", err.Error()))
+		return nil
+	}
+
+	log.Info("title encrypted",
+		slog.String("user_id", req.UserID),
+		slog.String("chat_id", req.ChatID))
+
+	return &messaging.ChatTitle{
+		EncryptedTitle:           encrypted,
+		TitlePublicEncryptionKey: publicKey.Public,
+		UpdatedAt:                time.Now(),
+	}
+}
+
+// queueStorage queues a title for encryption and storage
+func (s *Service) queueStorage(ctx context.Context, req StorageRequest) {
 	if s.closed.Load() {
-		s.logger.Warn("service is shutting down, cannot queue title generation")
+		s.logger.Warn("service shutting down, cannot queue storage")
 		return
 	}
 
 	log := s.logger.WithContext(ctx)
 
-	// Generate title via AI first (blocking, but fast)
-	log.Info("starting title generation",
-		slog.String("chat_id", req.ChatID),
-		slog.String("model", req.Model),
-		slog.String("base_url", req.BaseURL),
-		slog.Int("message_length", len(req.FirstMessage)))
+	select {
+	case s.storageChan <- req:
+		log.Debug("title queued for storage", slog.String("chat_id", req.ChatID))
+	case <-ctx.Done():
+		log.Warn("context cancelled, cannot queue storage")
+	case <-time.After(5 * time.Second):
+		if s.closed.Load() {
+			return
+		}
+		log.Error("storage queue blocked for 5s",
+			slog.String("chat_id", req.ChatID),
+			slog.Int("queue_size", len(s.storageChan)))
+		// Final blocking attempt with timeout
+		select {
+		case s.storageChan <- req:
+			log.Info("title queued after blocking", slog.String("chat_id", req.ChatID))
+		case <-ctx.Done():
+			log.Error("context cancelled during blocking queue")
+		case <-time.After(30 * time.Second):
+			log.Error("storage queue blocked for 35s total, giving up")
+		}
+	}
+}
 
-	title, err := GenerateTitle(ctx, req, apiKey)
+// GenerateAndStore generates a title from first message and queues it for storage
+func (s *Service) GenerateAndStore(ctx context.Context, genReq GenerateRequest, storeReq StorageRequest) {
+	if s.closed.Load() {
+		s.logger.Warn("service shutting down, cannot generate title")
+		return
+	}
+
+	log := s.logger.WithContext(ctx)
+
+	log.Info("generating initial title",
+		slog.String("chat_id", storeReq.ChatID),
+		slog.String("model", genReq.Model),
+		slog.Int("content_length", len(genReq.UserContent)))
+
+	title, err := s.generator.GenerateInitial(ctx, genReq)
 	if err != nil {
 		log.Error("failed to generate title",
 			slog.String("error", err.Error()),
-			slog.String("chat_id", req.ChatID),
-			slog.String("model", req.Model),
-			slog.String("base_url", req.BaseURL))
+			slog.String("chat_id", storeReq.ChatID))
 		return
 	}
 
-	log.Info("title generated successfully",
+	log.Info("title generated",
 		slog.String("title", title),
-		slog.String("chat_id", req.ChatID),
-		slog.String("model", req.Model))
+		slog.String("chat_id", storeReq.ChatID))
 
-	// Update request with generated title
-	req.FirstMessage = title
+	storeReq.Title = title
+	s.queueStorage(ctx, storeReq)
+}
 
-	// Check again if service is shutting down (after AI call which could take time)
-	// Prevents panic from sending to closed channel
+// RegenerateAndStore regenerates a title with context and queues it for storage
+func (s *Service) RegenerateAndStore(ctx context.Context, genReq GenerateRequest, regenCtx RegenerationContext, storeReq StorageRequest) {
 	if s.closed.Load() {
-		log.Warn("service is shutting down after title generation, cannot queue",
-			slog.String("chat_id", req.ChatID))
+		s.logger.Warn("service shutting down, cannot regenerate title")
 		return
 	}
 
-	// Queue for encryption and storage
-	// Wait up to 5 seconds for queue space (no silent drops)
-	select {
-	case s.titleChan <- req:
-		log.Debug("title generation queued", slog.String("chat_id", req.ChatID))
-	case <-ctx.Done():
-		log.Warn("context cancelled, cannot queue title generation")
-	case <-time.After(5 * time.Second):
-		// Queue blocked for 5 seconds - this indicates a serious problem
-		// Check once more if shutting down before blocking
-		if s.closed.Load() {
-			log.Warn("service is shutting down, cannot queue after timeout",
-				slog.String("chat_id", req.ChatID))
-			return
-		}
+	log := s.logger.WithContext(ctx)
 
-		// Log as error and try one more time with limited timeout
-		log.Error("title generation queue blocked for 5s, attempting blocking queue",
-			slog.String("chat_id", req.ChatID),
-			slog.Int("queue_size", len(s.titleChan)))
+	log.Info("regenerating title with context",
+		slog.String("chat_id", storeReq.ChatID),
+		slog.String("model", genReq.Model),
+		slog.Int("first_msg_len", len(regenCtx.FirstUserMessage)),
+		slog.Int("ai_response_len", len(regenCtx.FirstAIResponse)),
+		slog.Int("second_msg_len", len(regenCtx.SecondUserMessage)))
 
-		// Final attempt: blocking send with 30s max timeout (prevents goroutine leak)
-		select {
-		case s.titleChan <- req:
-			log.Info("title generation queued after blocking", slog.String("chat_id", req.ChatID))
-		case <-ctx.Done():
-			log.Error("context cancelled during blocking queue attempt", slog.String("chat_id", req.ChatID))
-		case <-time.After(30 * time.Second):
-			log.Error("title generation queue blocked for 35s total, giving up",
-				slog.String("chat_id", req.ChatID))
-		}
+	title, err := s.generator.GenerateFromContext(ctx, genReq, regenCtx)
+	if err != nil {
+		log.Error("failed to regenerate title",
+			slog.String("error", err.Error()),
+			slog.String("chat_id", storeReq.ChatID))
+		return
 	}
+
+	log.Info("title regenerated",
+		slog.String("title", title),
+		slog.String("chat_id", storeReq.ChatID))
+
+	storeReq.Title = title
+	s.queueStorage(ctx, storeReq)
 }
 
 // Shutdown gracefully shuts down the service
@@ -294,6 +291,6 @@ func (s *Service) Shutdown() {
 	s.closed.Store(true)
 	close(s.shutdown)
 	s.workerPool.Wait()
-	close(s.titleChan)
+	close(s.storageChan)
 	s.logger.Info("title generation service shutdown complete")
 }

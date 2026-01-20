@@ -199,8 +199,10 @@ func main() {
 	// Initialize title generation service
 	var titleService *title_generation.Service
 	if config.AppConfig.MessageStorageEnabled && messageService != nil && firebaseClient != nil {
+		titleGenerator := title_generation.NewGenerator(config.AppConfig.TitleGeneration)
 		titleService = title_generation.NewService(
 			logger.WithComponent("title_generation"),
+			titleGenerator,
 			messageService,
 			messaging.NewFirestoreClient(firebaseClient.GetFirestoreClient()),
 		)
