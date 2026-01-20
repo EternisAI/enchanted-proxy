@@ -171,10 +171,17 @@ func (s *DistributedCancelService) handleCancelRequest(msg *nats.Msg) {
 		return
 	}
 
+	s.logger.Debug("received cancel request",
+		slog.String("chat_id", req.ChatID),
+		slog.String("message_id", req.MessageID))
+
 	// Check if we own this session
 	session := s.manager.GetSession(req.ChatID, req.MessageID)
 	if session == nil {
 		// We don't have this session - don't respond (let the owning instance handle it)
+		s.logger.Debug("session not owned by this instance, ignoring",
+			slog.String("chat_id", req.ChatID),
+			slog.String("message_id", req.MessageID))
 		return
 	}
 

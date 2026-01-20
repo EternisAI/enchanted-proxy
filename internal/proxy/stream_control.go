@@ -91,7 +91,11 @@ func StopStreamHandler(
 		if session == nil {
 			// Session not on this instance - try distributed cancel via NATS
 			distCancel := streamManager.GetDistributedCancel()
-			if distCancel != nil {
+			if distCancel == nil {
+				log.Warn("distributed cancel not available, cannot reach other instances",
+					slog.String("chat_id", chatID),
+					slog.String("message_id", messageID))
+			} else {
 				log.Info("session not local, attempting distributed cancel",
 					slog.String("chat_id", chatID),
 					slog.String("message_id", messageID))
