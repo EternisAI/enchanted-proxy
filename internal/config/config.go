@@ -143,6 +143,9 @@ type Config struct {
 	LinearTeamID    string
 	LinearProjectID string
 	LinearLabelID   string
+
+	// Internal API Key (for /internal/ endpoints)
+	InternalAPIKey string
 }
 
 var (
@@ -302,6 +305,9 @@ func LoadConfig() {
 		LinearLabelID:   getEnvOrDefault("LINEAR_LABEL_ID", ""),
 		LinearProjectID: getEnvOrDefault("LINEAR_PROJECT_ID", ""),
 		LinearTeamID:    getEnvOrDefault("LINEAR_TEAM_ID", ""),
+
+		// Internal API Key (for /internal/ endpoints)
+		InternalAPIKey: getEnvOrDefault("INTERNAL_API_KEY", ""),
 	}
 
 	// Load settings from a configuration file.
@@ -375,6 +381,10 @@ func LoadConfig() {
 
 	if AppConfig.LinearAPIKey == "" {
 		log.Println("Warning: Linear API key is missing. Please set LINEAR_API_KEY environment variable.")
+	}
+
+	if AppConfig.InternalAPIKey == "" {
+		log.Println("Warning: Internal API key is missing. /internal/ endpoints will reject all requests. Please set INTERNAL_API_KEY environment variable.")
 	}
 
 	if AppConfig.AppStoreAPIKeyP8 == "" || AppConfig.AppStoreAPIKeyID == "" || AppConfig.AppStoreBundleID == "" || AppConfig.AppStoreIssuerID == "" {

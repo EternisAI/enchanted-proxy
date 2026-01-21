@@ -607,8 +607,13 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	// Stripe webhook endpoint (no auth, signature verified)
 	router.POST("/stripe/webhook", input.stripeHandler.HandleWebhook)
 
-	// WARNING: ZCash callback endpoint has no auth - MUST be protected by network policy in production
-	router.POST("/internal/zcash/callback", input.zcashHandler.HandleCallback)
+	// Internal API endpoints (protected by static API key)
+	internalAPIKey := auth.NewAPIKeyMiddleware(input.config.InternalAPIKey)
+	internal := router.Group("/internal")
+	internal.Use(internalAPIKey.RequireAPIKey())
+	{
+		internal.POST("/zcash/callback", input.zcashHandler.HandleCallback)
+	}
 
 	// All routes use Firebase/JWT auth
 	router.Use(input.firebaseAuth.RequireAuth())

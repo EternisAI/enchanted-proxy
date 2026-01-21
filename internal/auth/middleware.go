@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
@@ -85,4 +86,51 @@ func GetUserID(c *gin.Context) (string, bool) {
 
 	id, ok := userID.(string)
 	return id, ok
+}
+
+// APIKeyMiddleware validates requests using a static API key.
+type APIKeyMiddleware struct {
+	apiKey string
+}
+
+// NewAPIKeyMiddleware creates a new API key middleware with the provided key.
+func NewAPIKeyMiddleware(apiKey string) *APIKeyMiddleware {
+	return &APIKeyMiddleware{
+		apiKey: apiKey,
+	}
+}
+
+// RequireAPIKey is a middleware that validates Bearer token against the configured API key.
+func (a *APIKeyMiddleware) RequireAPIKey() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+
+		if authHeader == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
+			c.Abort()
+			return
+		}
+
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header must be a Bearer token"})
+			c.Abort()
+			return
+		}
+
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		if token == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Bearer token is empty"})
+			c.Abort()
+			return
+		}
+
+		// Use constant-time comparison to prevent timing attacks
+		if subtle.ConstantTimeCompare([]byte(token), []byte(a.apiKey)) != 1 {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
 }
