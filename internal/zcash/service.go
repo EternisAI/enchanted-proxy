@@ -70,6 +70,13 @@ func NewService(queries pgdb.Querier, firestoreClient *firestore.Client, logger 
 	}
 }
 
+// backendInvoiceResult holds the response from the zcash-backend when creating an invoice.
+type backendInvoiceResult struct {
+	ID               string
+	ReceivingAddress string
+	AmountZatoshis   int64
+}
+
 // Invoice represents an invoice stored in the local database.
 type Invoice struct {
 	ID               uuid.UUID
@@ -199,6 +206,8 @@ func (s *Service) GetZecPriceUSD(ctx context.Context) (float64, error) {
 
 // CreateInvoice creates a new invoice, stores it locally, writes to Firestore,
 // and calls the zcash-backend to get a receiving address.
+// If the backend returns an existing invoice (e.g., user already has a pending invoice
+// for the same product), we return that existing invoice instead of creating a new one.
 func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (*Invoice, error) {
 	product := s.GetProduct(productID)
 	if product == nil {
@@ -219,9 +228,76 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 	invoiceID := uuid.New()
 
 	// Call zcash-backend to create invoice and get address
-	address, err := s.createBackendInvoice(ctx, invoiceID.String(), userID, productID, zatAmount)
+	backendResult, err := s.createBackendInvoice(ctx, invoiceID.String(), userID, productID, zatAmount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create backend invoice: %w", err)
+	}
+
+	// Check if backend returned an existing invoice (different ID than what we requested)
+	if backendResult.ID != invoiceID.String() {
+		s.logger.Info("backend returned existing invoice",
+			"requested_id", invoiceID.String(),
+			"returned_id", backendResult.ID,
+			"user_id", userID,
+			"product_id", productID,
+			"backend_amount_zatoshis", backendResult.AmountZatoshis,
+		)
+
+		// Try to fetch the existing invoice from our database
+		existingInvoiceID, err := uuid.Parse(backendResult.ID)
+		if err != nil {
+			return nil, fmt.Errorf("backend returned invalid invoice ID: %w", err)
+		}
+
+		existingRow, err := s.queries.GetZcashInvoice(ctx, existingInvoiceID)
+		if err == nil {
+			// Found existing invoice in our database
+			// Check if amounts are consistent between backend and our database
+			if existingRow.AmountZatoshis != backendResult.AmountZatoshis {
+				s.logger.Warn("amount mismatch between backend and local database for existing invoice",
+					"invoice_id", backendResult.ID,
+					"backend_amount_zatoshis", backendResult.AmountZatoshis,
+					"local_amount_zatoshis", existingRow.AmountZatoshis,
+					"user_id", userID,
+				)
+			}
+
+			var paidAt *time.Time
+			if existingRow.PaidAt.Valid {
+				paidAt = &existingRow.PaidAt.Time
+			}
+
+			return &Invoice{
+				ID:               existingRow.ID,
+				UserID:           existingRow.UserID,
+				ProductID:        existingRow.ProductID,
+				AmountZatoshis:   existingRow.AmountZatoshis,
+				ZecAmount:        existingRow.ZecAmount,
+				PriceUSD:         existingRow.PriceUsd,
+				ReceivingAddress: existingRow.ReceivingAddress,
+				Status:           existingRow.Status,
+				CreatedAt:        existingRow.CreatedAt,
+				UpdatedAt:        existingRow.UpdatedAt,
+				PaidAt:           paidAt,
+			}, nil
+		}
+
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("failed to fetch existing invoice: %w", err)
+		}
+
+		// Invoice exists in backend but not in our database - this is unexpected
+		// but we should handle it gracefully by using the backend's ID and amount
+		s.logger.Warn("backend returned invoice not found in local database, creating with backend ID and amount",
+			"backend_invoice_id", backendResult.ID,
+			"backend_amount_zatoshis", backendResult.AmountZatoshis,
+			"calculated_amount_zatoshis", zatAmount,
+			"user_id", userID,
+		)
+		invoiceID = existingInvoiceID
+		// Use the backend's amount to ensure consistency
+		zatAmount = backendResult.AmountZatoshis
+		zecAmount = float64(zatAmount) / 100_000_000
 	}
 
 	// Store in local database
@@ -232,7 +308,7 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 		AmountZatoshis:   zatAmount,
 		ZecAmount:        zecAmount,
 		PriceUsd:         product.PriceUSD,
-		ReceivingAddress: address,
+		ReceivingAddress: backendResult.ReceivingAddress,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to store invoice: %w", err)
@@ -246,7 +322,7 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 		AmountZatoshis:   zatAmount,
 		ZecAmount:        zecAmount,
 		PriceUSD:         product.PriceUSD,
-		ReceivingAddress: address,
+		ReceivingAddress: backendResult.ReceivingAddress,
 		Status:           "pending",
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -270,7 +346,7 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 		AmountZatoshis:   zatAmount,
 		ZecAmount:        zecAmount,
 		PriceUSD:         product.PriceUSD,
-		ReceivingAddress: address,
+		ReceivingAddress: backendResult.ReceivingAddress,
 		Status:           "pending",
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -342,6 +418,45 @@ func (s *Service) HandlePaymentCallback(ctx context.Context, invoiceIDStr, statu
 		return fmt.Errorf("invalid status: %s", status)
 	}
 
+	// SECURITY: Verify payment status with the backend before trusting the callback.
+	// This prevents attackers from spoofing callbacks to mark invoices as paid.
+	verifiedStatus, verifiedAmount, err := s.verifyInvoiceWithBackend(ctx, invoiceIDStr)
+	if err != nil {
+		return fmt.Errorf("failed to verify invoice with backend: %w", err)
+	}
+
+	// Detect callback/backend mismatches (potential spoofing or sync issues)
+	if status != verifiedStatus {
+		s.logger.Warn("callback status mismatch detected",
+			"invoice_id", invoiceIDStr,
+			"callback_status", status,
+			"backend_status", verifiedStatus,
+		)
+		return fmt.Errorf("status mismatch: callback reported %q but backend reports %q", status, verifiedStatus)
+	}
+
+	// SECURITY: For paid status, strictly verify the callback amount doesn't exceed backend.
+	// For processing status, we allow amount differences since partial payments are in progress
+	// and the accumulated amount may be lower than expected.
+	if status == "paid" && accumulatedZatoshis > verifiedAmount {
+		s.logger.Warn("callback amount exceeds backend",
+			"invoice_id", invoiceIDStr,
+			"callback_amount", accumulatedZatoshis,
+			"backend_amount", verifiedAmount,
+		)
+		return fmt.Errorf("amount mismatch: callback reported %d zatoshis but backend only confirms %d", accumulatedZatoshis, verifiedAmount)
+	}
+
+	// Use verified values from backend (authoritative source)
+	status = verifiedStatus
+	accumulatedZatoshis = verifiedAmount
+
+	// Check if backend status is actionable
+	if status != "processing" && status != "paid" {
+		s.logger.Debug("backend returned non-actionable status", "invoice_id", invoiceIDStr, "status", status)
+		return nil
+	}
+
 	// Validate payment amount before marking as paid
 	if status == "paid" && accumulatedZatoshis < row.AmountZatoshis {
 		return fmt.Errorf("insufficient payment: got %d zatoshis, expected %d", accumulatedZatoshis, row.AmountZatoshis)
@@ -385,55 +500,137 @@ func (s *Service) grantEntitlement(ctx context.Context, invoice pgdb.ZcashInvoic
 		return fmt.Errorf("unknown product: %s", invoice.ProductID)
 	}
 
-	var expiresAt sql.NullTime
 	if product.IsLifetime {
-		expiresAt = sql.NullTime{
+		// Lifetime products: use existing UpsertEntitlementWithTier (no extension logic needed)
+		expiresAt := sql.NullTime{
 			Time:  time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC),
 			Valid: true,
 		}
-	} else {
-		var duration time.Duration
-		switch product.ID {
-		case ProductWeeklyPro:
-			duration = 7 * 24 * time.Hour
-		case ProductMonthlyPro:
-			duration = 30 * 24 * time.Hour
-		case ProductYearlyPro:
-			duration = 365 * 24 * time.Hour
-		default:
-			duration = 30 * 24 * time.Hour
+		err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
+			UserID:                invoice.UserID,
+			SubscriptionTier:      product.Tier,
+			SubscriptionExpiresAt: expiresAt,
+			SubscriptionProvider:  "zcash",
+			StripeCustomerID:      nil,
+		})
+		if err != nil {
+			return err
 		}
-		// Use invoice.CreatedAt as base for stable expiration calculation
-		// This prevents race conditions where duplicate callbacks would calculate different expirations
-		expiresAt = sql.NullTime{
-			Time:  invoice.CreatedAt.Add(duration),
-			Valid: true,
-		}
+
+		s.logger.Info("lifetime entitlement granted",
+			"user_id", invoice.UserID,
+			"invoice_id", invoice.ID.String(),
+			"tier", product.Tier,
+		)
+		return nil
 	}
 
-	err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
-		UserID:                invoice.UserID,
-		SubscriptionTier:      product.Tier,
-		SubscriptionExpiresAt: expiresAt,
-		SubscriptionProvider:  "zcash",
-		StripeCustomerID:      nil,
+	// Time-limited products: use extension logic
+	// For same-tier renewals where current subscription is still active,
+	// extends from current expiration. Otherwise starts from invoice creation time.
+	var durationDays int32
+	switch product.ID {
+	case ProductWeeklyPro:
+		durationDays = 7
+	case ProductMonthlyPro:
+		durationDays = 30
+	case ProductYearlyPro:
+		durationDays = 365
+	default:
+		durationDays = 30
+	}
+
+	err := s.queries.UpsertEntitlementWithExtension(ctx, pgdb.UpsertEntitlementWithExtensionParams{
+		UserID:               invoice.UserID,
+		SubscriptionTier:     product.Tier,
+		BaseTime:             invoice.CreatedAt,
+		DurationDays:         durationDays,
+		SubscriptionProvider: "zcash",
+		StripeCustomerID:     nil,
 	})
 	if err != nil {
 		return err
 	}
 
-	s.logger.Info("entitlement granted",
+	s.logger.Info("entitlement granted/extended",
 		"user_id", invoice.UserID,
 		"invoice_id", invoice.ID.String(),
 		"tier", product.Tier,
-		"expires_at", expiresAt.Time,
+		"duration_days", durationDays,
+		"base_time", invoice.CreatedAt,
 	)
 
 	return nil
 }
 
+// verifyInvoiceWithBackend calls zcash-backend to get the actual invoice status.
+// This is a security measure to prevent spoofed callbacks from marking invoices as paid.
+func (s *Service) verifyInvoiceWithBackend(ctx context.Context, invoiceID string) (status string, accumulatedZatoshis int64, err error) {
+	backendURL := config.AppConfig.ZCashBackendURL + "/invoices/" + invoiceID
+	apiKey := config.AppConfig.ZCashBackendAPIKey
+
+	req, err := http.NewRequestWithContext(ctx, "GET", backendURL, nil)
+	if err != nil {
+		return "", 0, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return "", 0, ErrInvoiceNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", 0, fmt.Errorf("backend returned status %d", resp.StatusCode)
+	}
+
+	// Backend returns boolean fields for status, not a string
+	var result struct {
+		Paid                bool  `json:"paid"`
+		Processing          bool  `json:"processing"`
+		AccumulatedZatoshis int64 `json:"accumulated_zatoshis"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", 0, fmt.Errorf("failed to decode backend response: %w", err)
+	}
+
+	// Convert boolean flags to status string
+	// Priority: paid > processing > pending
+	var derivedStatus string
+	switch {
+	case result.Paid:
+		derivedStatus = "paid"
+	case result.Processing:
+		derivedStatus = "processing"
+	default:
+		derivedStatus = "pending"
+	}
+
+	s.logger.Debug("verified invoice with backend",
+		"invoice_id", invoiceID,
+		"paid", result.Paid,
+		"processing", result.Processing,
+		"derived_status", derivedStatus,
+		"accumulated_zatoshis", result.AccumulatedZatoshis,
+	)
+
+	return derivedStatus, result.AccumulatedZatoshis, nil
+}
+
 // createBackendInvoice calls zcash-backend to create invoice and get receiving address.
-func (s *Service) createBackendInvoice(ctx context.Context, invoiceID, userID, productID string, zatAmount int64) (string, error) {
+// The backend may return an existing invoice if the user already has a pending/processing
+// invoice for the same product, in which case the returned ID will differ from the requested one.
+func (s *Service) createBackendInvoice(ctx context.Context, invoiceID, userID, productID string, zatAmount int64) (*backendInvoiceResult, error) {
 	backendURL := config.AppConfig.ZCashBackendURL + "/invoices"
 	apiKey := config.AppConfig.ZCashBackendAPIKey
 
@@ -446,12 +643,12 @@ func (s *Service) createBackendInvoice(ctx context.Context, invoiceID, userID, p
 
 	reqJSON, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", backendURL, bytes.NewBuffer(reqJSON))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -461,22 +658,27 @@ func (s *Service) createBackendInvoice(ctx context.Context, invoiceID, userID, p
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("backend returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("backend returned status %d", resp.StatusCode)
 	}
 
 	var result struct {
 		ID               string `json:"id"`
 		ReceivingAddress string `json:"receiving_address"`
+		AmountZatoshis   int64  `json:"amount_zatoshis"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return result.ReceivingAddress, nil
+	return &backendInvoiceResult{
+		ID:               result.ID,
+		ReceivingAddress: result.ReceivingAddress,
+		AmountZatoshis:   result.AmountZatoshis,
+	}, nil
 }

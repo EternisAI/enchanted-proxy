@@ -139,41 +139,24 @@ func handleResponsesAPI(
 		}
 	}
 
-	// Step 2: Check if this is the first user message and trigger title generation
-	if titleService != nil && len(requestBody) > 0 {
-		if isFirst, firstMessage := isFirstUserMessage(requestBody); isFirst {
-			// Get encryption flag from context
-			var encryptionEnabled *bool
-			if val, exists := c.Get("encryptionEnabled"); exists {
-				if boolPtr, ok := val.(*bool); ok {
-					encryptionEnabled = boolPtr
-				}
-			}
-
-			// Get platform for title generation
-			platform := c.GetHeader("X-Client-Platform")
-			if platform == "" {
-				platform = "mobile"
-			}
-
-			// Use GLM 4.6 for title generation (cost-effective instead of GPT-5 Pro)
-			titleConfig, err := modelRouter.GetTitleGenerationConfig()
-			if err != nil {
-				log.Warn("GLM 4.6 not configured for title generation, skipping",
-					slog.String("error", err.Error()))
-			} else {
-				// Queue async title generation (non-blocking)
-				go titleService.QueueTitleGeneration(context.Background(), title_generation.TitleGenerationRequest{
-					UserID:            userID,
-					ChatID:            chatID,
-					FirstMessage:      firstMessage,
-					Model:             "zai-org/GLM-4.6", // Use GLM 4.6 for cost savings (MUST be uppercase GLM - vLLM is case-sensitive)
-					BaseURL:           titleConfig.BaseURL,
-					Platform:          platform,
-					EncryptionEnabled: encryptionEnabled,
-				}, titleConfig.APIKey)
-			}
+	// Step 2: Trigger title generation using cost-effective model (GLM 4.6)
+	if titleConfig, err := modelRouter.GetTitleGenerationConfig(); err != nil {
+		log.Warn("GLM 4.6 not configured for title generation, skipping",
+			slog.String("error", err.Error()))
+	} else {
+		platform := c.GetHeader("X-Client-Platform")
+		if platform == "" {
+			platform = "mobile"
 		}
+		TriggerTitleGeneration(c, titleService, requestBody, TitleGenerationParams{
+			UserID:            userID,
+			ChatID:            chatID,
+			Model:             "zai-org/GLM-4.6",
+			BaseURL:           titleConfig.BaseURL,
+			APIKey:            titleConfig.APIKey,
+			Platform:          platform,
+			EncryptionEnabled: GetEncryptionEnabled(c),
+		})
 	}
 
 	// Extract encryption setting (used for placeholder save and polling job)

@@ -9,124 +9,122 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/eternisai/enchanted-proxy/internal/config"
 )
 
-const titleSystemPrompt = `You are a title generator. Generate a short, concise title for this conversation based on
-the user's first message.
+const (
+	maxRetries      = 3
+	requestTimeout  = 30 * time.Second
+	maxTokens       = 1000
+	temperature     = 0.7
+	contextTemplate = `First user message: %s
 
-RULES:
-- MAXIMUM 4 WORDS IN YOUR ANSWER
-- TITLE MUST BE ON TOPIC
-- USE PLAIN TEXT
-- NO QUOTES
-- NO MARKDOWN
+AI response: %s
 
-NEVER BREAK RULES.
+Second user message: %s`
+)
 
-PRIORITIES:
-1. RULES
-2. USER'S REQUEST`
-
-// isRetryableError checks if an error is transient and worth retrying
-func isRetryableError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	// Retry on network errors, timeouts, 5xx errors, rate limits
-	return strings.Contains(errStr, "timeout") ||
-		strings.Contains(errStr, "timed out") ||
-		strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "connection reset") ||
-		strings.Contains(errStr, "no such host") ||
-		strings.Contains(errStr, "EOF") ||
-		strings.Contains(errStr, "503") ||
-		strings.Contains(errStr, "502") ||
-		strings.Contains(errStr, "504") ||
-		strings.Contains(errStr, "429") || // Rate limit
-		strings.Contains(errStr, "500")
+// Generator handles title generation via AI
+type Generator struct {
+	initialPrompt      string
+	regenerationPrompt string
 }
 
-// GenerateTitle calls AI to generate a title from the first message with retry logic
-func GenerateTitle(ctx context.Context, req TitleGenerationRequest, apiKey string) (string, error) {
-	maxRetries := 3
+// NewGenerator creates a new title generator with prompts from config
+func NewGenerator(cfg *config.TitleGenerationConfig) *Generator {
+	return &Generator{
+		initialPrompt:      strings.TrimSpace(cfg.InitialPrompt),
+		regenerationPrompt: strings.TrimSpace(cfg.RegenerationPrompt),
+	}
+}
+
+// GenerateInitial generates a title from the first user message
+func (g *Generator) GenerateInitial(ctx context.Context, req GenerateRequest) (string, error) {
+	return g.generate(ctx, g.initialPrompt, req.UserContent, req)
+}
+
+// GenerateFromContext generates a title using conversation context
+func (g *Generator) GenerateFromContext(ctx context.Context, req GenerateRequest, regenCtx RegenerationContext) (string, error) {
+	userContent := fmt.Sprintf(contextTemplate,
+		regenCtx.FirstUserMessage,
+		regenCtx.FirstAIResponse,
+		regenCtx.SecondUserMessage,
+	)
+	return g.generate(ctx, g.regenerationPrompt, userContent, req)
+}
+
+// generate is the core generation function with retry logic
+func (g *Generator) generate(ctx context.Context, systemPrompt, userContent string, req GenerateRequest) (string, error) {
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		title, err := generateTitleAttempt(ctx, req, apiKey)
+		title, err := g.callAI(ctx, systemPrompt, userContent, req)
 		if err == nil {
 			return title, nil
 		}
 
 		lastErr = err
 
-		// Only retry on transient errors
 		if isRetryableError(err) && attempt < maxRetries {
-			// Exponential backoff: 1s, 2s
-			backoffDuration := time.Duration(attempt) * time.Second
+			backoff := time.Duration(attempt) * time.Second
 			select {
-			case <-time.After(backoffDuration):
+			case <-time.After(backoff):
 				continue
 			case <-ctx.Done():
 				return "", fmt.Errorf("context cancelled during retry: %w", ctx.Err())
 			}
 		}
-
-		// Non-retryable error or final attempt
 		break
 	}
 
 	return "", lastErr
 }
 
-// generateTitleAttempt is a single attempt to generate a title
-func generateTitleAttempt(ctx context.Context, req TitleGenerationRequest, apiKey string) (string, error) {
-	// Build OpenAI-compatible request
+// callAI makes a single API call to generate a title
+func (g *Generator) callAI(ctx context.Context, systemPrompt, userContent string, req GenerateRequest) (string, error) {
 	payload := map[string]interface{}{
 		"model": req.Model,
 		"messages": []map[string]string{
-			{"role": "system", "content": titleSystemPrompt},
-			{"role": "user", "content": req.FirstMessage},
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": userContent},
 		},
-		"max_tokens":  1000,  // Title generation limit
-		"temperature": 0.7,   // Some creativity
-		"stream":      false, // Non-streaming
+		"max_tokens":  maxTokens,
+		"temperature": temperature,
+		"stream":      false,
 	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	// Create HTTP request
 	url := req.BaseURL + "/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return "", fmt.Errorf("create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
 
-	// Execute with timeout
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: requestTimeout}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("failed to call AI at %s: %w", url, err)
+		return "", fmt.Errorf("call AI at %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
-	// Read response body for debugging
-	bodyBytes, readErr := io.ReadAll(resp.Body)
-	if readErr != nil {
-		return "", fmt.Errorf("failed to read response body: %w", readErr)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("AI returned status %d: %s (url: %s, model: %s)", resp.StatusCode, string(bodyBytes), url, req.Model)
+		return "", fmt.Errorf("AI returned %d: %s (url: %s, model: %s)",
+			resp.StatusCode, string(respBody), url, req.Model)
 	}
 
-	// Parse response
 	var result struct {
 		Choices []struct {
 			Message struct {
@@ -135,18 +133,34 @@ func generateTitleAttempt(ctx context.Context, req TitleGenerationRequest, apiKe
 		} `json:"choices"`
 	}
 
-	if err := json.Unmarshal(bodyBytes, &result); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w (response: %s)", err, string(bodyBytes))
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("decode response: %w (body: %s)", err, string(respBody))
 	}
 
 	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("no choices in response (response: %s)", string(bodyBytes))
+		return "", fmt.Errorf("no choices in response (body: %s)", string(respBody))
 	}
 
 	title := strings.TrimSpace(result.Choices[0].Message.Content)
-
-	// Clean up title (remove quotes if present)
 	title = strings.Trim(title, `"'`)
 
 	return title, nil
+}
+
+// isRetryableError checks if an error is transient and worth retrying
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	retryablePatterns := []string{
+		"timeout", "timed out", "connection refused", "connection reset",
+		"no such host", "EOF", "503", "502", "504", "429", "500",
+	}
+	for _, pattern := range retryablePatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+	return false
 }

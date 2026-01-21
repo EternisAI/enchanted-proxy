@@ -33,6 +33,7 @@ const (
 //   - Cleanup expired sessions to prevent memory leaks
 //   - Provide observability (metrics, active streams list)
 //   - Handle graceful shutdown
+//   - Coordinate distributed cancellation across instances (via NATS)
 //
 // Thread-safety:
 //   - All public methods are thread-safe
@@ -48,6 +49,9 @@ type StreamManager struct {
 
 	// toolExecutor handles tool call execution (optional)
 	toolExecutor *ToolExecutor
+
+	// distributedCancel handles cross-instance stream cancellation (optional)
+	distributedCancel *DistributedCancelService
 
 	// logger for this manager
 	logger *logger.Logger
@@ -485,6 +489,17 @@ func (sm *StreamManager) RecordSubscription() {
 // This should be called during initialization, before any sessions are created.
 func (sm *StreamManager) SetToolExecutor(executor *ToolExecutor) {
 	sm.toolExecutor = executor
+}
+
+// SetDistributedCancel sets the distributed cancel service for cross-instance cancellation.
+// This enables the StreamManager to coordinate stream cancellation across multiple instances.
+func (sm *StreamManager) SetDistributedCancel(service *DistributedCancelService) {
+	sm.distributedCancel = service
+}
+
+// GetDistributedCancel returns the distributed cancel service, or nil if not configured.
+func (sm *StreamManager) GetDistributedCancel() *DistributedCancelService {
+	return sm.distributedCancel
 }
 
 // SaveCompletedSession saves a completed session's message to Firestore.

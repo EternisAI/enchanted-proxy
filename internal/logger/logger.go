@@ -2,12 +2,40 @@ package logger
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"log/slog"
 	"os"
 	"time"
 
 	"github.com/lmittmann/tint"
 )
+
+// instanceID is a unique identifier for this server instance.
+// Used to correlate logs across distributed deployments.
+var instanceID string
+
+func init() {
+	// Try environment variables first (Kubernetes sets HOSTNAME)
+	instanceID = os.Getenv("INSTANCE_ID")
+	if instanceID == "" {
+		instanceID = os.Getenv("HOSTNAME")
+	}
+	if instanceID == "" {
+		instanceID = os.Getenv("POD_NAME")
+	}
+	// Generate random ID as fallback
+	if instanceID == "" {
+		b := make([]byte, 4)
+		rand.Read(b)
+		instanceID = hex.EncodeToString(b)
+	}
+}
+
+// GetInstanceID returns the instance ID for this server.
+func GetInstanceID() string {
+	return instanceID
+}
 
 // Config holds the configuration of the logger.
 type Config struct {
@@ -51,8 +79,9 @@ func New(config Config) *Logger {
 				return a
 			},
 		}
+		// Add instance_id to all logs for distributed tracing
 		return &Logger{
-			Logger: slog.New(slog.NewJSONHandler(os.Stdout, opts)),
+			Logger: slog.New(slog.NewJSONHandler(os.Stdout, opts)).With(slog.String("instance_id", instanceID)),
 		}
 	}
 
@@ -62,8 +91,9 @@ func New(config Config) *Logger {
 		TimeFormat: time.Kitchen,
 	}
 
+	// Add instance_id to all logs for distributed tracing
 	return &Logger{
-		Logger: slog.New(tint.NewHandler(os.Stdout, opts)),
+		Logger: slog.New(tint.NewHandler(os.Stdout, opts)).With(slog.String("instance_id", instanceID)),
 	}
 }
 

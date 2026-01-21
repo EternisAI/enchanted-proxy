@@ -88,6 +88,10 @@ type Querier interface {
 	UpdateZcashInvoiceToPaid(ctx context.Context, id uuid.UUID) error
 	UpdateZcashInvoiceToProcessing(ctx context.Context, id uuid.UUID) error
 	UpsertEntitlement(ctx context.Context, arg UpsertEntitlementParams) error
+	// Grants or extends an entitlement. For same-tier renewals where the current
+	// subscription is still active (expires after invoice creation), extends from
+	// the current expiration. Otherwise starts from the provided base time.
+	UpsertEntitlementWithExtension(ctx context.Context, arg UpsertEntitlementWithExtensionParams) error
 	UpsertEntitlementWithTier(ctx context.Context, arg UpsertEntitlementWithTierParams) error
 }
 

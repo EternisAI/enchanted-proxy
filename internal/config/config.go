@@ -13,6 +13,12 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// TitleGenerationConfig contains system prompts for title generation
+type TitleGenerationConfig struct {
+	InitialPrompt      string `yaml:"initial_prompt"`
+	RegenerationPrompt string `yaml:"regeneration_prompt"`
+}
+
 type Config struct {
 	Port                    string
 	GinMode                 string
@@ -37,6 +43,9 @@ type Config struct {
 	ValidatorType           string // "jwk" or "firebase"
 	JWTJWKSURL              string
 	FirebaseCredJSON        string
+
+	// Title Generation
+	TitleGeneration *TitleGenerationConfig `yaml:"title_generation"`
 
 	// Model Router
 	ModelRouterConfig *ModelRouterConfig `yaml:"model_router"`
@@ -134,6 +143,9 @@ type Config struct {
 	LinearTeamID    string
 	LinearProjectID string
 	LinearLabelID   string
+
+	// Internal API Key (for /internal/ endpoints)
+	InternalAPIKey string
 }
 
 var (
@@ -293,6 +305,9 @@ func LoadConfig() {
 		LinearLabelID:   getEnvOrDefault("LINEAR_LABEL_ID", ""),
 		LinearProjectID: getEnvOrDefault("LINEAR_PROJECT_ID", ""),
 		LinearTeamID:    getEnvOrDefault("LINEAR_TEAM_ID", ""),
+
+		// Internal API Key (for /internal/ endpoints)
+		InternalAPIKey: getEnvOrDefault("INTERNAL_API_KEY", ""),
 	}
 
 	// Load settings from a configuration file.
@@ -322,6 +337,10 @@ func LoadConfig() {
 	// Validate required configs
 	if AppConfig.ModelRouterConfig == nil {
 		log.Fatal("Model Router configuration is empty")
+	}
+
+	if AppConfig.TitleGeneration == nil {
+		log.Fatal("Title Generation configuration is empty")
 	}
 
 	if AppConfig.GoogleClientID == "" || AppConfig.SlackClientID == "" || AppConfig.TwitterClientID == "" {
@@ -362,6 +381,10 @@ func LoadConfig() {
 
 	if AppConfig.LinearAPIKey == "" {
 		log.Println("Warning: Linear API key is missing. Please set LINEAR_API_KEY environment variable.")
+	}
+
+	if AppConfig.InternalAPIKey == "" {
+		log.Println("Warning: Internal API key is missing. /internal/ endpoints will reject all requests. Please set INTERNAL_API_KEY environment variable.")
 	}
 
 	if AppConfig.AppStoreAPIKeyP8 == "" || AppConfig.AppStoreAPIKeyID == "" || AppConfig.AppStoreBundleID == "" || AppConfig.AppStoreIssuerID == "" {
