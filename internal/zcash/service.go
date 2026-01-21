@@ -70,6 +70,13 @@ func NewService(queries pgdb.Querier, firestoreClient *firestore.Client, logger 
 	}
 }
 
+// backendInvoiceResult holds the response from the zcash-backend when creating an invoice.
+type backendInvoiceResult struct {
+	ID               string
+	ReceivingAddress string
+	AmountZatoshis   int64
+}
+
 // Invoice represents an invoice stored in the local database.
 type Invoice struct {
 	ID               uuid.UUID
@@ -199,6 +206,8 @@ func (s *Service) GetZecPriceUSD(ctx context.Context) (float64, error) {
 
 // CreateInvoice creates a new invoice, stores it locally, writes to Firestore,
 // and calls the zcash-backend to get a receiving address.
+// If the backend returns an existing invoice (e.g., user already has a pending invoice
+// for the same product), we return that existing invoice instead of creating a new one.
 func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (*Invoice, error) {
 	product := s.GetProduct(productID)
 	if product == nil {
@@ -219,9 +228,76 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 	invoiceID := uuid.New()
 
 	// Call zcash-backend to create invoice and get address
-	address, err := s.createBackendInvoice(ctx, invoiceID.String(), userID, productID, zatAmount)
+	backendResult, err := s.createBackendInvoice(ctx, invoiceID.String(), userID, productID, zatAmount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create backend invoice: %w", err)
+	}
+
+	// Check if backend returned an existing invoice (different ID than what we requested)
+	if backendResult.ID != invoiceID.String() {
+		s.logger.Info("backend returned existing invoice",
+			"requested_id", invoiceID.String(),
+			"returned_id", backendResult.ID,
+			"user_id", userID,
+			"product_id", productID,
+			"backend_amount_zatoshis", backendResult.AmountZatoshis,
+		)
+
+		// Try to fetch the existing invoice from our database
+		existingInvoiceID, err := uuid.Parse(backendResult.ID)
+		if err != nil {
+			return nil, fmt.Errorf("backend returned invalid invoice ID: %w", err)
+		}
+
+		existingRow, err := s.queries.GetZcashInvoice(ctx, existingInvoiceID)
+		if err == nil {
+			// Found existing invoice in our database
+			// Check if amounts are consistent between backend and our database
+			if existingRow.AmountZatoshis != backendResult.AmountZatoshis {
+				s.logger.Warn("amount mismatch between backend and local database for existing invoice",
+					"invoice_id", backendResult.ID,
+					"backend_amount_zatoshis", backendResult.AmountZatoshis,
+					"local_amount_zatoshis", existingRow.AmountZatoshis,
+					"user_id", userID,
+				)
+			}
+
+			var paidAt *time.Time
+			if existingRow.PaidAt.Valid {
+				paidAt = &existingRow.PaidAt.Time
+			}
+
+			return &Invoice{
+				ID:               existingRow.ID,
+				UserID:           existingRow.UserID,
+				ProductID:        existingRow.ProductID,
+				AmountZatoshis:   existingRow.AmountZatoshis,
+				ZecAmount:        existingRow.ZecAmount,
+				PriceUSD:         existingRow.PriceUsd,
+				ReceivingAddress: existingRow.ReceivingAddress,
+				Status:           existingRow.Status,
+				CreatedAt:        existingRow.CreatedAt,
+				UpdatedAt:        existingRow.UpdatedAt,
+				PaidAt:           paidAt,
+			}, nil
+		}
+
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("failed to fetch existing invoice: %w", err)
+		}
+
+		// Invoice exists in backend but not in our database - this is unexpected
+		// but we should handle it gracefully by using the backend's ID and amount
+		s.logger.Warn("backend returned invoice not found in local database, creating with backend ID and amount",
+			"backend_invoice_id", backendResult.ID,
+			"backend_amount_zatoshis", backendResult.AmountZatoshis,
+			"calculated_amount_zatoshis", zatAmount,
+			"user_id", userID,
+		)
+		invoiceID = existingInvoiceID
+		// Use the backend's amount to ensure consistency
+		zatAmount = backendResult.AmountZatoshis
+		zecAmount = float64(zatAmount) / 100_000_000
 	}
 
 	// Store in local database
@@ -232,7 +308,7 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 		AmountZatoshis:   zatAmount,
 		ZecAmount:        zecAmount,
 		PriceUsd:         product.PriceUSD,
-		ReceivingAddress: address,
+		ReceivingAddress: backendResult.ReceivingAddress,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to store invoice: %w", err)
@@ -246,7 +322,7 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 		AmountZatoshis:   zatAmount,
 		ZecAmount:        zecAmount,
 		PriceUSD:         product.PriceUSD,
-		ReceivingAddress: address,
+		ReceivingAddress: backendResult.ReceivingAddress,
 		Status:           "pending",
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -270,7 +346,7 @@ func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (
 		AmountZatoshis:   zatAmount,
 		ZecAmount:        zecAmount,
 		PriceUSD:         product.PriceUSD,
-		ReceivingAddress: address,
+		ReceivingAddress: backendResult.ReceivingAddress,
 		Status:           "pending",
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -536,7 +612,9 @@ func (s *Service) verifyInvoiceWithBackend(ctx context.Context, invoiceID string
 }
 
 // createBackendInvoice calls zcash-backend to create invoice and get receiving address.
-func (s *Service) createBackendInvoice(ctx context.Context, invoiceID, userID, productID string, zatAmount int64) (string, error) {
+// The backend may return an existing invoice if the user already has a pending/processing
+// invoice for the same product, in which case the returned ID will differ from the requested one.
+func (s *Service) createBackendInvoice(ctx context.Context, invoiceID, userID, productID string, zatAmount int64) (*backendInvoiceResult, error) {
 	backendURL := config.AppConfig.ZCashBackendURL + "/invoices"
 	apiKey := config.AppConfig.ZCashBackendAPIKey
 
@@ -549,12 +627,12 @@ func (s *Service) createBackendInvoice(ctx context.Context, invoiceID, userID, p
 
 	reqJSON, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", backendURL, bytes.NewBuffer(reqJSON))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -564,22 +642,27 @@ func (s *Service) createBackendInvoice(ctx context.Context, invoiceID, userID, p
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("backend returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("backend returned status %d", resp.StatusCode)
 	}
 
 	var result struct {
 		ID               string `json:"id"`
 		ReceivingAddress string `json:"receiving_address"`
+		AmountZatoshis   int64  `json:"amount_zatoshis"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return result.ReceivingAddress, nil
+	return &backendInvoiceResult{
+		ID:               result.ID,
+		ReceivingAddress: result.ReceivingAddress,
+		AmountZatoshis:   result.AmountZatoshis,
+	}, nil
 }
