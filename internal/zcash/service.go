@@ -500,48 +500,64 @@ func (s *Service) grantEntitlement(ctx context.Context, invoice pgdb.ZcashInvoic
 		return fmt.Errorf("unknown product: %s", invoice.ProductID)
 	}
 
-	var expiresAt sql.NullTime
 	if product.IsLifetime {
-		expiresAt = sql.NullTime{
+		// Lifetime products: use existing UpsertEntitlementWithTier (no extension logic needed)
+		expiresAt := sql.NullTime{
 			Time:  time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC),
 			Valid: true,
 		}
-	} else {
-		var duration time.Duration
-		switch product.ID {
-		case ProductWeeklyPro:
-			duration = 7 * 24 * time.Hour
-		case ProductMonthlyPro:
-			duration = 30 * 24 * time.Hour
-		case ProductYearlyPro:
-			duration = 365 * 24 * time.Hour
-		default:
-			duration = 30 * 24 * time.Hour
+		err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
+			UserID:                invoice.UserID,
+			SubscriptionTier:      product.Tier,
+			SubscriptionExpiresAt: expiresAt,
+			SubscriptionProvider:  "zcash",
+			StripeCustomerID:      nil,
+		})
+		if err != nil {
+			return err
 		}
-		// Use invoice.CreatedAt as base for stable expiration calculation
-		// This prevents race conditions where duplicate callbacks would calculate different expirations
-		expiresAt = sql.NullTime{
-			Time:  invoice.CreatedAt.Add(duration),
-			Valid: true,
-		}
+
+		s.logger.Info("lifetime entitlement granted",
+			"user_id", invoice.UserID,
+			"invoice_id", invoice.ID.String(),
+			"tier", product.Tier,
+		)
+		return nil
 	}
 
-	err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
-		UserID:                invoice.UserID,
-		SubscriptionTier:      product.Tier,
-		SubscriptionExpiresAt: expiresAt,
-		SubscriptionProvider:  "zcash",
-		StripeCustomerID:      nil,
+	// Time-limited products: use extension logic
+	// For same-tier renewals where current subscription is still active,
+	// extends from current expiration. Otherwise starts from invoice creation time.
+	var durationDays int32
+	switch product.ID {
+	case ProductWeeklyPro:
+		durationDays = 7
+	case ProductMonthlyPro:
+		durationDays = 30
+	case ProductYearlyPro:
+		durationDays = 365
+	default:
+		durationDays = 30
+	}
+
+	err := s.queries.UpsertEntitlementWithExtension(ctx, pgdb.UpsertEntitlementWithExtensionParams{
+		UserID:               invoice.UserID,
+		SubscriptionTier:     product.Tier,
+		BaseTime:             invoice.CreatedAt,
+		DurationDays:         durationDays,
+		SubscriptionProvider: "zcash",
+		StripeCustomerID:     nil,
 	})
 	if err != nil {
 		return err
 	}
 
-	s.logger.Info("entitlement granted",
+	s.logger.Info("entitlement granted/extended",
 		"user_id", invoice.UserID,
 		"invoice_id", invoice.ID.String(),
 		"tier", product.Tier,
-		"expires_at", expiresAt.Time,
+		"duration_days", durationDays,
+		"base_time", invoice.CreatedAt,
 	)
 
 	return nil

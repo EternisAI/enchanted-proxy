@@ -99,6 +99,57 @@ func (q *Queries) UpsertEntitlement(ctx context.Context, arg UpsertEntitlementPa
 	return err
 }
 
+const upsertEntitlementWithExtension = `-- name: UpsertEntitlementWithExtension :exec
+INSERT INTO entitlements (user_id, subscription_tier, subscription_expires_at, subscription_provider, stripe_customer_id, updated_at)
+VALUES (
+  $1,
+  $2,
+  $3::timestamptz + (interval '1 day' * $4::int),
+  $5,
+  $6,
+  NOW()
+)
+ON CONFLICT (user_id) DO UPDATE SET
+  subscription_tier = $2,
+  subscription_expires_at =
+    CASE
+      -- Same tier and current subscription expires after invoice creation: extend
+      WHEN entitlements.subscription_tier = $2
+           AND entitlements.subscription_expires_at IS NOT NULL
+           AND entitlements.subscription_expires_at > $3::timestamptz
+      THEN entitlements.subscription_expires_at + (interval '1 day' * $4::int)
+      -- Different tier or expired: start fresh from base time
+      ELSE $3::timestamptz + (interval '1 day' * $4::int)
+    END,
+  subscription_provider = $5,
+  stripe_customer_id = COALESCE($6, entitlements.stripe_customer_id),
+  updated_at = NOW()
+`
+
+type UpsertEntitlementWithExtensionParams struct {
+	UserID               string    `json:"userId"`
+	SubscriptionTier     string    `json:"subscriptionTier"`
+	BaseTime             time.Time `json:"baseTime"`
+	DurationDays         int32     `json:"durationDays"`
+	SubscriptionProvider string    `json:"subscriptionProvider"`
+	StripeCustomerID     *string   `json:"stripeCustomerId"`
+}
+
+// Grants or extends an entitlement. For same-tier renewals where the current
+// subscription is still active (expires after invoice creation), extends from
+// the current expiration. Otherwise starts from the provided base time.
+func (q *Queries) UpsertEntitlementWithExtension(ctx context.Context, arg UpsertEntitlementWithExtensionParams) error {
+	_, err := q.db.ExecContext(ctx, upsertEntitlementWithExtension,
+		arg.UserID,
+		arg.SubscriptionTier,
+		arg.BaseTime,
+		arg.DurationDays,
+		arg.SubscriptionProvider,
+		arg.StripeCustomerID,
+	)
+	return err
+}
+
 const upsertEntitlementWithTier = `-- name: UpsertEntitlementWithTier :exec
 INSERT INTO entitlements (user_id, subscription_tier, subscription_expires_at, subscription_provider, stripe_customer_id, updated_at)
 VALUES ($1, $2, $3, $4, $5, NOW())
