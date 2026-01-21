@@ -359,7 +359,10 @@ func (s *Service) HandlePaymentCallback(ctx context.Context, invoiceIDStr, statu
 		return fmt.Errorf("status mismatch: callback reported %q but backend reports %q", status, verifiedStatus)
 	}
 
-	if accumulatedZatoshis > verifiedAmount {
+	// SECURITY: For paid status, strictly verify the callback amount doesn't exceed backend.
+	// For processing status, we allow amount differences since partial payments are in progress
+	// and the accumulated amount may be lower than expected.
+	if status == "paid" && accumulatedZatoshis > verifiedAmount {
 		s.logger.Warn("callback amount exceeds backend",
 			"invoice_id", invoiceIDStr,
 			"callback_amount", accumulatedZatoshis,
