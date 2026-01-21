@@ -342,6 +342,42 @@ func (s *Service) HandlePaymentCallback(ctx context.Context, invoiceIDStr, statu
 		return fmt.Errorf("invalid status: %s", status)
 	}
 
+	// SECURITY: Verify payment status with the backend before trusting the callback.
+	// This prevents attackers from spoofing callbacks to mark invoices as paid.
+	verifiedStatus, verifiedAmount, err := s.verifyInvoiceWithBackend(ctx, invoiceIDStr)
+	if err != nil {
+		return fmt.Errorf("failed to verify invoice with backend: %w", err)
+	}
+
+	// Detect callback/backend mismatches (potential spoofing or sync issues)
+	if status != verifiedStatus {
+		s.logger.Warn("callback status mismatch detected",
+			"invoice_id", invoiceIDStr,
+			"callback_status", status,
+			"backend_status", verifiedStatus,
+		)
+		return fmt.Errorf("status mismatch: callback reported %q but backend reports %q", status, verifiedStatus)
+	}
+
+	if accumulatedZatoshis > verifiedAmount {
+		s.logger.Warn("callback amount exceeds backend",
+			"invoice_id", invoiceIDStr,
+			"callback_amount", accumulatedZatoshis,
+			"backend_amount", verifiedAmount,
+		)
+		return fmt.Errorf("amount mismatch: callback reported %d zatoshis but backend only confirms %d", accumulatedZatoshis, verifiedAmount)
+	}
+
+	// Use verified values from backend (authoritative source)
+	status = verifiedStatus
+	accumulatedZatoshis = verifiedAmount
+
+	// Check if backend status is actionable
+	if status != "processing" && status != "paid" {
+		s.logger.Debug("backend returned non-actionable status", "invoice_id", invoiceIDStr, "status", status)
+		return nil
+	}
+
 	// Validate payment amount before marking as paid
 	if status == "paid" && accumulatedZatoshis < row.AmountZatoshis {
 		return fmt.Errorf("insufficient payment: got %d zatoshis, expected %d", accumulatedZatoshis, row.AmountZatoshis)
@@ -430,6 +466,70 @@ func (s *Service) grantEntitlement(ctx context.Context, invoice pgdb.ZcashInvoic
 	)
 
 	return nil
+}
+
+// verifyInvoiceWithBackend calls zcash-backend to get the actual invoice status.
+// This is a security measure to prevent spoofed callbacks from marking invoices as paid.
+func (s *Service) verifyInvoiceWithBackend(ctx context.Context, invoiceID string) (status string, accumulatedZatoshis int64, err error) {
+	backendURL := config.AppConfig.ZCashBackendURL + "/invoices/" + invoiceID
+	apiKey := config.AppConfig.ZCashBackendAPIKey
+
+	req, err := http.NewRequestWithContext(ctx, "GET", backendURL, nil)
+	if err != nil {
+		return "", 0, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return "", 0, ErrInvoiceNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", 0, fmt.Errorf("backend returned status %d", resp.StatusCode)
+	}
+
+	// Backend returns boolean fields for status, not a string
+	var result struct {
+		Paid                bool  `json:"paid"`
+		Processing          bool  `json:"processing"`
+		AccumulatedZatoshis int64 `json:"accumulated_zatoshis"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", 0, fmt.Errorf("failed to decode backend response: %w", err)
+	}
+
+	// Convert boolean flags to status string
+	// Priority: paid > processing > pending
+	var derivedStatus string
+	switch {
+	case result.Paid:
+		derivedStatus = "paid"
+	case result.Processing:
+		derivedStatus = "processing"
+	default:
+		derivedStatus = "pending"
+	}
+
+	s.logger.Debug("verified invoice with backend",
+		"invoice_id", invoiceID,
+		"paid", result.Paid,
+		"processing", result.Processing,
+		"derived_status", derivedStatus,
+		"accumulated_zatoshis", result.AccumulatedZatoshis,
+	)
+
+	return derivedStatus, result.AccumulatedZatoshis, nil
 }
 
 // createBackendInvoice calls zcash-backend to create invoice and get receiving address.
