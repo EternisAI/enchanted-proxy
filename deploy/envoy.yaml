@@ -121,7 +121,7 @@ static_resources:
           stat_prefix: tcp_proxy
           cluster: enclaver_odyn_egress
           tunneling_config:
-            hostname: glm-46.llm.eternisai.net:443
+            hostname: glm-47.llm.eternisai.net:443
           access_log: *access_log_tcp
           access_log_options:
             flush_access_log_on_connected: true
@@ -473,7 +473,7 @@ static_resources:
       name: envoy.transport_sockets.tls
       typed_config:
         '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
-        sni: glm-46.llm.eternisai.net
+        sni: glm-47.llm.eternisai.net
         common_tls_context:
           alpn_protocols: ["h2", "http/1.1"]
           tls_params: &tls_params

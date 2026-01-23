@@ -1,19 +1,25 @@
 package title_generation
 
-// TitleGenerationRequest represents a request to generate a chat title
-type TitleGenerationRequest struct {
-	UserID            string
-	ChatID            string
-	FirstMessage      string
-	Model             string
-	BaseURL           string
-	Platform          string
-	EncryptionEnabled *bool // nil = not specified (backward compat), true = enforce encryption, false = store plaintext
+// GenerateRequest contains the common parameters for title generation
+type GenerateRequest struct {
+	Model       string
+	BaseURL     string
+	APIKey      string
+	UserContent string // The content to generate a title from
 }
 
-// TitleGenerationResponse represents the generated title
-type TitleGenerationResponse struct {
-	Title     string
-	Encrypted bool
-	Error     error
+// RegenerationContext contains conversation context for improved title generation
+type RegenerationContext struct {
+	FirstUserMessage  string
+	FirstAIResponse   string
+	SecondUserMessage string
+}
+
+// StorageRequest contains all info needed to encrypt and store a generated title
+type StorageRequest struct {
+	UserID            string
+	ChatID            string
+	Title             string
+	Platform          string
+	EncryptionEnabled *bool
 }
