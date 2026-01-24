@@ -87,6 +87,10 @@ model_router:
     - zhipu/glm-4.7
     - z-ai/glm-4.7
     - glm-4.7
+    # Fall back for GLM-4.6
+    - zai-org/GLM-4.6
+    - z-ai/glm-4.6
+    - glm-4.6
     token_multiplier: 0.6
     providers:
     - name: Eternis
@@ -135,15 +139,6 @@ model_router:
     providers:
     - name: Eternis
       base_url: http://34.30.193.13:8000/v1
-
-  # GLM-4.6 - Free & Pro - via NEAR AI (1× multiplier)
-  - name: zai-org/GLM-4.6
-    aliases:
-    - z-ai/glm-4.6
-    - glm-4.6
-    token_multiplier: 1.0
-    providers:
-    - name: NEAR AI
 
   # GPT-4.1 - Pro only - via OpenRouter (4× multiplier)
   - name: openai/gpt-4.1

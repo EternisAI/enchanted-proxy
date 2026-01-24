@@ -81,8 +81,8 @@ var Configs = map[Tier]Config{
 		AllowedModels: []string{
 			"deepseek-r1-0528", "deepseek-r1", // DeepSeek R1 (1×)
 			"llama3-3-70b", "llama-3.3-70b", // Llama 3.3 70B (1×)
-			"zai-org/GLM-4.6", "glm-4.6", // GLM-4.6 (3×)
-			"z-ai/glm-4.7", "zhipu/glm-4.7", "glm-4.7", // GLM-4.7 (1×, dev/testing)
+			"zai-org/GLM-4.6", "glm-4.6", // GLM-4.6 (0.6×)
+			"zai-org/GLM-4.7", "glm-4.7", "z-ai/glm-4.7", "zhipu/glm-4.7", // GLM-4.7 (0.6×)
 			"dolphin-mistral-eternis", "dolphin-mistral", // Dolphin Mistral (0.5×, uncensored)
 			"Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3-30b", "qwen-30b", // Qwen3 30B (0.8×)
 		},
