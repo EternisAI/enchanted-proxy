@@ -6,3 +6,6 @@
 18.213.155.45   aws-1-us-east-1.pooler.supabase.com
 18.214.78.123   aws-1-us-east-1.pooler.supabase.com
 3.151.95.224    db.zwcxttrzlaxtbyitpaip.supabase.co
+172.17.14.64    nats
+172.18.4.136    nats-dev
+172.18.3.203    nats-staging
