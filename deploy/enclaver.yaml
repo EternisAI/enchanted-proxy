@@ -75,6 +75,10 @@ egress:
   - fcm.googleapis.com
   # Linear API (problem reports)
   - api.linear.app
+  # NATS
+  - 172.17.14.64
+  - 172.18.4.136
+  - 172.18.3.203
 env:
 - APPSTORE_API_KEY_ID
 - APPSTORE_API_KEY_P8
