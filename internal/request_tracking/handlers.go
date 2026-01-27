@@ -7,6 +7,7 @@ import (
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 )
@@ -61,7 +62,7 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 	return func(c *gin.Context) {
 		userID, exists := auth.GetUserID(c)
 		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+			errors.Unauthorized(c, "User not authenticated", nil)
 			return
 		}
 
@@ -74,7 +75,7 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 			reqLog.Error("failed to get tier config",
 				slog.String("error", err.Error()),
 				slog.String("user_id", userID))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get tier information"})
+			errors.Internal(c, "Failed to get tier information", nil)
 			return
 		}
 
@@ -187,7 +188,7 @@ func MetricsHandler(trackingService *Service, log *logger.Logger) gin.HandlerFun
 		// Only authenticated users can view metrics
 		userID, exists := auth.GetUserID(c)
 		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+			errors.Unauthorized(c, "User not authenticated", nil)
 			return
 		}
 

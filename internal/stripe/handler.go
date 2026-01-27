@@ -1,12 +1,13 @@
 package stripe
 
 import (
-	"errors"
+	stderrors "errors"
 	"io"
 	"log/slog"
 	"net/http"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 )
@@ -90,14 +91,14 @@ func (h *Handler) CreateCheckoutSession(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&body); err != nil {
 		log.Error("invalid request body", slog.String("error", err.Error()))
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		errors.BadRequest(c, "invalid request", nil)
 		return
 	}
 
 	userID, ok := auth.GetUserID(c)
 	if !ok || userID == "" {
 		log.Error("unauthorized request - missing user ID")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		errors.Unauthorized(c, "unauthorized", nil)
 		return
 	}
 
@@ -117,7 +118,7 @@ func (h *Handler) CreateCheckoutSession(c *gin.Context) {
 			slog.String("user_id", userID),
 			slog.String("price_id", body.PriceID),
 			slog.String("error", err.Error()))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create checkout session"})
+		errors.Internal(c, "failed to create checkout session", nil)
 		return
 	}
 
@@ -189,7 +190,7 @@ func (h *Handler) CreatePortalSession(c *gin.Context) {
 	userID, ok := auth.GetUserID(c)
 	if !ok || userID == "" {
 		log.Error("unauthorized request - missing user ID")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		errors.Unauthorized(c, "unauthorized", nil)
 		return
 	}
 
@@ -212,12 +213,12 @@ func (h *Handler) CreatePortalSession(c *gin.Context) {
 			slog.String("error", err.Error()))
 
 		// Check if error is due to missing customer ID
-		if errors.Is(err, ErrNoCustomerID) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "no stripe customer found"})
+		if stderrors.Is(err, ErrNoCustomerID) {
+			errors.BadRequest(c, "no stripe customer found", nil)
 			return
 		}
 
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create portal session"})
+		errors.Internal(c, "failed to create portal session", nil)
 		return
 	}
 
@@ -292,14 +293,14 @@ func (h *Handler) HandleWebhook(c *gin.Context) {
 	payload, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		log.Error("failed to read webhook payload", slog.String("error", err.Error()))
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		errors.BadRequest(c, "invalid payload", nil)
 		return
 	}
 
 	signature := c.GetHeader("Stripe-Signature")
 	if signature == "" {
 		log.Error("missing Stripe-Signature header")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing signature"})
+		errors.BadRequest(c, "missing signature", nil)
 		return
 	}
 
