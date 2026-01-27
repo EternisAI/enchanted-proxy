@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 )
@@ -44,18 +45,14 @@ func (h *Handler) PostSearchHandler(c *gin.Context) {
 		log.Warn("invalid search request body",
 			slog.String("error", err.Error()),
 			slog.String("user_id", userID))
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request body: " + err.Error(),
-		})
+		errors.BadRequest(c, "Invalid request body: "+err.Error(), nil)
 		return
 	}
 
 	// Validate required fields
 	searchReq.Query = strings.TrimSpace(searchReq.Query)
 	if searchReq.Query == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Missing required field 'query'",
-		})
+		errors.BadRequest(c, "Missing required field 'query'", nil)
 		return
 	}
 
@@ -69,9 +66,7 @@ func (h *Handler) PostSearchHandler(c *gin.Context) {
 		log.Warn("unsupported search engine requested",
 			slog.String("engine", searchReq.Engine),
 			slog.String("user_id", userID))
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Unsupported search engine. Currently supported: 'duckduckgo'",
-		})
+		errors.BadRequest(c, "Unsupported search engine. Currently supported: 'duckduckgo'", nil)
 		return
 	}
 
@@ -97,9 +92,7 @@ func (h *Handler) PostSearchHandler(c *gin.Context) {
 			slog.String("query", "[REDACTED]"),
 			slog.String("user_id", userID))
 
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Search request failed",
-		})
+		errors.Internal(c, "Search request failed", nil)
 		return
 	}
 
@@ -123,9 +116,7 @@ func (h *Handler) PostExaSearchHandler(c *gin.Context) {
 		log.Warn("invalid exa search request body",
 			slog.String("error", err.Error()),
 			slog.String("user_id", userID))
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request body: " + err.Error(),
-		})
+		errors.BadRequest(c, "Invalid request body: "+err.Error(), nil)
 		return
 	}
 
@@ -135,9 +126,7 @@ func (h *Handler) PostExaSearchHandler(c *gin.Context) {
 
 	// Validate required fields
 	if len(searchReq.Queries) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "At least one query is required",
-		})
+		errors.BadRequest(c, "At least one query is required", nil)
 		return
 	}
 
@@ -145,18 +134,14 @@ func (h *Handler) PostExaSearchHandler(c *gin.Context) {
 	for i, q := range searchReq.Queries {
 		searchReq.Queries[i] = strings.TrimSpace(q)
 		if searchReq.Queries[i] == "" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Query at index %d is empty", i),
-			})
+			errors.BadRequest(c, fmt.Sprintf("Query at index %d is empty", i), nil)
 			return
 		}
 	}
 
 	// Validate max queries
 	if len(searchReq.Queries) > 3 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Maximum 3 queries allowed",
-		})
+		errors.BadRequest(c, "Maximum 3 queries allowed", nil)
 		return
 	}
 
@@ -189,9 +174,7 @@ func (h *Handler) PostExaSearchHandler(c *gin.Context) {
 			slog.String("query", "[REDACTED]"),
 			slog.String("user_id", userID))
 
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Exa search request failed",
-		})
+		errors.Internal(c, "Exa search request failed", nil)
 		return
 	}
 

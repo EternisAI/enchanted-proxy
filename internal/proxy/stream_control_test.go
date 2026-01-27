@@ -193,7 +193,12 @@ func TestStopStreamHandler_AlreadyCompleted(t *testing.T) {
 	if response["error"] == nil {
 		t.Error("expected error message in response")
 	}
-	if !response["completed"].(bool) {
+	// With APIError format, extra fields are in "details"
+	details, ok := response["details"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected details in response")
+	}
+	if !details["completed"].(bool) {
 		t.Error("expected completed to be true")
 	}
 }
