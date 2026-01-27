@@ -31,19 +31,19 @@ func (h *Handler) RedeemInviteCode(c *gin.Context) {
 
 	var req RedeemInviteCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "accessToken & code required"})
+		errors.BadRequest(c, "accessToken & code required", nil)
 		return
 	}
 
 	userID, ok := auth.GetUserID(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		errors.Unauthorized(c, "User not authenticated", nil)
 		return
 	}
 
 	isWhitelisted, err := h.service.IsUserWhitelisted(userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errors.Internal(c, err.Error(), nil)
 		return
 	}
 
@@ -55,18 +55,18 @@ func (h *Handler) RedeemInviteCode(c *gin.Context) {
 	// Use invite code with the verified email
 	if err := h.service.UseInviteCode(code, userID); err != nil {
 		if err.Error() == "invite code not found" {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Invalid code"})
+			errors.NotFound(c, "Invalid code", nil)
 			return
 		}
 		if err.Error() == "invite code already used" {
-			c.JSON(http.StatusConflict, gin.H{"error": "Code already used"})
+			errors.Conflict(c, "Code already used", nil)
 			return
 		}
 		if err.Error() == "code bound to a different user" {
 			errors.AbortWithForbidden(c, errors.InviteWrongUser())
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		errors.BadRequest(c, err.Error(), nil)
 		return
 	}
 
@@ -79,12 +79,12 @@ func (h *Handler) DeleteInviteCode(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID"})
+		errors.BadRequest(c, "Invalid ID", nil)
 		return
 	}
 
 	if err := h.service.DeleteInviteCode(id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errors.Internal(c, err.Error(), nil)
 		return
 	}
 
@@ -97,7 +97,7 @@ func (h *Handler) ResetInviteCode(c *gin.Context) {
 	code := c.Param("code")
 
 	if err := h.service.ResetInviteCode(code); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errors.Internal(c, err.Error(), nil)
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *Handler) CheckUserWhitelist(c *gin.Context) {
 	// Check if user ID is whitelisted (has valid invite codes)
 	isWhitelisted, err := h.service.IsUserWhitelisted(userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errors.Internal(c, err.Error(), nil)
 		return
 	}
 

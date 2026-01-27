@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 )
@@ -24,19 +25,19 @@ func (h *Handler) AttachAppStoreSubscription(c *gin.Context) {
 		JWSTransactionInfo string `json:"jwsTransactionInfo"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.JWSTransactionInfo == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		errors.BadRequest(c, "invalid request", nil)
 		return
 	}
 
 	userID, ok := auth.GetUserID(c)
 	if !ok || userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		errors.Unauthorized(c, "unauthorized", nil)
 		return
 	}
 
 	payload, expiresAt, err := h.service.AttachAppStoreSubscription(c.Request.Context(), userID, body.JWSTransactionInfo)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid jwsTransactionInfo"})
+		errors.BadRequest(c, "invalid jwsTransactionInfo", nil)
 		return
 	}
 

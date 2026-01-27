@@ -19,6 +19,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/background"
 	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
@@ -90,7 +91,7 @@ func ProxyHandler(
 			requestBody, err = io.ReadAll(c.Request.Body)
 			if err != nil {
 				log.Error("failed to read request body", slog.String("error", err.Error()))
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read request body"})
+				errors.Internal(c, "Failed to read request body", nil)
 				return
 			}
 			c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
@@ -124,13 +125,13 @@ func ProxyHandler(
 		// Model field is required - proxy controls all routing
 		if model == "" {
 			log.Warn("missing model field in request body")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Model field is required"})
+			errors.BadRequest(c, "Model field is required", nil)
 			return
 		}
 
 		if modelRouter == nil {
 			log.Error("model router not initialized")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Routing service unavailable"})
+			errors.Internal(c, "Routing service unavailable", nil)
 			return
 		}
 
@@ -140,7 +141,7 @@ func ProxyHandler(
 			log.Error("failed to route model",
 				slog.String("error", err.Error()),
 				slog.String("model", model))
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("No provider configured for model: %s", model)})
+			errors.BadRequest(c, fmt.Sprintf("No provider configured for model: %s", model), nil)
 			return
 		}
 
@@ -269,7 +270,7 @@ func ProxyHandler(
 		target, err := url.Parse(baseURL)
 		if err != nil {
 			log.Error("invalid url format", slog.String("base_url", baseURL), slog.String("error", err.Error()))
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid URL format"})
+			errors.BadRequest(c, "Invalid URL format", nil)
 			return
 		}
 
@@ -697,7 +698,7 @@ func handleStreamingDirect(
 	if session == nil {
 		log.Error("direct streaming: failed to get session for client",
 			slog.String("chat_id", chatID))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create streaming session"})
+		errors.Internal(c, "Failed to create streaming session", nil)
 		return
 	}
 

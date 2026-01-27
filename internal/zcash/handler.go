@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	apierrors "github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 )
@@ -38,20 +39,20 @@ type InvoiceResponse struct {
 func (h *Handler) CreateInvoice(c *gin.Context) {
 	var req CreateInvoiceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		apierrors.BadRequest(c, "invalid request: "+err.Error(), nil)
 		return
 	}
 
 	userID, ok := auth.GetUserID(c)
 	if !ok || userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		apierrors.Unauthorized(c, "unauthorized", nil)
 		return
 	}
 
 	invoice, err := h.service.CreateInvoice(c.Request.Context(), userID, req.ProductID)
 	if err != nil {
 		h.logger.Error("failed to create zcash invoice", "error", err.Error(), "user_id", userID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create invoice"})
+		apierrors.Internal(c, "failed to create invoice", nil)
 		return
 	}
 
@@ -70,13 +71,13 @@ func (h *Handler) CreateInvoice(c *gin.Context) {
 func (h *Handler) GetInvoice(c *gin.Context) {
 	invoiceID := c.Param("invoiceId")
 	if invoiceID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invoice_id required"})
+		apierrors.BadRequest(c, "invoice_id required", nil)
 		return
 	}
 
 	userID, ok := auth.GetUserID(c)
 	if !ok || userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		apierrors.Unauthorized(c, "unauthorized", nil)
 		return
 	}
 
@@ -84,11 +85,11 @@ func (h *Handler) GetInvoice(c *gin.Context) {
 	if err != nil {
 		h.logger.Error("failed to get invoice", "error", err.Error(), "invoice_id", invoiceID)
 		if errors.Is(err, ErrInvalidInvoiceID) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid invoice ID"})
+			apierrors.BadRequest(c, "invalid invoice ID", nil)
 		} else if errors.Is(err, ErrInvoiceNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
+			apierrors.NotFound(c, "invoice not found", nil)
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			apierrors.Internal(c, "internal error", nil)
 		}
 		return
 	}
@@ -120,7 +121,7 @@ type CallbackRequest struct {
 func (h *Handler) HandleCallback(c *gin.Context) {
 	var req CallbackRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		apierrors.BadRequest(c, "invalid request", nil)
 		return
 	}
 
@@ -131,7 +132,7 @@ func (h *Handler) HandleCallback(c *gin.Context) {
 			"invoice_id", req.InvoiceID,
 			"status", req.Status,
 		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apierrors.Internal(c, err.Error(), nil)
 		return
 	}
 

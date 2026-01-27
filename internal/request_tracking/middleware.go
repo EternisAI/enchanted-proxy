@@ -2,7 +2,6 @@ package request_tracking
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -109,13 +108,11 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 						slog.String("tier", tierConfig.Name),
 						slog.Int64("limit", tierConfig.MonthlyPlanTokens),
 						slog.Int64("used", used))
-					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-						"error":     fmt.Sprintf("%s monthly plan token limit exceeded", tierConfig.DisplayName),
-						"tier":      tierConfig.Name,
-						"limit":     tierConfig.MonthlyPlanTokens,
-						"used":      used,
-						"resets_at": tierConfig.GetMonthlyResetTime(),
-					})
+					errors.AbortWithRateLimit(c, errors.MonthlyLimitExceeded(
+						tierConfig.Name, tierConfig.DisplayName,
+						tierConfig.MonthlyPlanTokens, used,
+						tierConfig.GetMonthlyResetTime(),
+					))
 					return
 				}
 			}
@@ -133,13 +130,11 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 						slog.String("tier", tierConfig.Name),
 						slog.Int64("limit", tierConfig.WeeklyPlanTokens),
 						slog.Int64("used", used))
-					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-						"error":     fmt.Sprintf("%s weekly plan token limit exceeded", tierConfig.DisplayName),
-						"tier":      tierConfig.Name,
-						"limit":     tierConfig.WeeklyPlanTokens,
-						"used":      used,
-						"resets_at": tierConfig.GetWeeklyResetTime(),
-					})
+					errors.AbortWithRateLimit(c, errors.WeeklyLimitExceeded(
+						tierConfig.Name, tierConfig.DisplayName,
+						tierConfig.WeeklyPlanTokens, used,
+						tierConfig.GetWeeklyResetTime(),
+					))
 					return
 				}
 			}
@@ -170,14 +165,11 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 								slog.String("tier", tierConfig.Name),
 								slog.Int64("fallback_limit", tierConfig.FallbackDailyPlanTokens),
 								slog.Int64("fallback_used", fallbackUsed))
-							c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-								"error":           fmt.Sprintf("%s daily fallback limit exceeded", tierConfig.DisplayName),
-								"tier":            tierConfig.Name,
-								"rate_limit_type": "hard",
-								"limit":           tierConfig.FallbackDailyPlanTokens,
-								"used":            fallbackUsed,
-								"resets_at":       tierConfig.GetDailyResetTime(),
-							})
+							errors.AbortWithRateLimit(c, errors.FallbackLimitExceeded(
+								tierConfig.Name, tierConfig.DisplayName,
+								tierConfig.FallbackDailyPlanTokens, fallbackUsed,
+								tierConfig.GetDailyResetTime(),
+							))
 							return
 						}
 						// Fallback quota available - allow request to proceed
@@ -194,14 +186,12 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 							slog.Int64("limit", tierConfig.DailyPlanTokens),
 							slog.Int64("used", used),
 							slog.String("model", model))
-						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-							"error":           fmt.Sprintf("%s daily plan token limit exceeded", tierConfig.DisplayName),
-							"tier":            tierConfig.Name,
-							"rate_limit_type": "soft",
-							"limit":           tierConfig.DailyPlanTokens,
-							"used":            used,
-							"resets_at":       tierConfig.GetDailyResetTime(),
-						})
+						errors.AbortWithRateLimit(c, errors.DailyLimitExceeded(
+							tierConfig.Name, tierConfig.DisplayName,
+							tierConfig.DailyPlanTokens, used,
+							tierConfig.GetDailyResetTime(),
+							errors.RateLimitTypeSoft,
+						))
 						return
 					} else {
 						// No fallback available (free tier) - hard limit
@@ -210,14 +200,12 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 							slog.String("tier", tierConfig.Name),
 							slog.Int64("limit", tierConfig.DailyPlanTokens),
 							slog.Int64("used", used))
-						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-							"error":           fmt.Sprintf("%s daily plan token limit exceeded", tierConfig.DisplayName),
-							"tier":            tierConfig.Name,
-							"rate_limit_type": "hard",
-							"limit":           tierConfig.DailyPlanTokens,
-							"used":            used,
-							"resets_at":       tierConfig.GetDailyResetTime(),
-						})
+						errors.AbortWithRateLimit(c, errors.DailyLimitExceeded(
+							tierConfig.Name, tierConfig.DisplayName,
+							tierConfig.DailyPlanTokens, used,
+							tierConfig.GetDailyResetTime(),
+							errors.RateLimitTypeHard,
+						))
 						return
 					}
 				}

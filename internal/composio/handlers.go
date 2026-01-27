@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 )
@@ -29,25 +30,18 @@ func (h *Handler) CreateConnectedAccount(c *gin.Context) {
 	var req CreateConnectedAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Error("invalid create connected account request", slog.String("error", err.Error()))
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid request format",
-			"details": err.Error(),
-		})
+		errors.BadRequest(c, "Invalid request format", map[string]interface{}{"details": err.Error()})
 		return
 	}
 
 	// Validate required fields
 	if req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "user_id is required",
-		})
+		errors.BadRequest(c, "user_id is required", nil)
 		return
 	}
 
 	if req.Provider == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "provider is required",
-		})
+		errors.BadRequest(c, "provider is required", nil)
 		return
 	}
 
@@ -59,10 +53,7 @@ func (h *Handler) CreateConnectedAccount(c *gin.Context) {
 	response, err := h.service.CreateConnectedAccount(req.UserID, req.Provider, req.RedirectURI)
 	if err != nil {
 		log.Error("failed to create connected account", slog.String("error", err.Error()))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to create connected account",
-			"details": err.Error(),
-		})
+		errors.Internal(c, "Failed to create connected account", map[string]interface{}{"details": err.Error()})
 		return
 	}
 
@@ -76,9 +67,7 @@ func (h *Handler) GetConnectedAccount(c *gin.Context) {
 	accountID := c.Query("account_id")
 	if accountID == "" {
 		log.Warn("missing account_id in get connected account request")
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "account_id is required",
-		})
+		errors.BadRequest(c, "account_id is required", nil)
 		return
 	}
 
@@ -87,10 +76,7 @@ func (h *Handler) GetConnectedAccount(c *gin.Context) {
 	response, err := h.service.GetConnectedAccount(accountID)
 	if err != nil {
 		log.Error("failed to get connected account", slog.String("error", err.Error()))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to get connected account",
-			"details": err.Error(),
-		})
+		errors.Internal(c, "Failed to get connected account", map[string]interface{}{"details": err.Error()})
 		return
 	}
 
@@ -104,9 +90,7 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 	accountID := c.Query("account_id")
 	if accountID == "" {
 		log.Warn("missing account_id in refresh token request")
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "account_id is required in query params",
-		})
+		errors.BadRequest(c, "account_id is required in query params", nil)
 		return
 	}
 
@@ -115,10 +99,7 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 	response, err := h.service.RefreshToken(accountID)
 	if err != nil {
 		log.Error("failed to refresh token", slog.String("error", err.Error()))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to refresh token",
-			"details": err.Error(),
-		})
+		errors.Internal(c, "Failed to refresh token", map[string]interface{}{"details": err.Error()})
 		return
 	}
 

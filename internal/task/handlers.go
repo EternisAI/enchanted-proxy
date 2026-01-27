@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 )
@@ -33,7 +34,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 	userID, ok := auth.GetUserID(c)
 	if !ok {
 		log.Error("user not authenticated")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		errors.Unauthorized(c, "unauthorized", nil)
 		return
 	}
 
@@ -43,7 +44,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 	var req CreateTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Error("failed to bind request", slog.String("error", err.Error()))
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
+		errors.BadRequest(c, "invalid request body", map[string]interface{}{"details": err.Error()})
 		return
 	}
 
@@ -60,7 +61,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		log.Error("failed to create task",
 			slog.String("error", err.Error()),
 			slog.String("user_id", userID))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create task", "details": err.Error()})
+		errors.Internal(c, "failed to create task", map[string]interface{}{"details": err.Error()})
 		return
 	}
 
@@ -81,7 +82,7 @@ func (h *Handler) GetTasks(c *gin.Context) {
 	userID, ok := auth.GetUserID(c)
 	if !ok {
 		log.Error("user not authenticated")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		errors.Unauthorized(c, "unauthorized", nil)
 		return
 	}
 
@@ -91,7 +92,7 @@ func (h *Handler) GetTasks(c *gin.Context) {
 		log.Error("failed to get tasks",
 			slog.String("error", err.Error()),
 			slog.String("user_id", userID))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get tasks", "details": err.Error()})
+		errors.Internal(c, "failed to get tasks", map[string]interface{}{"details": err.Error()})
 		return
 	}
 
@@ -110,7 +111,7 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 	userID, ok := auth.GetUserID(c)
 	if !ok {
 		log.Error("user not authenticated")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		errors.Unauthorized(c, "unauthorized", nil)
 		return
 	}
 
@@ -118,7 +119,7 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 	taskID := c.Param("taskId")
 	if taskID == "" {
 		log.Error("task_id is empty")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "task_id is required"})
+		errors.BadRequest(c, "task_id is required", nil)
 		return
 	}
 
@@ -130,7 +131,7 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 			log.Warn("task not found or unauthorized",
 				slog.String("task_id", taskID),
 				slog.String("user_id", userID))
-			c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+			errors.NotFound(c, "task not found", nil)
 			return
 		}
 
@@ -138,7 +139,7 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 			slog.String("error", err.Error()),
 			slog.String("task_id", taskID),
 			slog.String("user_id", userID))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete task", "details": err.Error()})
+		errors.Internal(c, "failed to delete task", map[string]interface{}{"details": err.Error()})
 		return
 	}
 

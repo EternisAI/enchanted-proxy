@@ -2,9 +2,9 @@ package auth
 
 import (
 	"crypto/subtle"
-	"net/http"
 	"strings"
 
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 )
@@ -43,30 +43,26 @@ func (f *FirebaseAuthMiddleware) RequireAuth() gin.HandlerFunc {
 		}
 
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
-			c.Abort()
+			errors.AbortWithUnauthorized(c, "Authorization header is required", nil)
 			return
 		}
 
 		// Check if it's a Bearer token
 		if !strings.HasPrefix(authHeader, "Bearer ") {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header must be a Bearer token"})
-			c.Abort()
+			errors.AbortWithUnauthorized(c, "Authorization header must be a Bearer token", nil)
 			return
 		}
 
 		// Extract the token
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		if token == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Bearer token is empty"})
-			c.Abort()
+			errors.AbortWithUnauthorized(c, "Bearer token is empty", nil)
 			return
 		}
 
 		userID, err := f.validator.ExtractUserID(token)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
-			c.Abort()
+			errors.AbortWithUnauthorized(c, "Invalid or expired token", nil)
 			return
 		}
 
@@ -106,28 +102,24 @@ func (a *APIKeyMiddleware) RequireAPIKey() gin.HandlerFunc {
 		authHeader := c.GetHeader("Authorization")
 
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
-			c.Abort()
+			errors.AbortWithUnauthorized(c, "Authorization header is required", nil)
 			return
 		}
 
 		if !strings.HasPrefix(authHeader, "Bearer ") {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header must be a Bearer token"})
-			c.Abort()
+			errors.AbortWithUnauthorized(c, "Authorization header must be a Bearer token", nil)
 			return
 		}
 
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		if token == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Bearer token is empty"})
-			c.Abort()
+			errors.AbortWithUnauthorized(c, "Bearer token is empty", nil)
 			return
 		}
 
 		// Use constant-time comparison to prevent timing attacks
 		if subtle.ConstantTimeCompare([]byte(token), []byte(a.apiKey)) != 1 {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
-			c.Abort()
+			errors.AbortWithUnauthorized(c, "Invalid API key", nil)
 			return
 		}
 
