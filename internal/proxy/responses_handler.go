@@ -13,6 +13,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/background"
 	"github.com/eternisai/enchanted-proxy/internal/config"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
@@ -69,15 +70,15 @@ func handleResponsesAPI(
 ) error {
 	// Validate required parameters
 	if provider == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Provider configuration is nil"})
+		errors.Internal(c, "Provider configuration is nil", nil)
 		return fmt.Errorf("provider is nil")
 	}
 	if pollingManager == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Polling manager not initialized"})
+		errors.Internal(c, "Polling manager not initialized", nil)
 		return fmt.Errorf("pollingManager is nil")
 	}
 	if log == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Logger not initialized"})
+		errors.Internal(c, "Logger not initialized", nil)
 		return fmt.Errorf("logger is nil")
 	}
 
@@ -123,7 +124,7 @@ func handleResponsesAPI(
 	// Get user ID for response_id retrieval
 	userID, exists := auth.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID not found in context"})
+		errors.Unauthorized(c, "User ID not found in context", nil)
 		return fmt.Errorf("user ID not found in context")
 	}
 
@@ -181,7 +182,7 @@ func handleResponsesAPI(
 	if err != nil {
 		log.Error("failed to transform request",
 			slog.String("error", err.Error()))
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to transform request for Responses API"})
+		errors.BadRequest(c, "Failed to transform request for Responses API", nil)
 		return fmt.Errorf("failed to transform request: %w", err)
 	}
 
@@ -219,7 +220,7 @@ func handleResponsesAPI(
 		log.Error("failed to create request",
 			slog.String("error", err.Error()),
 			slog.String("target_url", targetURL))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upstream request"})
+		errors.Internal(c, "Failed to create upstream request", nil)
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -284,7 +285,7 @@ func handleResponsesAPI(
 	if err := json.NewDecoder(resp.Body).Decode(&bgResponse); err != nil {
 		log.Error("failed to decode background response",
 			slog.String("error", err.Error()))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse OpenAI response"})
+		errors.Internal(c, "Failed to parse OpenAI response", nil)
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
 
@@ -322,7 +323,7 @@ func handleResponsesAPI(
 		log.Error("failed to start polling worker",
 			slog.String("response_id", bgResponse.ID),
 			slog.String("error", err.Error()))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start background polling"})
+		errors.Internal(c, "Failed to start background polling", nil)
 		return fmt.Errorf("failed to start polling: %w", err)
 	}
 
@@ -372,7 +373,7 @@ func streamToClientWithResponseID(
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		log.Error("response writer doesn't support flushing")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Streaming not supported"})
+		errors.Internal(c, "Streaming not supported", nil)
 		return
 	}
 

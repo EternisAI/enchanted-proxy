@@ -36,7 +36,7 @@ func StopStreamHandler(
 		userID, exists := auth.GetUserID(c)
 		if !exists {
 			log.Error("user ID not found in context")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+			errors.Unauthorized(c, "Authentication required", nil)
 			return
 		}
 
@@ -46,7 +46,7 @@ func StopStreamHandler(
 
 		// Validate parameters
 		if chatID == "" || messageID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "chatId and messageId are required"})
+			errors.BadRequest(c, "chatId and messageId are required", nil)
 			return
 		}
 
@@ -55,7 +55,7 @@ func StopStreamHandler(
 			log.Warn("ID too long",
 				slog.String("chat_id_len", fmt.Sprintf("%d", len(chatID))),
 				slog.String("message_id_len", fmt.Sprintf("%d", len(messageID))))
-			c.JSON(http.StatusBadRequest, gin.H{"error": "chatId or messageId exceeds maximum length"})
+			errors.BadRequest(c, "chatId or messageId exceeds maximum length", nil)
 			return
 		}
 
@@ -74,7 +74,7 @@ func StopStreamHandler(
 					slog.String("error", err.Error()),
 					slog.String("user_id", userID),
 					slog.String("chat_id", chatID))
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify permissions"})
+				errors.Internal(c, "Failed to verify permissions", nil)
 				return
 			}
 		}
@@ -106,8 +106,7 @@ func StopStreamHandler(
 						slog.String("error", err.Error()),
 						slog.String("chat_id", chatID),
 						slog.String("message_id", messageID))
-					c.JSON(http.StatusInternalServerError, gin.H{
-						"error":      "Failed to stop stream",
+					errors.Internal(c, "Failed to stop stream", map[string]interface{}{
 						"details":    err.Error(),
 						"message_id": messageID,
 					})
@@ -134,23 +133,20 @@ func StopStreamHandler(
 
 					// Found but couldn't stop
 					if resp.AlreadyComplete {
-						c.JSON(http.StatusConflict, gin.H{
-							"error":      "Stream already completed",
+						errors.Conflict(c, "Stream already completed", map[string]interface{}{
 							"message_id": messageID,
 							"completed":  true,
 						})
 						return
 					}
 					if resp.AlreadyStopped {
-						c.JSON(http.StatusConflict, gin.H{
-							"error":      "Stream already stopped",
+						errors.Conflict(c, "Stream already stopped", map[string]interface{}{
 							"message_id": messageID,
 							"stopped":    true,
 						})
 						return
 					}
-					c.JSON(http.StatusInternalServerError, gin.H{
-						"error":      "Failed to stop stream",
+					errors.Internal(c, "Failed to stop stream", map[string]interface{}{
 						"details":    resp.Error,
 						"message_id": messageID,
 					})
@@ -166,8 +162,7 @@ func StopStreamHandler(
 				slog.String("session_key", sessionKey),
 				slog.Int("active_streams", metrics.ActiveStreams),
 				slog.Int("completed_streams", metrics.CompletedStreams))
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "Stream not found",
+			errors.NotFound(c, "Stream not found", map[string]interface{}{
 				"message_id": messageID,
 			})
 			return
@@ -178,8 +173,7 @@ func StopStreamHandler(
 			log.Error("stream already completed",
 				slog.String("chat_id", chatID),
 				slog.String("message_id", messageID))
-			c.JSON(http.StatusConflict, gin.H{
-				"error":      "Stream already completed",
+			errors.Conflict(c, "Stream already completed", map[string]interface{}{
 				"message_id": messageID,
 				"completed":  true,
 			})
@@ -194,8 +188,7 @@ func StopStreamHandler(
 				log.Warn("stream already stopped",
 					slog.String("chat_id", chatID),
 					slog.String("message_id", messageID))
-				c.JSON(http.StatusConflict, gin.H{
-					"error":      "Stream already stopped",
+				errors.Conflict(c, "Stream already stopped", map[string]interface{}{
 					"message_id": messageID,
 					"stopped":    true,
 				})
@@ -206,8 +199,7 @@ func StopStreamHandler(
 				slog.String("error", err.Error()),
 				slog.String("chat_id", chatID),
 				slog.String("message_id", messageID))
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error":      "Failed to stop stream",
+			errors.Internal(c, "Failed to stop stream", map[string]interface{}{
 				"details":    err.Error(),
 				"message_id": messageID,
 			})

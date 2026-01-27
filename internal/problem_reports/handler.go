@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	apierrors "github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/gin-gonic/gin"
 )
@@ -29,19 +30,19 @@ func (h *Handler) CreateProblemReport(c *gin.Context) {
 	userID, ok := auth.GetUserID(c)
 	if !ok {
 		log.Error("user not authenticated")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		apierrors.Unauthorized(c, "unauthorized", nil)
 		return
 	}
 
 	var req CreateProblemReportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Error("failed to bind request", slog.String("error", err.Error()))
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
+		apierrors.BadRequest(c, "invalid request body", map[string]interface{}{"details": err.Error()})
 		return
 	}
 
 	if strings.TrimSpace(req.ProblemDescription) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "problemDescription is required"})
+		apierrors.BadRequest(c, "problemDescription is required", nil)
 		return
 	}
 
@@ -60,7 +61,7 @@ func (h *Handler) CreateProblemReport(c *gin.Context) {
 			return
 		}
 
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create problem report"})
+		apierrors.Internal(c, "failed to create problem report", nil)
 		return
 	}
 

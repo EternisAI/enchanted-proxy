@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
+	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/streaming"
@@ -52,7 +53,7 @@ func streamToClient(c *gin.Context, subscriber *streaming.StreamSubscriber, sess
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		log.Error("response writer doesn't support flushing")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Streaming not supported"})
+		errors.Internal(c, "Streaming not supported", nil)
 		return
 	}
 
