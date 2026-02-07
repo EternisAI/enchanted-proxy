@@ -149,9 +149,9 @@ func handleStreamingWithBroadcast(
 			}
 		}
 
-		// For GPT-5 Pro, save placeholder message immediately to allow client reconnection
+		// For GPT-5.2 Pro, save placeholder message immediately to allow client reconnection
 		// This creates a "thinking" message in Firestore before streaming starts
-		if model == "gpt-5-pro" && messageService != nil {
+		if model == "gpt-5.2-pro" && messageService != nil {
 			userID, exists := auth.GetUserID(c)
 			if exists {
 				// Extract encryption setting

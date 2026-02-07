@@ -122,7 +122,7 @@ func TestRouteModelExactMatch(t *testing.T) {
 		{"zai-org/GLM-4.6", EternisGLM46BaseURL, EternisAPIKey, config.APITypeChatCompletions, "Eternis"},
 		{"dphn/Dolphin-Mistral-24B-Venice-Edition", EternisMistralBaseURL, EternisAPIKey, config.APITypeChatCompletions, "Eternis"},
 		{"openai/gpt-4.1", OpenRouterBaseURL, OpenRouterMobileAPIKey, config.APITypeChatCompletions, "OpenRouter"},
-		{"openai/gpt-5", OpenRouterBaseURL, OpenRouterMobileAPIKey, config.APITypeChatCompletions, "OpenRouter"},
+		{"openai/gpt-5.2", OpenRouterBaseURL, OpenRouterMobileAPIKey, config.APITypeChatCompletions, "OpenRouter"},
 	}
 
 	for _, tt := range tests {
@@ -155,7 +155,7 @@ func TestRouteModelTokenMultiplier(t *testing.T) {
 
 	tests := map[string]float64{
 		"gpt-4": 1.0,
-		"gpt-5": 6.0,
+		"gpt-5.2": 6.0,
 	}
 
 	for model, expectedTokenMultiplier := range tests {
@@ -208,7 +208,7 @@ func TestRouteModelAPITypeOverride(t *testing.T) {
 
 	tests := map[string]config.APIType{
 		"gpt-4":     config.APITypeChatCompletions,
-		"gpt-5-pro": config.APITypeResponses,
+		"gpt-5.2-pro": config.APITypeResponses,
 	}
 
 	for model, expectedAPIType := range tests {
@@ -235,8 +235,8 @@ func TestRouteModelAliasMatch(t *testing.T) {
 		"z-ai/glm-4.6":              "zai-org/GLM-4.6",
 		"dolphin-mistral-eternis":   "dphn/Dolphin-Mistral-24B-Venice-Edition",
 		"gpt-4.1":                   "openai/gpt-4.1",
-		"gpt-5":                     "openai/gpt-5",
-		"openai/gpt-5-pro":          "gpt-5-pro",
+		"gpt-5.2":                   "openai/gpt-5.2",
+		"openai/gpt-5.2-pro":        "gpt-5.2-pro",
 		"openai/gpt-4":              "gpt-4",
 		"openai/gpt-4-turbo":        "gpt-4-turbo",
 		"openai/gpt-3.5-turbo":      "gpt-3.5-turbo",
@@ -403,8 +403,8 @@ func TestGetSupportedModels(t *testing.T) {
 		"Qwen/Qwen3-30B-A3B-Instruct-2507",
 		"dphn/Dolphin-Mistral-24B-Venice-Edition",
 		"openai/gpt-4.1",
-		"openai/gpt-5",
-		"openai/gpt-5-pro",
+		"openai/gpt-5.2",
+		"openai/gpt-5.2-pro",
 		"openai/gpt-4",
 		"openai/gpt-4-turbo",
 		"openai/gpt-3.5-turbo",
