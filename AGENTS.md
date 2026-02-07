@@ -37,7 +37,7 @@ make sqlc         # Regenerate SQL after editing queries/
 | Plus | 40k daily | Daily 00:00 UTC | Unlimited | 40k/day |
 | Pro | 500k daily | Daily 00:00 UTC | 10/day | 500k/day |
 
-**Model multipliers**: 0.04× (Qwen3), 0.5× (Dolphin), 1× (DeepSeek, Llama), 3× (GLM-4.6), 4× (GPT-4.1)
+**Model multipliers**: 0.04× (Qwen3), 0.5× (Dolphin), 1× (DeepSeek, Llama), 3× (GLM-4.6), 4× (GPT-4.1), 6× (GPT-5.2), 70× (GPT-5.2 Pro)
 
 See `TIER_LIMITS.md` for complete reference.
 
