@@ -105,7 +105,7 @@ model_router:
     token_multiplier: 0.6
     providers:
     - name: Ollama
-      model: glm-4.7-flash
+      model: qwen3-coder:30b
 
   # Dolphin Mistral - also route to Ollama in dev (or keep remote if accessible)
   - name: dphn/Dolphin-Mistral-24B-Venice-Edition
