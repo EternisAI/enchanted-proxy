@@ -1,0 +1,201 @@
+# Development config - overrides for local testing
+# Uses Ollama for GLM models instead of self-hosted Eternis inference
+#
+# Prerequisites:
+#   1. Install Ollama: https://ollama.com
+#   2. Pull a GLM model: ollama pull glm-4.7-flash
+#   3. Ollama serves OpenAI-compatible API at http://localhost:11434/v1
+#
+# Usage:
+#   CONFIG_FILE=config/config.dev.yaml make run
+#   or: make run-dev
+
+title_generation:
+  initial_prompt: |
+    You are a title generator. Generate a short, concise title for this conversation based on the user's first message.
+
+    RULES:
+    - MAXIMUM 4 WORDS IN YOUR ANSWER
+    - TITLE MUST BE ON TOPIC
+    - USE PLAIN TEXT
+    - NO QUOTES
+    - NO MARKDOWN
+
+    NEVER BREAK RULES.
+
+    PRIORITIES:
+    1. RULES
+    2. USER'S REQUEST
+  regeneration_prompt: |
+    You are a title generator. Generate a short, concise title for this conversation based on the provided context.
+
+    You will receive:
+    1. The user's first message
+    2. The AI's response
+    3. The user's second message
+
+    Use ALL of this context to determine the actual topic of the conversation.
+
+    RULES:
+    - MAXIMUM 4 WORDS IN YOUR ANSWER
+    - TITLE MUST BE ON TOPIC
+    - USE PLAIN TEXT
+    - NO QUOTES
+    - NO MARKDOWN
+
+    NEVER BREAK RULES.
+
+    PRIORITIES:
+    1. RULES
+    2. THE ACTUAL TOPIC (determined from the full conversation context)
+
+model_router:
+  providers:
+  # Local Ollama for GLM models (replaces self-hosted Eternis in dev)
+  # Ollama ignores auth headers, but the router requires a non-empty API key.
+  # Set OLLAMA_API_KEY to any non-empty value (e.g. "dummy") in your .env file.
+  - name: Ollama
+    api_key_env_var: OLLAMA_API_KEY
+    base_url: http://localhost:11434/v1
+
+  - name: NEAR AI
+    api_key_env_var: NEAR_API_KEY
+    base_url: https://cloud-api.near.ai/v1
+
+  - name: Tinfoil
+    api_key_env_var: TINFOIL_API_KEY
+    base_url: https://inference.tinfoil.sh/v1
+
+  - name: OpenAI
+    api_key_env_var: OPENAI_API_KEY
+    base_url: https://api.openai.com/v1
+
+  - name: OpenRouter
+    base_url: https://openrouter.ai/api/v1
+
+  models:
+  # DeepSeek R1 - via Tinfoil
+  - name: deepseek-ai/DeepSeek-R1-0528
+    aliases:
+    - deepseek/deepseek-r1-0528
+    - deepseek-r1-0528
+    - deepseek-r1
+    providers:
+    - name: Tinfoil
+      model: deepseek-r1-0528
+
+  # Llama 3.3 70B - via Tinfoil
+  - name: meta-llama/Llama-3.3-70B
+    aliases:
+    - llama-3.3-70b
+    - llama3-3-70b
+    providers:
+    - name: Tinfoil
+      model: llama3-3-70b
+
+  # GLM-4.7 - LOCAL DEV: via Ollama (glm-4.7-flash as local stand-in)
+  - name: zai-org/GLM-4.7
+    aliases:
+    - zhipu/glm-4.7
+    - z-ai/glm-4.7
+    - glm-4.7
+    - zai-org/GLM-4.6
+    - z-ai/glm-4.6
+    - glm-4.6
+    token_multiplier: 0.6
+    providers:
+    - name: Ollama
+      model: glm-4.7-flash
+
+  # Dolphin Mistral - also route to Ollama in dev (or keep remote if accessible)
+  - name: dphn/Dolphin-Mistral-24B-Venice-Edition
+    aliases:
+    - dolphin-mistral-eternis
+    - dolphin-mistral
+    token_multiplier: 0.5
+    providers:
+    - name: Ollama
+      model: dolphin-mistral
+
+  # Qwen3 30B - via NEAR AI
+  - name: Qwen/Qwen3-30B-A3B-Instruct-2507
+    aliases:
+    - qwen3-30b
+    - qwen-30b
+    token_multiplier: 0.04
+    providers:
+    - name: NEAR AI
+
+  # GPT-4.1 - via OpenRouter
+  - name: openai/gpt-4.1
+    aliases:
+    - gpt-4.1
+    token_multiplier: 4.0
+    providers:
+    - name: OpenRouter
+
+  # GPT-5.2 - via OpenRouter
+  - name: openai/gpt-5.2
+    aliases:
+    - gpt-5.2
+    token_multiplier: 6.0
+    providers:
+    - name: OpenRouter
+
+  # GPT-5.2 Pro - via OpenAI Responses API
+  - name: openai/gpt-5.2-pro
+    aliases:
+    - gpt-5.2-pro
+    token_multiplier: 70.0
+    providers:
+    - name: OpenAI
+      model: gpt-5.2-pro
+      api_type: responses
+
+  # Legacy OpenAI models
+  - name: openai/gpt-4
+    aliases:
+    - gpt-4
+    providers:
+    - name: OpenAI
+      model: gpt-4
+
+  - name: openai/gpt-4-turbo
+    aliases:
+    - gpt-4-turbo
+    providers:
+    - name: OpenAI
+      model: gpt-4-turbo
+
+  - name: openai/gpt-3.5-turbo
+    aliases:
+    - gpt-3.5-turbo
+    providers:
+    - name: OpenAI
+      model: gpt-3.5-turbo
+
+  - name: openai/o1-preview
+    aliases:
+    - o1-preview
+    providers:
+    - name: OpenAI
+      model: o1-preview
+
+  - name: openai/o1-mini
+    aliases:
+    - o1-mini
+    providers:
+    - name: OpenAI
+      model: o1-mini
+
+  - name: openai/o3-mini
+    aliases:
+    - o3-mini
+    providers:
+    - name: OpenAI
+      model: o3-mini
+
+  # Fallback: OpenRouter
+  - name: '*'
+    providers:
+    - name: OpenRouter

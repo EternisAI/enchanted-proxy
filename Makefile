@@ -1,6 +1,9 @@
 run:
 	go run cmd/server/main.go
 
+run-dev:
+	CONFIG_FILE=config/config.dev.yaml go run cmd/server/main.go
+
 lint:
 	golangci-lint fmt
 	golangci-lint run --fix
