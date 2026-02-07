@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -310,22 +309,6 @@ type TokenUsageWithMultiplier struct {
 	TotalTokens      int     // Raw model tokens
 	Multiplier       float64 // Cost multiplier
 	PlanTokens       int     // TotalTokens × Multiplier
-}
-
-// GetProviderFromBaseURL maps base URLs to provider names.
-func GetProviderFromBaseURL(baseURL string) string {
-	baseURL = strings.TrimRight(baseURL, "/")
-
-	switch baseURL {
-	case "https://openrouter.ai/api/v1":
-		return "openrouter"
-	case "https://api.openai.com/v1":
-		return "openai"
-	case "https://audio-processing.model.tinfoil.sh/v1":
-		return "tinfoil"
-	default:
-		return "unknown"
-	}
 }
 
 // GetUserTier returns the user's current subscription tier.
