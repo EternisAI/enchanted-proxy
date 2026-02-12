@@ -218,14 +218,10 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 			}
 		}
 
-		baseURL := c.GetHeader("X-BASE-URL")
-		provider := GetProviderFromBaseURL(baseURL)
 		endpoint := c.Request.URL.Path
 
 		log.Info("processing request",
 			slog.String("endpoint", endpoint),
-			slog.String("provider", provider),
-			slog.String("base_url", baseURL),
 			slog.String("method", c.Request.Method))
 
 		c.Next()

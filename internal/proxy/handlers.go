@@ -121,8 +121,7 @@ func ProxyHandler(
 			platform = "mobile" // Default to mobile
 		}
 
-		// Route based on model ID (X-BASE-URL header is ignored for security)
-		// Model field is required - proxy controls all routing
+		// Route based on model ID - proxy controls all routing
 		if model == "" {
 			log.Warn("missing model field in request body")
 			errors.BadRequest(c, "Model field is required", nil)
@@ -147,15 +146,6 @@ func ProxyHandler(
 
 		baseURL := provider.BaseURL
 		apiKey := provider.APIKey
-
-		// Warn if client sent X-BASE-URL (deprecated, ignored)
-		if legacyBaseURL := c.GetHeader("X-BASE-URL"); legacyBaseURL != "" {
-			log.Warn("X-BASE-URL header is deprecated and ignored - routing based on model",
-				slog.String("x_base_url", legacyBaseURL),
-				slog.String("model", model),
-				slog.String("actual_provider", provider.Name),
-				slog.String("actual_base_url", baseURL))
-		}
 
 		log.Info("routed model to provider",
 			slog.String("model", model),
@@ -415,7 +405,6 @@ func ProxyHandler(
 			// Clean up proxy headers
 			r.Header.Del("X-Forwarded-For")
 			r.Header.Del("X-Real-Ip")
-			r.Header.Del("X-BASE-URL") // Remove our custom header before forwarding
 			r.Header.Del("X-Client-Platform")
 			r.Header.Del("X-Encryption-Enabled") // Remove encryption flag before forwarding
 			r.Header.Del("X-Chat-ID")            // Remove chat metadata before forwarding
@@ -752,7 +741,6 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 				log.Error("panic in streaming response handler",
 					slog.Any("panic", r),
 					slog.String("target_url", resp.Request.URL.String()),
-					slog.String("provider", request_tracking.GetProviderFromBaseURL(cCopy.GetHeader("X-BASE-URL"))),
 				)
 			}
 		}()
@@ -916,8 +904,7 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 	if providerName != "" {
 		provider = providerName
 	} else {
-		baseURL := c.GetHeader("X-BASE-URL")
-		provider = request_tracking.GetProviderFromBaseURL(baseURL)
+		provider = "unknown"
 	}
 	endpoint := c.Request.URL.Path
 

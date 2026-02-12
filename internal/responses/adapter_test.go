@@ -19,7 +19,7 @@ func TestAdapter_TransformRequest(t *testing.T) {
 		{
 			name: "first message - adds store=true",
 			requestBody: `{
-				"model": "gpt-5-pro",
+				"model": "gpt-5.2-pro",
 				"messages": [{"role": "user", "content": "Hello"}]
 			}`,
 			previousResponseID: "",
@@ -30,7 +30,7 @@ func TestAdapter_TransformRequest(t *testing.T) {
 		{
 			name: "continuation - adds store=true and previous_response_id",
 			requestBody: `{
-				"model": "gpt-5-pro",
+				"model": "gpt-5.2-pro",
 				"messages": [{"role": "user", "content": "Tell me more"}]
 			}`,
 			previousResponseID: "resp_abc123",
@@ -41,7 +41,7 @@ func TestAdapter_TransformRequest(t *testing.T) {
 		{
 			name: "transforms and filters parameters",
 			requestBody: `{
-				"model": "gpt-5-pro",
+				"model": "gpt-5.2-pro",
 				"messages": [{"role": "user", "content": "Hello"}],
 				"temperature": 0.7,
 				"max_tokens": 1000
@@ -288,7 +288,7 @@ func TestAdapter_IsResponsesAPIError(t *testing.T) {
 func TestAdapter_TransformRequest_ConcurrentSafety(t *testing.T) {
 	// Test that the adapter is safe for concurrent use
 	adapter := NewAdapter()
-	requestBody := `{"model":"gpt-5-pro","messages":[{"role":"user","content":"Hello"}]}`
+	requestBody := `{"model":"gpt-5.2-pro","messages":[{"role":"user","content":"Hello"}]}`
 
 	done := make(chan bool)
 	for i := 0; i < 10; i++ {

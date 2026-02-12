@@ -21,8 +21,8 @@
 | **Dolphin Mistral** (`dolphin-mistral`) | Free, Pro | **0.5×** | Eternis | Uncensored, self-hosted |
 | **Qwen3 30B** (`qwen3-30b`) | Free, Pro | **0.8×** | NEAR AI | |
 | **GPT-4.1** (`gpt-4.1`) | Pro | **4×** | OpenRouter | |
-| **GPT-5** (`gpt-5`) | Pro | **6×** | OpenRouter | |
-| **GPT-5 Pro** (`gpt-5-pro`) | Pro | **50×** | OpenAI | Responses API |
+| **GPT-5.2** (`gpt-5.2`) | Pro | **6×** | OpenRouter | |
+| **GPT-5.2 Pro** (`gpt-5.2-pro`) | Pro | **70×** | OpenAI | Responses API |
 | **GPT-4 Turbo** (`gpt-4-turbo`) | Pro | **1×** | OpenAI | Legacy |
 | **Other models** | Pro | **1×** | OpenRouter | Fallback |
 
@@ -33,6 +33,7 @@ Plan tokens = Raw tokens × Multiplier
 **Examples**:
 - A 1,000 token request to GLM-4.6 (0.6× multiplier) counts as **600 plan tokens** against your quota.
 - A 1,000 token request to Dolphin Mistral (0.5× multiplier) counts as **500 plan tokens** against your quota.
+- A 1,000 token request to GPT-5.2 Pro (70× multiplier) counts as **70,000 plan tokens** against your quota.
 
 ## Deep Research
 
@@ -78,14 +79,14 @@ Plan tokens = Raw tokens × Multiplier
 - **500k daily quota**: ~500 conversations (1k tokens each) with DeepSeek R1 (1×)
 - **OR**: ~1,000 conversations with Dolphin Mistral (0.5×) - uncensored model is cost-efficient!
 - **OR**: ~833 conversations with GLM-4.6 (0.6×)
-- **OR**: ~10 conversations with GPT-5 Pro (50×)
+- **OR**: ~7 conversations with GPT-5.2 Pro (70×)
 - **Plus**: 10 deep research runs/day (up to 10k plan tokens each)
 
 ### Tier Design Guidelines
 
 When creating new tiers:
 
-1. **Token Limits**: Consider model multipliers (0.5× to 50×)
+1. **Token Limits**: Consider model multipliers (0.5× to 70×)
 2. **Reset Periods**: Choose monthly/weekly/daily based on target usage
 3. **Model Access**: Higher tiers = higher multiplier models (premium models use higher multipliers, cheaper/uncensored models use lower multipliers)
 4. **Deep Research**: Scale daily runs & token caps together

@@ -14,16 +14,14 @@ import (
 
 // ModelRouter handles automatic routing of model IDs to AI providers.
 //
-// Benefits over X-BASE-URL header:
+// All routing is based on the model field in the request body.
+// Clients do not need to specify provider URLs.
+//
+// Benefits:
 //   - Clients don't need to maintain model-to-provider mapping
 //   - Prevents misrouting (e.g., sending Claude model to OpenAI)
 //   - Centralized configuration (update routing without client changes)
 //   - Better error messages when model is unsupported
-//
-// Backward Compatibility:
-//   - X-BASE-URL still supported during migration
-//   - If X-BASE-URL provided: use it (legacy behavior)
-//   - If X-BASE-URL missing: auto-route based on model (new behavior)
 //
 // Routing Strategy:
 //  1. Exact match: "gpt-4" → OpenAI
