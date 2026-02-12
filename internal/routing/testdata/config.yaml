@@ -103,22 +103,22 @@ model_router:
     providers:
     - name: OpenRouter
 
-  # GPT-5 - Pro only - via OpenRouter (6× multiplier)
-  - name: openai/gpt-5
+  # GPT-5.2 - Pro only - via OpenRouter (6× multiplier)
+  - name: openai/gpt-5.2
     aliases:
-    - gpt-5
+    - gpt-5.2
     token_multiplier: 6.0
     providers:
     - name: OpenRouter
 
-  # GPT-5 Pro - Pro only - via OpenAI directly using Responses API (50× multiplier)
-  - name: openai/gpt-5-pro
+  # GPT-5.2 Pro - Pro only - via OpenAI directly using Responses API (70× multiplier)
+  - name: openai/gpt-5.2-pro
     aliases:
-    - gpt-5-pro
-    token_multiplier: 50.0
+    - gpt-5.2-pro
+    token_multiplier: 70.0
     providers:
     - name: OpenAI
-      model: gpt-5-pro
+      model: gpt-5.2-pro
       api_type: responses
 
   # Legacy OpenAI models - maintain backward compatibility with existing multipliers
