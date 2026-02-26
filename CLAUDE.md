@@ -22,6 +22,7 @@ make sqlc         # Regenerate SQL after editing queries/
 | Auth middleware | `internal/auth/middleware.go` |
 | Chat completions | `internal/proxy/handlers.go` |
 | Model routing | `internal/routing/model_router.go` |
+| Model/provider config | `config/config.yaml` |
 | Tier definitions | `internal/tiers/tiers.go` |
 | Quota tracking | `internal/request_tracking/service.go` |
 | E2EE encryption | `internal/messaging/encryption.go` |
@@ -57,6 +58,21 @@ Wire format: `base64(ephemeralPubKey[65] || nonce[12] || ciphertext || tag[16])`
 
 Cross-platform tests: `test-vectors/encryption-compatibility.json`
 
+## Model Routing via config.yaml
+
+All model and provider definitions live in `config/config.yaml` (loaded via `CONFIG_FILE` env var). This is the single source of truth for which models are available and how requests get routed.
+
+**Flow**: Client sends `model` field in request → `ProxyHandler` extracts it → `ModelRouter.RouteModel()` resolves it against config → request is forwarded to the matched provider with the correct base URL, API key, and model name.
+
+**Config structure**:
+- `model_router.providers` — provider name, base URL, API key env var
+- `model_router.models` — canonical model name, aliases, token multiplier, provider list
+- `title_generation` — system prompts for conversation title generation
+
+**Resolution order**: exact match → alias match → prefix match → wildcard fallback (OpenRouter).
+
+Dev config: `config/config.dev.yaml` (redirects to local Ollama). Run with `make run-dev`.
+
 ## Unauth Routes (No Auth Middleware)
 
 - `/health` - Health check
@@ -66,9 +82,9 @@ Cross-platform tests: `test-vectors/encryption-compatibility.json`
 
 ## Development Patterns
 
-**Add a model**: Edit env config YAML → redeploy (no code change)
+**Add a model**: Edit `config/config.yaml` → redeploy (no code change)
 
-**Add a provider**: Add to env config YAML + add API key to `internal/config/config.go`
+**Add a provider**: Add to `config/config.yaml` + add API key env var to deployment config
 
 **Add a tier**: Edit `internal/tiers/tiers.go` + add Stripe product
 
