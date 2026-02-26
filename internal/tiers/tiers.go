@@ -75,17 +75,14 @@ var Configs = map[Tier]Config{
 		MonthlyPlanTokens: 20_000,
 		WeeklyPlanTokens:  0, // No weekly limit
 		DailyPlanTokens:   0, // No daily limit
-		// Note: AllowedModels must match exactly what clients send in the "model" field
-		// Includes all known aliases to prevent blocking users
-		// Free tier can only use: DeepSeek R1, Llama 3.3 70B, GLM-4.6, GLM-4.7, Dolphin Mistral (uncensored)
+		// AllowedModels uses canonical model names only (from config.yaml).
+		// Aliases are resolved to canonical names by the middleware before this check.
 		AllowedModels: []string{
-			"deepseek-r1-0528", "deepseek-r1", // DeepSeek R1 (1×)
-			"llama3-3-70b", "llama-3.3-70b", // Llama 3.3 70B (1×)
-			"zai-org/GLM-4.6", "glm-4.6", // GLM-4.6 (0.6×)
-			"zai-org/GLM-4.7", "glm-4.7", "z-ai/glm-4.7", "zhipu/glm-4.7", // GLM-4.7 (0.6×)
-			"zai-org/GLM-5-FP8", "glm-5", "z-ai/glm-5", "zai-org/glm-5.0", // GLM 5 (0.6×)
-			"dolphin-mistral-eternis", "dolphin-mistral", // Dolphin Mistral (0.5×, uncensored)
-			"Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3-30b", "qwen-30b", // Qwen3 30B (0.8×)
+			"deepseek-ai/DeepSeek-R1-0528",          // DeepSeek R1 (1×)
+			"meta-llama/Llama-3.3-70B",              // Llama 3.3 70B (1×)
+			"zai-org/GLM-5-FP8",                     // GLM 5 (0.6×)
+			"dphn/Dolphin-Mistral-24B-Venice-Edition", // Dolphin Mistral (0.5×, uncensored)
+			"Qwen/Qwen3-30B-A3B-Instruct-2507",     // Qwen3 30B (0.04×)
 		},
 		DeepResearchDailyRuns:         0, // Not available daily
 		DeepResearchLifetimeRuns:      1, // 1 lifetime run
@@ -103,10 +100,8 @@ var Configs = map[Tier]Config{
 		FallbackDailyPlanTokens: 40_000,
 		FallbackModel:           "Qwen/Qwen3-30B-A3B-Instruct-2507",
 		AllowedModels: []string{
-			"zai-org/GLM-4.6", "glm-4.6", // GLM 4.6
-			"zai-org/GLM-4.7", "glm-4.7", "z-ai/glm-4.7", "zhipu/glm-4.7", // GLM-4.7 (0.6×)
-			"zai-org/GLM-5-FP8", "glm-5", "z-ai/glm-5", "zai-org/glm-5.0", // GLM 5 (0.6×)
-			"Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3-30b", "qwen-30b", // Qwen3 30B (0.8×)
+			"zai-org/GLM-5-FP8",                 // GLM 5 (0.6×)
+			"Qwen/Qwen3-30B-A3B-Instruct-2507", // Qwen3 30B (0.04×)
 		},
 		DeepResearchDailyRuns:         -1, // Unlimited daily runs
 		DeepResearchLifetimeRuns:      0,  // Check daily only
