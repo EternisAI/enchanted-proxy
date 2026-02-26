@@ -553,6 +553,15 @@ func handleStreamingDirect(
 	requestPath := c.Request.URL.Path
 	targetURL := target.String()
 
+	// Channel to signal upstream status before foreground writes HTTP headers.
+	// This lets us return a proper HTTP error to the client when the upstream provider rejects the request
+	// (e.g., unknown model, invalid API key) instead of sending 200 OK with garbled error data.
+	type upstreamStatus struct {
+		statusCode int
+		errBody    string
+	}
+	statusCh := make(chan upstreamStatus, 1)
+
 	// Start background goroutine for upstream request
 	go func() {
 		// Use context.Background() for complete isolation from client connection
@@ -569,6 +578,7 @@ func handleStreamingDirect(
 			log.Error("direct streaming: failed to create request",
 				slog.String("error", err.Error()),
 				slog.String("chat_id", chatID))
+			statusCh <- upstreamStatus{statusCode: 0, errBody: err.Error()}
 			if session := streamManager.GetSession(chatID, messageID); session != nil {
 				session.ForceComplete(fmt.Errorf("failed to create request: %w", err))
 			}
@@ -606,6 +616,7 @@ func handleStreamingDirect(
 			log.Error("direct streaming: upstream request failed",
 				slog.String("error", err.Error()),
 				slog.String("chat_id", chatID))
+			statusCh <- upstreamStatus{statusCode: 0, errBody: err.Error()}
 			if session := streamManager.GetSession(chatID, messageID); session != nil {
 				session.ForceComplete(fmt.Errorf("upstream request failed: %w", err))
 			}
@@ -617,6 +628,28 @@ func handleStreamingDirect(
 			slog.String("chat_id", chatID),
 			slog.Int("status", resp.StatusCode),
 			slog.Duration("latency", upstreamLatency))
+
+		// Check for upstream errors before starting the stream.
+		// Without this, upstream 4xx/5xx errors get broadcast as malformed SSE data
+		// and the client sees a silent stream cutoff instead of a proper error.
+		if resp.StatusCode >= 400 {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+
+			log.Error("direct streaming: upstream returned error",
+				slog.String("chat_id", chatID),
+				slog.Int("status", resp.StatusCode),
+				slog.String("body", string(body)))
+
+			statusCh <- upstreamStatus{statusCode: resp.StatusCode, errBody: string(body)}
+			if session := streamManager.GetSession(chatID, messageID); session != nil {
+				session.ForceComplete(fmt.Errorf("upstream error %d: %s", resp.StatusCode, string(body)))
+			}
+			return
+		}
+
+		// Upstream responded successfully — signal foreground to start streaming
+		statusCh <- upstreamStatus{statusCode: resp.StatusCode}
 
 		// Get session
 		session := streamManager.GetSession(chatID, messageID)
@@ -682,7 +715,28 @@ func handleStreamingDirect(
 			slog.String("message_id", messageID))
 	}()
 
-	// Meanwhile in foreground: Subscribe client and stream to them
+	// Wait for upstream to respond before writing HTTP headers to the client.
+	// This ensures we can return a proper HTTP error status code if the upstream rejects the request.
+	status := <-statusCh
+	if status.statusCode == 0 {
+		// Network/request creation error
+		log.Error("direct streaming: upstream connection failed",
+			slog.String("chat_id", chatID),
+			slog.String("error", status.errBody))
+		errors.Internal(c, "Failed to connect to upstream provider", nil)
+		return
+	}
+	if status.statusCode >= 400 {
+		// Upstream returned an error — forward it to the client as a proper HTTP error.
+		// The iOS client checks status codes and classifies errors (403→paywall, 429→rate limit, etc.)
+		log.Warn("direct streaming: returning upstream error to client",
+			slog.String("chat_id", chatID),
+			slog.Int("status", status.statusCode))
+		c.Data(status.statusCode, "application/json", []byte(status.errBody))
+		return
+	}
+
+	// Upstream responded with 2xx — proceed with SSE streaming
 	session := streamManager.GetSession(chatID, messageID)
 	if session == nil {
 		log.Error("direct streaming: failed to get session for client",

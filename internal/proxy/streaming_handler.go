@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -51,6 +52,28 @@ func handleStreamingWithBroadcast(
 	cfg *config.Config,
 	provider *routing.ProviderConfig,
 ) error {
+	// Check for upstream errors before processing as a stream.
+	// Without this, upstream 4xx/5xx error bodies get broadcast as malformed SSE data.
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		log.Error("streaming broadcast: upstream returned error",
+			slog.Int("status", resp.StatusCode),
+			slog.String("body", string(body)),
+			slog.String("model", model))
+
+		// Clean up any pending session that was created before the upstream request
+		chatID := c.GetHeader("X-Chat-ID")
+		messageID := c.GetHeader("X-Message-ID")
+		if session := streamManager.GetSession(chatID, messageID); session != nil {
+			session.ForceComplete(fmt.Errorf("upstream error %d: %s", resp.StatusCode, string(body)))
+		}
+
+		c.Data(resp.StatusCode, "application/json", body)
+		return fmt.Errorf("upstream error %d: %s", resp.StatusCode, string(body))
+	}
+
 	// Extract chat ID and message ID from headers
 	chatID := c.GetHeader("X-Chat-ID")
 	messageID := c.GetHeader("X-Message-ID")
