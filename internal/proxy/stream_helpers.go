@@ -58,44 +58,79 @@ func streamToClient(c *gin.Context, subscriber *streaming.StreamSubscriber, sess
 	}
 
 	// Stream chunks to client
+	chunksWritten := 0
 	for {
 		select {
 		case chunk, ok := <-subscriber.Ch:
 			if !ok {
 				// Channel closed, stream completed
-				log.Debug("subscriber channel closed",
-					slog.String("subscriber_id", subscriber.ID))
+				log.Info("TRACE: subscriber channel closed",
+					slog.String("subscriber_id", subscriber.ID),
+					slog.Int("chunks_written", chunksWritten))
 				return
 			}
 
 			// Write chunk to client
 			if _, err := c.Writer.WriteString(chunk.Line + "\n"); err != nil {
-				log.Error("failed to write chunk to client",
+				log.Error("TRACE: failed to write chunk to client",
 					slog.String("error", err.Error()),
-					slog.String("subscriber_id", subscriber.ID))
+					slog.String("subscriber_id", subscriber.ID),
+					slog.Int("chunk_index", chunk.Index),
+					slog.Int("chunks_written", chunksWritten))
 				return
 			}
 
 			// Flush immediately (SSE requirement)
 			flusher.Flush()
+			chunksWritten++
+
+			// Log every chunk for tracing
+			if chunksWritten <= 5 || chunk.IsFinal {
+				log.Info("TRACE: wrote chunk to client",
+					slog.String("subscriber_id", subscriber.ID),
+					slog.Int("chunk_index", chunk.Index),
+					slog.Int("chunks_written", chunksWritten),
+					slog.Bool("is_final", chunk.IsFinal),
+					slog.Int("line_len", len(chunk.Line)))
+			}
 
 			// If this is the final chunk, we're done
 			if chunk.IsFinal {
-				log.Debug("final chunk sent to client",
-					slog.String("subscriber_id", subscriber.ID))
+				log.Info("TRACE: final chunk sent to client",
+					slog.String("subscriber_id", subscriber.ID),
+					slog.Int("total_chunks_written", chunksWritten))
 				return
 			}
 
 		case <-c.Request.Context().Done():
 			// Client disconnected
-			log.Debug("client disconnected",
-				slog.String("subscriber_id", subscriber.ID))
+			log.Info("TRACE: client disconnected (request context done)",
+				slog.String("subscriber_id", subscriber.ID),
+				slog.Int("chunks_written", chunksWritten))
 			return
 
 		case <-subscriber.Context().Done():
-			// Subscriber cancelled
-			log.Debug("subscriber cancelled",
-				slog.String("subscriber_id", subscriber.ID))
+			// Subscriber cancelled (stream completed) — drain remaining buffered chunks
+			log.Info("TRACE: subscriber cancelled, draining remaining chunks",
+				slog.String("subscriber_id", subscriber.ID),
+				slog.Int("chunks_written_before_drain", chunksWritten))
+
+			for chunk := range subscriber.Ch {
+				if _, err := c.Writer.WriteString(chunk.Line + "\n"); err != nil {
+					log.Error("TRACE: failed to write chunk during drain",
+						slog.String("error", err.Error()),
+						slog.String("subscriber_id", subscriber.ID),
+						slog.Int("chunk_index", chunk.Index),
+						slog.Int("chunks_written", chunksWritten))
+					return
+				}
+				flusher.Flush()
+				chunksWritten++
+			}
+
+			log.Info("TRACE: drain complete",
+				slog.String("subscriber_id", subscriber.ID),
+				slog.Int("total_chunks_written", chunksWritten))
 			return
 		}
 	}
