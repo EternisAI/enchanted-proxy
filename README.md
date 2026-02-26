@@ -8,6 +8,8 @@ This architecture, built on AWS Nitro Enclaves, is designed to give users confid
 
 You can read instructions on verifying the security guarantees provided by the live AWS Nitro Enclave deployments of this project in the [following document](docs/attestation.md).
 
+For details on the enclave's internal architecture — process supervision, networking, egress allowlisting, and DNS — see [TEE Architecture](docs/tee-architecture.md). If you're debugging unexpected networking failures or connection issues, start there.
+
 ## Features
 
 - **Multi-Provider Support**: OpenAI (Chat Completions and Responses API), Anthropic, OpenRouter, Near AI, Tinfoil, and more

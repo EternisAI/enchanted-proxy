@@ -120,7 +120,7 @@ make test                          # All tests
 
 ## Deployment
 
-**TEE config**: `deploy/enclaver.yaml` - egress allowlist for providers
+**TEE config**: `deploy/enclaver.yaml` - egress allowlist for providers. For the full enclave architecture (networking, egress filtering, DNS, process supervision), see [`docs/tee-architecture.md`](docs/tee-architecture.md). Check there first if you hit unexplained networking or connection issues.
 
 **Pre-deploy checklist**:
 - All API keys set (OPENAI_API_KEY, STRIPE_API_KEY, etc.)
