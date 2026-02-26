@@ -21,13 +21,31 @@ make sqlc         # Regenerate SQL after editing queries/
 | Server setup | `cmd/server/main.go` |
 | Auth middleware | `internal/auth/middleware.go` |
 | Chat completions | `internal/proxy/handlers.go` |
+| Responses API adapter | `internal/responses/adapter.go` |
 | Model routing | `internal/routing/model_router.go` |
+| Model/provider config | `config/config.yaml` |
+| Model fallback | `internal/fallback/service.go` |
 | Tier definitions | `internal/tiers/tiers.go` |
 | Quota tracking | `internal/request_tracking/service.go` |
+| Stream management | `internal/streaming/manager.go` |
+| Background polling | `internal/background/polling_manager.go` |
 | E2EE encryption | `internal/messaging/encryption.go` |
-| Deep research WS | `internal/deepr/handlers.go` |
-| Stripe webhooks | `internal/stripe/handler.go` |
+| Key sharing (WS) | `internal/keyshare/handlers.go` |
+| Deep research | `internal/deepr/handlers.go` |
+| Title generation | `internal/title_generation/service.go` |
+| Web search | `internal/search/handlers.go` |
+| Tool execution | `internal/tools/registry.go` |
+| MCP protocol | `internal/mcp/handlers.go` |
+| Scheduled tasks | `internal/task/handlers.go` |
+| Notifications (FCM) | `internal/notifications/service.go` |
+| Stripe payments | `internal/stripe/handler.go` |
+| Zcash payments | `internal/zcash/handler.go` |
 | IAP validation | `internal/iap/handler.go` |
+| Composio integration | `internal/composio/handlers.go` |
+| OAuth token exchange | `internal/oauth/handlers.go` |
+| Invite codes | `internal/invitecode/handlers.go` |
+| Problem reports | `internal/problem_reports/handler.go` |
+| Telegram bot | `internal/telegram/service.go` |
 
 ## Tier Limits (Gotcha: Values Must Match Client Apps)
 
@@ -57,18 +75,32 @@ Wire format: `base64(ephemeralPubKey[65] || nonce[12] || ciphertext || tag[16])`
 
 Cross-platform tests: `test-vectors/encryption-compatibility.json`
 
+## Model Routing via config.yaml
+
+All model and provider definitions live in `config/config.yaml` (loaded via `CONFIG_FILE` env var). This is the single source of truth for which models are available and how requests get routed.
+
+**Flow**: Client sends `model` field in request → `ProxyHandler` extracts it → `ModelRouter.RouteModel()` resolves it against config → request is forwarded to the matched provider with the correct base URL, API key, and model name.
+
+**Config structure**:
+- `model_router.providers` — provider name, base URL, API key env var
+- `model_router.models` — canonical model name, aliases, token multiplier, provider list
+- `title_generation` — system prompts for conversation title generation
+
+**Resolution order**: exact match → alias match → prefix match → wildcard fallback (OpenRouter).
+
+Dev config: `config/config.dev.yaml` (redirects to local Ollama). Run with `make run-dev`.
+
 ## Unauth Routes (No Auth Middleware)
 
-- `/health` - Health check
-- `/webhook/stripe` - Stripe (signature verified)
-- `/webhook/telegram` - Telegram bot
+- `/stripe/webhook` - Stripe (signature verified)
 - `/wa` - WhatsApp
+- `/internal/zcash/callback` - Zcash payment callbacks (static API key verified)
 
 ## Development Patterns
 
-**Add a model**: Edit env config YAML → redeploy (no code change)
+**Add a model**: Edit `config/config.yaml` → redeploy (no code change)
 
-**Add a provider**: Add to env config YAML + add API key to `internal/config/config.go`
+**Add a provider**: Add to `config/config.yaml` + add API key env var to deployment config
 
 **Add a tier**: Edit `internal/tiers/tiers.go` + add Stripe product
 
