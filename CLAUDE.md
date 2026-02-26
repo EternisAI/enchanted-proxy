@@ -21,14 +21,31 @@ make sqlc         # Regenerate SQL after editing queries/
 | Server setup | `cmd/server/main.go` |
 | Auth middleware | `internal/auth/middleware.go` |
 | Chat completions | `internal/proxy/handlers.go` |
+| Responses API adapter | `internal/responses/adapter.go` |
 | Model routing | `internal/routing/model_router.go` |
 | Model/provider config | `config/config.yaml` |
+| Model fallback | `internal/fallback/service.go` |
 | Tier definitions | `internal/tiers/tiers.go` |
 | Quota tracking | `internal/request_tracking/service.go` |
+| Stream management | `internal/streaming/manager.go` |
+| Background polling | `internal/background/polling_manager.go` |
 | E2EE encryption | `internal/messaging/encryption.go` |
-| Deep research WS | `internal/deepr/handlers.go` |
-| Stripe webhooks | `internal/stripe/handler.go` |
+| Key sharing (WS) | `internal/keyshare/handlers.go` |
+| Deep research | `internal/deepr/handlers.go` |
+| Title generation | `internal/title_generation/service.go` |
+| Web search | `internal/search/handlers.go` |
+| Tool execution | `internal/tools/registry.go` |
+| MCP protocol | `internal/mcp/handlers.go` |
+| Scheduled tasks | `internal/task/handlers.go` |
+| Notifications (FCM) | `internal/notifications/service.go` |
+| Stripe payments | `internal/stripe/handler.go` |
+| Zcash payments | `internal/zcash/handler.go` |
 | IAP validation | `internal/iap/handler.go` |
+| Composio integration | `internal/composio/handlers.go` |
+| OAuth token exchange | `internal/oauth/handlers.go` |
+| Invite codes | `internal/invitecode/handlers.go` |
+| Problem reports | `internal/problem_reports/handler.go` |
+| Telegram bot | `internal/telegram/service.go` |
 
 ## Tier Limits (Gotcha: Values Must Match Client Apps)
 
@@ -75,10 +92,9 @@ Dev config: `config/config.dev.yaml` (redirects to local Ollama). Run with `make
 
 ## Unauth Routes (No Auth Middleware)
 
-- `/health` - Health check
-- `/webhook/stripe` - Stripe (signature verified)
-- `/webhook/telegram` - Telegram bot
+- `/stripe/webhook` - Stripe (signature verified)
 - `/wa` - WhatsApp
+- `/internal/zcash/callback` - Zcash payment callbacks (static API key verified)
 
 ## Development Patterns
 
