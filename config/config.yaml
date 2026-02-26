@@ -87,6 +87,7 @@ model_router:
     - glm-5
     - glm5
     - z-ai/glm-5
+    - zai-org/glm-5.0
     - zai-org/GLM-4.7
     - zhipu/glm-4.7
     - z-ai/glm-4.7
