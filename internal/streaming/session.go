@@ -374,6 +374,11 @@ func (s *StreamSession) readUpstream() {
 			}
 		}
 
+		// Normalize reasoning_content → reasoning for providers that use non-standard field names
+		if normalized, changed := normalizeReasoningField(line); changed {
+			line = normalized
+		}
+
 		// Extract token usage if present in this chunk
 		if usage := extractTokenUsageFromLine(line); usage != nil {
 			s.tokenUsageMu.Lock()

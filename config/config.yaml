@@ -81,13 +81,17 @@ model_router:
     - name: Tinfoil
       model: llama3-3-70b
 
-  # GLM-4.7 - Free & Pro - via NEAR AI (0.6× multiplier)
-  - name: zai-org/GLM-4.7
+  # GLM 5 - via NEAR AI (0.6× multiplier)
+  - name: zai-org/GLM-5-FP8
     aliases:
+    - glm-5
+    - glm5
+    - z-ai/glm-5
+    - zai-org/glm-5.0
+    - zai-org/GLM-4.7
     - zhipu/glm-4.7
     - z-ai/glm-4.7
     - glm-4.7
-    # Fall back for GLM-4.6
     - zai-org/GLM-4.6
     - z-ai/glm-4.6
     - glm-4.6
