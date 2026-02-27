@@ -377,7 +377,7 @@ func streamToClientWithResponseID(
 		return
 	}
 
-	// Stream chunks to client
+	// Stream chunks to client.
 	for {
 		select {
 		case chunk, ok := <-subscriber.Ch:
