@@ -265,6 +265,11 @@ func main() {
 	streamManager.SetToolExecutor(toolExecutor)
 	log.Info("tool executor initialized")
 
+	// Initialize cancel registry for simple streaming stop support
+	cancelRegistry := proxy.NewCancelRegistry()
+	log.Info("cancel registry initialized",
+		slog.Bool("simple_streaming_enabled", config.AppConfig.SimpleStreamingEnabled))
+
 	// Ensure cleanup on shutdown
 	defer streamManager.Shutdown()
 
@@ -437,6 +442,8 @@ func main() {
 		pollingManager:         pollingManager,
 		modelRouter:            modelRouter,
 		toolRegistry:           toolRegistry,
+		cancelRegistry:         cancelRegistry,
+		toolExecutor:           toolExecutor,
 		oauthHandler:           oauthHandler,
 		composioHandler:        composioHandler,
 		inviteCodeHandler:      inviteCodeHandler,
@@ -563,6 +570,8 @@ type restServerInput struct {
 	pollingManager         *background.PollingManager
 	modelRouter            *routing.ModelRouter
 	toolRegistry           *tools.Registry
+	cancelRegistry         *proxy.CancelRegistry
+	toolExecutor           *streaming.ToolExecutor
 	oauthHandler           *oauth.Handler
 	composioHandler        *composio.Handler
 	inviteCodeHandler      *invitecode.Handler
@@ -699,7 +708,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		{
 			messages := chats.Group("/:chatId/messages")
 			{
-				messages.POST("/:messageId/stop", proxy.StopStreamHandler(input.logger, input.streamManager, input.firestoreClient)) // POST /api/v1/chats/:chatId/messages/:messageId/stop
+				messages.POST("/:messageId/stop", proxy.StopStreamHandler(input.logger, input.streamManager, input.firestoreClient, input.cancelRegistry)) // POST /api/v1/chats/:chatId/messages/:messageId/stop
 			}
 		}
 
@@ -722,13 +731,13 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger, input.modelRouter))
 	{
 		// AI service endpoints
-		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config, input.cancelRegistry, input.toolExecutor))
+		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config, input.cancelRegistry, input.toolExecutor))
+		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config, input.cancelRegistry, input.toolExecutor))
+		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config, input.cancelRegistry, input.toolExecutor))
+		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config, input.cancelRegistry, input.toolExecutor))
+		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config, input.cancelRegistry, input.toolExecutor))
+		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config, input.cancelRegistry, input.toolExecutor))
 	}
 
 	return router

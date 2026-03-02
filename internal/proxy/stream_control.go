@@ -28,6 +28,7 @@ func StopStreamHandler(
 	logger *logger.Logger,
 	streamManager *streaming.StreamManager,
 	firestoreClient *messaging.FirestoreClient,
+	cancelRegistry *CancelRegistry,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := logger.WithContext(c.Request.Context()).WithComponent("stream-control")
@@ -85,6 +86,22 @@ func StopStreamHandler(
 			slog.String("message_id", messageID),
 			slog.String("session_key", sessionKey),
 			slog.String("user_id", userID))
+
+		// Try cancel registry first (simple streaming mode)
+		if cancelRegistry != nil {
+			if err := cancelRegistry.Cancel(chatID, messageID); err == nil {
+				log.Info("stream stopped via cancel registry (simple streaming)",
+					slog.String("chat_id", chatID),
+					slog.String("message_id", messageID))
+				c.JSON(http.StatusOK, gin.H{
+					"stopped":    true,
+					"message_id": messageID,
+					"stopped_at": time.Now().UTC().Format(time.RFC3339),
+				})
+				return
+			}
+			// Not found in cancel registry, fall through to StreamManager
+		}
 
 		// Get existing session (local lookup first)
 		session := streamManager.GetSession(chatID, messageID)

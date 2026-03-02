@@ -122,6 +122,9 @@ type Config struct {
 	MessageStorageBufferSize        int  // Size of message queue channel (higher = handles bigger traffic spikes without dropping messages)
 	MessageStorageTimeoutSeconds    int  // Firestore operation timeout in seconds (prevents workers from hanging on slow/failed operations)
 
+	// Simple Streaming (bypasses multicast StreamManager, uses plain pass-through proxy)
+	SimpleStreamingEnabled bool // If true, use simple streaming (no multicast/session/subscriber). Default: false.
+
 	// Background Polling (for GPT-5 Pro and other long-running models)
 	BackgroundPollingEnabled     bool // Enable background polling mode for GPT-5 Pro (recommended to avoid timeouts)
 	BackgroundPollingInterval    int  // Seconds between OpenAI status polls (default: 2, increases to max after initial phase)
@@ -283,6 +286,9 @@ func LoadConfig() {
 		MessageStorageWorkerPoolSize:    getEnvAsInt("MESSAGE_STORAGE_WORKER_POOL_SIZE", 5),
 		MessageStorageBufferSize:        getEnvAsInt("MESSAGE_STORAGE_BUFFER_SIZE", 500),
 		MessageStorageTimeoutSeconds:    getEnvAsInt("MESSAGE_STORAGE_TIMEOUT_SECONDS", 30),
+
+		// Simple Streaming
+		SimpleStreamingEnabled: getEnvOrDefault("SIMPLE_STREAMING_ENABLED", "false") == "true",
 
 		// Background Polling
 		BackgroundPollingEnabled:     getEnvOrDefault("BACKGROUND_POLLING_ENABLED", "true") == "true",

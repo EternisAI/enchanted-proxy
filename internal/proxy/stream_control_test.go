@@ -81,7 +81,7 @@ func setupTestRouter(streamManager *streaming.StreamManager, log *logger.Logger)
 		{
 			messages := chats.Group("/:chatId/messages")
 			{
-				messages.POST("/:messageId/stop", StopStreamHandler(log, streamManager, nil))
+				messages.POST("/:messageId/stop", StopStreamHandler(log, streamManager, nil, nil))
 			}
 		}
 	}
@@ -241,7 +241,7 @@ func TestStopStreamHandler_Unauthenticated(t *testing.T) {
 		{
 			messages := chats.Group("/:chatId/messages")
 			{
-				messages.POST("/:messageId/stop", StopStreamHandler(log, streamManager, nil))
+				messages.POST("/:messageId/stop", StopStreamHandler(log, streamManager, nil, nil))
 			}
 		}
 	}

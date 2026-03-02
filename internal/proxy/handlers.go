@@ -75,6 +75,8 @@ func ProxyHandler(
 	modelRouter *routing.ModelRouter,
 	toolRegistry *tools.Registry,
 	cfg *config.Config,
+	cancelRegistry *CancelRegistry,
+	toolExecutor *streaming.ToolExecutor,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -462,9 +464,15 @@ func ProxyHandler(
 				}
 			}
 
-			log.Info("detected streaming request, using independent HTTP client",
-				slog.String("model", model))
-			handleStreamingDirect(c, target, apiKey, requestBody, log, start, model, trackingService, messageService, streamManager, cfg, provider)
+			if cfg.SimpleStreamingEnabled {
+				log.Info("detected streaming request, using simple pass-through",
+					slog.String("model", model))
+				handleStreamingSimple(c, target, apiKey, requestBody, log, start, model, trackingService, messageService, cancelRegistry, toolExecutor, toolRegistry, provider)
+			} else {
+				log.Info("detected streaming request, using broadcast streaming",
+					slog.String("model", model))
+				handleStreamingDirect(c, target, apiKey, requestBody, log, start, model, trackingService, messageService, streamManager, cfg, provider)
+			}
 			return
 		}
 
