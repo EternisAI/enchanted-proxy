@@ -72,17 +72,14 @@ func (d *ToolCallDetector) ProcessChunk(line string) bool {
 	choice := chunkData.Choices[0]
 
 	// Check finish reason
-	if choice.FinishReason != "" {
-		d.finishReason = choice.FinishReason
-		// If finish_reason is "tool_calls", this chunk should be suppressed
-		if choice.FinishReason == "tool_calls" {
-			return true
-		}
-	}
-
-	// Process tool calls
+	// Process tool calls BEFORE checking finish_reason.
+	// Some providers (e.g., Kimi/Moonshot via Tinfoil) send tool_calls data
+	// in the same chunk as finish_reason="tool_calls". We must accumulate
+	// the arguments before potentially returning early.
+	hasToolCallData := false
 	if len(choice.Delta.ToolCalls) > 0 {
 		d.hasToolCalls = true
+		hasToolCallData = true
 
 		for _, tc := range choice.Delta.ToolCalls {
 			idx := tc.Index
@@ -110,11 +107,17 @@ func (d *ToolCallDetector) ProcessChunk(line string) bool {
 				d.toolCalls[idx].Arguments.WriteString(tc.Function.Arguments)
 			}
 		}
-
-		return true
 	}
 
-	return false
+	if choice.FinishReason != "" {
+		d.finishReason = choice.FinishReason
+		// If finish_reason is "tool_calls", this chunk should be suppressed
+		if choice.FinishReason == "tool_calls" {
+			return true
+		}
+	}
+
+	return hasToolCallData
 }
 
 // IsComplete returns true if tool calls are complete (finish_reason = "tool_calls").

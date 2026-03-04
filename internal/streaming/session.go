@@ -395,6 +395,11 @@ func (s *StreamSession) readUpstream() {
 		isToolCallChunk := false
 		if toolDetector != nil {
 			isToolCallChunk = toolDetector.ProcessChunk(line)
+			if isToolCallChunk {
+				s.logger.Debug("tool call chunk received",
+					slog.String("line", line),
+					slog.String("chat_id", s.chatID))
+			}
 		}
 
 		// Check if this is the final chunk
@@ -765,8 +770,12 @@ func (s *StreamSession) readUpstream() {
 }
 
 // createContentChunk creates an SSE chunk with content delta (OpenAI format).
+// Includes all required fields (id, object, model) for client-side parsing compatibility.
 func (s *StreamSession) createContentChunk(index int, content string) StreamChunk {
 	chunkData := map[string]interface{}{
+		"id":      fmt.Sprintf("chatcmpl-tool-%s-%d", s.messageID, index),
+		"object":  "chat.completion.chunk",
+		"model":   s.model,
 		"choices": []map[string]interface{}{
 			{
 				"index": 0,
