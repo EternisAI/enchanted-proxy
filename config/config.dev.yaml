@@ -74,6 +74,16 @@ model_router:
     base_url: https://openrouter.ai/api/v1
 
   models:
+  # Kimi 2.5 - LOCAL DEV: via Ollama (qwen3-coder:30b as local stand-in) - NEW DEFAULT  
+  - name: moonshot/kimi-k2
+    aliases:
+    - kimi-k2
+    - kimi-2.5
+    - kimi
+    providers:
+    - name: Ollama
+      model: qwen3-coder:30b
+
   # DeepSeek R1 - via Tinfoil
   - name: deepseek-ai/DeepSeek-R1-0528
     aliases:
@@ -93,7 +103,7 @@ model_router:
     - name: Tinfoil
       model: llama3-3-70b
 
-  # GLM-4.7 - LOCAL DEV: via Ollama (glm-4.7-flash as local stand-in)
+  # GLM-4.7 - LOCAL DEV: via Ollama (qwen3-coder:30b as local stand-in) - DEPRECATED
   - name: zai-org/GLM-4.7
     aliases:
     - zhipu/glm-4.7

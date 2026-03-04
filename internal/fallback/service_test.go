@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	model = "zai-org/GLM-4.6"
+	model = "moonshot/kimi-k2"
 )
 
 var (

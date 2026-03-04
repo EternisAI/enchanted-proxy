@@ -316,7 +316,7 @@ func LoadConfig() {
 	// a significant rework. For now, only use the config file for settings that should
 	// not be overridden by environment variables, like model router configuration.
 	// Later should replace this with proper config handling using spf13/viper.
-	configFilePath := getEnvOrDefault("CONFIG_FILE", "config.yaml")
+	configFilePath := getEnvOrDefault("CONFIG_FILE", "config/config.yaml")
 	log.Printf("Loading config file: %v", configFilePath)
 
 	configFile, err := os.Open(configFilePath)

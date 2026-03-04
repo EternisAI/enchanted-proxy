@@ -62,6 +62,16 @@ model_router:
     base_url: https://openrouter.ai/api/v1
 
   models:
+  # Kimi 2.5 - Free & Pro - via Tinfoil (1× multiplier) - NEW DEFAULT
+  - name: moonshot/kimi-k2
+    aliases:
+    - kimi-k2
+    - kimi-2.5
+    - kimi
+    providers:
+    - name: Tinfoil
+      model: kimi-k2-5
+
   # DeepSeek R1 - Free & Pro - via Tinfoil (1× multiplier)
   - name: deepseek-ai/DeepSeek-R1-0528
     aliases:
@@ -81,20 +91,26 @@ model_router:
     - name: Tinfoil
       model: llama3-3-70b
 
-  # GLM 5 - via NEAR AI (0.6× multiplier)
-  - name: zai-org/GLM-5-FP8
+  # GLM 4.7 - via NEAR AI (0.6× multiplier) - Keep on actual 4.7
+  - name: zai-org/GLM-4.7
     aliases:
-    - glm-5
-    - glm5
-    - z-ai/glm-5
-    - zai-org/glm-5.0
-    - zai-org/GLM-4.7
     - zhipu/glm-4.7
     - z-ai/glm-4.7
     - glm-4.7
     - zai-org/GLM-4.6
     - z-ai/glm-4.6
     - glm-4.6
+    token_multiplier: 0.6
+    providers:
+    - name: NEAR AI
+
+  # GLM 5 - via NEAR AI (0.6× multiplier) - Available when explicitly requested
+  - name: zai-org/GLM-5-FP8
+    aliases:
+    - glm-5
+    - glm5
+    - z-ai/glm-5
+    - zai-org/glm-5.0
     token_multiplier: 0.6
     providers:
     - name: NEAR AI
