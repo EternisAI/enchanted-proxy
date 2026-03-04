@@ -94,6 +94,15 @@ func (d *ToolCallDetector) ProcessChunk(line string) bool {
 					Type: tc.Type,
 					Name: tc.Function.Name,
 				}
+			} else {
+				// Update fields that may arrive in later chunks
+				// Some providers (e.g., Kimi/Moonshot) may send ID or name in subsequent chunks
+				if tc.ID != "" && d.toolCalls[idx].ID == "" {
+					d.toolCalls[idx].ID = tc.ID
+				}
+				if tc.Function.Name != "" && d.toolCalls[idx].Name == "" {
+					d.toolCalls[idx].Name = tc.Function.Name
+				}
 			}
 
 			// Append arguments

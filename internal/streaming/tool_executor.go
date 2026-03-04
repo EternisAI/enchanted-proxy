@@ -214,11 +214,17 @@ func (te *ToolExecutor) CreateContinuationRequest(
 
 	// Add tool results
 	for _, result := range toolResults {
-		messages = append(messages, map[string]interface{}{
+		toolMsg := map[string]interface{}{
 			"role":         result.Role,
 			"content":      result.Content,
 			"tool_call_id": result.ToolCallID,
-		})
+		}
+		// Include name field — some providers (e.g., Moonshot/Kimi via Tinfoil) require it
+		// to match tool results back to tool calls
+		if result.Name != "" {
+			toolMsg["name"] = result.Name
+		}
+		messages = append(messages, toolMsg)
 	}
 
 	// Create continuation payload by copying all original params
@@ -261,10 +267,24 @@ func (te *ToolExecutor) CreateContinuationRequest(
 		return nil, fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	te.logger.Debug("creating continuation request",
+	// Log tool call details for debugging tool loops
+	for i, result := range toolResults {
+		contentPreview := result.Content
+		if len(contentPreview) > 200 {
+			contentPreview = contentPreview[:200] + "..."
+		}
+		te.logger.Info("continuation tool result",
+			slog.Int("index", i),
+			slog.String("tool_call_id", result.ToolCallID),
+			slog.String("name", result.Name),
+			slog.String("content_preview", contentPreview))
+	}
+
+	te.logger.Info("creating continuation request",
 		slog.String("upstream_url", upstreamURL),
 		slog.Int("messages", len(messages)),
-		slog.Int("tool_results", len(toolResults)))
+		slog.Int("tool_results", len(toolResults)),
+		slog.String("model", modelID))
 
 	// Determine final URL: append /chat/completions if not already present
 	finalURL := upstreamURL

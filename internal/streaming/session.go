@@ -421,12 +421,22 @@ func (s *StreamSession) readUpstream() {
 
 		// Check if tool calls are complete and need execution
 		if toolDetector != nil && toolDetector.IsComplete() {
-			s.logger.Info("tool calls detected, executing tools",
-				slog.String("chat_id", s.chatID),
-				slog.String("message_id", s.messageID))
-
 			// Get tool calls
 			toolCalls := toolDetector.GetToolCalls()
+
+			s.logger.Info("tool calls detected, executing tools",
+				slog.String("chat_id", s.chatID),
+				slog.String("message_id", s.messageID),
+				slog.Int("tool_call_count", len(toolCalls)))
+
+			// Log each tool call for debugging (helps diagnose tool loops)
+			for i, tc := range toolCalls {
+				s.logger.Info("tool call details",
+					slog.Int("index", i),
+					slog.String("id", tc.ID),
+					slog.String("name", tc.Function.Name),
+					slog.String("arguments", tc.Function.Arguments))
+			}
 
 			// Create callback to broadcast notifications in real-time
 			// This is called from tool executor goroutines as events occur
