@@ -62,12 +62,13 @@ model_router:
     base_url: https://openrouter.ai/api/v1
 
   models:
-  # Kimi 2.5 - Free & Pro - via Tinfoil (1× multiplier) - NEW DEFAULT
+  # Kimi 2.5 - Free & Pro - via Tinfoil (0.75× multiplier) - NEW DEFAULT
   - name: moonshot/kimi-k2
     aliases:
     - kimi-k2
     - kimi-2.5
     - kimi
+    token_multiplier: 0.75
     providers:
     - name: Tinfoil
       model: kimi-k2-5

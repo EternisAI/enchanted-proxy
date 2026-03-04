@@ -80,6 +80,7 @@ model_router:
     - kimi-k2
     - kimi-2.5
     - kimi
+    token_multiplier: 0.75
     providers:
     - name: Ollama
       model: qwen3-coder:30b
