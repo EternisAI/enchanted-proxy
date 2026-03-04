@@ -67,5 +67,9 @@ tests/
 # Scripts
 __pycache__/
 
+# Builds
+.build/
+
 # Deep research session files (deprecated, now using database)
 deepr_sessions/.env.test
+scripts/glm5-funtimes/glm5-diagnostic-output/

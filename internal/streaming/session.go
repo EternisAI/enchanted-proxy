@@ -374,6 +374,14 @@ func (s *StreamSession) readUpstream() {
 			}
 		}
 
+		// Normalize non-JSON error lines into valid OpenAI-format SSE chunks
+		if normalized, changed := NormalizeSSEErrorLine(line); changed {
+			line = normalized
+			s.logger.Warn("normalized upstream SSE error into valid chunk",
+				slog.String("chat_id", s.chatID),
+				slog.String("message_id", s.messageID))
+		}
+
 		// Normalize reasoning_content → reasoning for providers that use non-standard field names
 		if normalized, changed := NormalizeReasoningField(line); changed {
 			line = normalized

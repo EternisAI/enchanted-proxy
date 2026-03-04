@@ -161,9 +161,34 @@ func handleStreamingSimple(
 
 	flusher, hasFlusher := c.Writer.(http.Flusher)
 
+	// --- Log request body details for debugging ---
+	var reqSummary struct {
+		Model            string      `json:"model"`
+		MaxTokens        interface{} `json:"max_tokens"`
+		MaxCompTokens    interface{} `json:"max_completion_tokens"`
+		Stream           interface{} `json:"stream"`
+		MessageCount     int         `json:"-"`
+	}
+	if err := json.Unmarshal(requestBody, &reqSummary); err == nil {
+		var reqMap map[string]interface{}
+		json.Unmarshal(requestBody, &reqMap)
+		if msgs, ok := reqMap["messages"].([]interface{}); ok {
+			reqSummary.MessageCount = len(msgs)
+		}
+		log.Info("simple streaming: request details",
+			slog.String("chat_id", chatID),
+			slog.String("model", fmt.Sprintf("%v", reqSummary.Model)),
+			slog.Any("max_tokens", reqSummary.MaxTokens),
+			slog.Any("max_completion_tokens", reqSummary.MaxCompTokens),
+			slog.Int("message_count", reqSummary.MessageCount),
+			slog.String("upstream_url", upstreamURL))
+	}
+
 	// --- State for the streaming loop ---
 	var content strings.Builder
 	var tokenUsage *streaming.TokenUsage
+	var finishReason string
+	var chunkCount int
 	clientGone := false
 	continuations := 0
 
@@ -210,14 +235,33 @@ streamLoop:
 				}
 			}
 
+			// Normalize non-JSON error lines into valid OpenAI-format SSE chunks
+			if normalized, changed := streaming.NormalizeSSEErrorLine(line); changed {
+				line = normalized
+				log.Warn("simple streaming: normalized upstream SSE error",
+					slog.String("chat_id", chatID))
+			}
+
 			// Normalize reasoning_content → reasoning
 			if normalized, changed := streaming.NormalizeReasoningField(line); changed {
 				line = normalized
 			}
 
+			chunkCount++
+
 			// Extract token usage
 			if usage := extractSimpleTokenUsage(line); usage != nil {
 				tokenUsage = usage
+			}
+
+			// Extract finish_reason
+			if fr := extractFinishReason(line); fr != "" {
+				finishReason = fr
+				log.Info("simple streaming: finish_reason received",
+					slog.String("chat_id", chatID),
+					slog.String("finish_reason", fr),
+					slog.Int("chunk_count", chunkCount),
+					slog.Int("content_length", content.Len()))
 			}
 
 			// Accumulate content for Firestore save
@@ -346,8 +390,16 @@ streamLoop:
 			if !strings.Contains(err.Error(), "context canceled") {
 				log.Error("simple streaming: scanner error",
 					slog.String("error", err.Error()),
-					slog.String("chat_id", chatID))
+					slog.String("chat_id", chatID),
+					slog.Int("chunk_count", chunkCount),
+					slog.Int("content_length", content.Len()))
 			}
+		} else {
+			log.Info("simple streaming: upstream EOF",
+				slog.String("chat_id", chatID),
+				slog.Int("chunk_count", chunkCount),
+				slog.Int("content_length", content.Len()),
+				slog.String("finish_reason", finishReason))
 		}
 		currentBody.Close()
 		break streamLoop
@@ -358,8 +410,19 @@ streamLoop:
 		slog.String("chat_id", chatID),
 		slog.String("message_id", messageID),
 		slog.Int("content_length", content.Len()),
+		slog.Int("chunk_count", chunkCount),
+		slog.String("finish_reason", finishReason),
 		slog.Bool("stopped", stopped),
-		slog.Bool("client_gone", clientGone))
+		slog.Bool("client_gone", clientGone),
+		slog.Duration("total_duration", time.Since(start)))
+
+	if tokenUsage != nil {
+		log.Info("simple streaming: token usage",
+			slog.String("chat_id", chatID),
+			slog.Int("prompt_tokens", tokenUsage.PromptTokens),
+			slog.Int("completion_tokens", tokenUsage.CompletionTokens),
+			slog.Int("total_tokens", tokenUsage.TotalTokens))
+	}
 
 	// Save message to Firestore
 	if messageService != nil && userID != "" && content.Len() > 0 {
@@ -429,6 +492,30 @@ func doUpstreamRequest(ctx context.Context, client *http.Client, url, apiKey str
 	req.Header.Set("Accept-Encoding", "identity")
 	req.ContentLength = int64(len(body))
 	return client.Do(req)
+}
+
+// extractFinishReason extracts the finish_reason from an SSE line.
+// Returns empty string if not present or not parseable.
+func extractFinishReason(line string) string {
+	if !strings.HasPrefix(line, "data: ") {
+		return ""
+	}
+	data := strings.TrimPrefix(line, "data: ")
+	if data == "[DONE]" {
+		return ""
+	}
+	var chunk struct {
+		Choices []struct {
+			FinishReason *string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+		return ""
+	}
+	if len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != nil {
+		return *chunk.Choices[0].FinishReason
+	}
+	return ""
 }
 
 // extractSimpleTokenUsage extracts token usage from an SSE line.
