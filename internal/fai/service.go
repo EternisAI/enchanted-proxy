@@ -52,11 +52,21 @@ type Product struct {
 
 // PaymentIntentResponse is returned when creating a payment intent.
 type PaymentIntentResponse struct {
-	PaymentID string  `json:"payment_id"`
-	ProductID string  `json:"product_id"`
-	PriceUSD  float64 `json:"price_usd"`
-	FaiPrice  float64 `json:"fai_price"`
-	Status    string  `json:"status"`
+	PaymentID    string  `json:"payment_id"`
+	ProductID    string  `json:"product_id"`
+	PriceUSD     float64 `json:"price_usd"`
+	FaiPrice     float64 `json:"fai_price"`
+	FaiAmount    float64 `json:"fai_amount"`
+	FaiAmountWei string  `json:"fai_amount_wei"`
+	PaymentIDHex string  `json:"payment_id_hex"`
+	Status       string  `json:"status"`
+}
+
+// ConfigResponse is returned by the config endpoint.
+type ConfigResponse struct {
+	PaymentContractAddress string `json:"payment_contract_address"`
+	FaiTokenAddress        string `json:"fai_token_address"`
+	ChainID                uint64 `json:"chain_id"`
 }
 
 const (
@@ -162,6 +172,27 @@ func (s *Service) GetProduct(productID string) *Product {
 	return nil
 }
 
+// GetConfig returns blockchain configuration for client-side contract interaction.
+func (s *Service) GetConfig() (*ConfigResponse, error) {
+	if s.ethClient == nil {
+		return nil, fmt.Errorf("blockchain not initialized")
+	}
+
+	var faiTokenAddress string
+	for addr, tc := range s.tokenConfigs {
+		if tc.CoingeckoID == "freysa-ai" {
+			faiTokenAddress = addr
+			break
+		}
+	}
+
+	return &ConfigResponse{
+		PaymentContractAddress: s.contractAddress.Hex(),
+		FaiTokenAddress:        faiTokenAddress,
+		ChainID:                s.chainID,
+	}, nil
+}
+
 // CreatePaymentIntent generates a unique payment ID and stores it in the database.
 func (s *Service) CreatePaymentIntent(ctx context.Context, userID, productID string) (*PaymentIntentResponse, error) {
 	product := s.GetProduct(productID)
@@ -195,19 +226,25 @@ func (s *Service) CreatePaymentIntent(ctx context.Context, userID, productID str
 		return nil, fmt.Errorf("failed to store payment intent: %w", err)
 	}
 
+	faiAmount, faiAmountWei := computeFaiAmountFields(product.PriceUSD, faiPrice)
+
 	s.logger.Info("created FAI payment intent",
 		"payment_id", paymentID,
 		"user_id", userID,
 		"product_id", productID,
 		"price_usd", product.PriceUSD,
-		"fai_price", faiPrice)
+		"fai_price", faiPrice,
+		"fai_amount", faiAmount)
 
 	return &PaymentIntentResponse{
-		PaymentID: paymentID,
-		ProductID: productID,
-		PriceUSD:  product.PriceUSD,
-		FaiPrice:  faiPrice,
-		Status:    "pending",
+		PaymentID:    paymentID,
+		ProductID:    productID,
+		PriceUSD:     product.PriceUSD,
+		FaiPrice:     faiPrice,
+		FaiAmount:    faiAmount,
+		FaiAmountWei: faiAmountWei,
+		PaymentIDHex: "0x" + paymentID,
+		Status:       "pending",
 	}, nil
 }
 
@@ -229,12 +266,17 @@ func (s *Service) GetPaymentStatus(ctx context.Context, paymentID, userID string
 		faiPrice = intent.FaiPrice.Float64
 	}
 
+	faiAmount, faiAmountWei := computeFaiAmountFields(intent.PriceUsd, faiPrice)
+
 	return &PaymentIntentResponse{
-		PaymentID: intent.PaymentID,
-		ProductID: intent.ProductID,
-		PriceUSD:  intent.PriceUsd,
-		FaiPrice:  faiPrice,
-		Status:    intent.Status,
+		PaymentID:    intent.PaymentID,
+		ProductID:    intent.ProductID,
+		PriceUSD:     intent.PriceUsd,
+		FaiPrice:     faiPrice,
+		FaiAmount:    faiAmount,
+		FaiAmountWei: faiAmountWei,
+		PaymentIDHex: "0x" + intent.PaymentID,
+		Status:       intent.Status,
 	}, nil
 }
 
@@ -520,6 +562,19 @@ func (s *Service) Close() {
 		s.ethClient.Close()
 		s.logger.Info("closed Ethereum WebSocket connection")
 	}
+}
+
+// computeFaiAmountFields computes the FAI token amount and its wei representation.
+func computeFaiAmountFields(priceUSD, faiUSDPrice float64) (faiAmount float64, faiAmountWei string) {
+	if faiUSDPrice <= 0 {
+		return 0, ""
+	}
+	faiAmount = priceUSD / faiUSDPrice
+	bigAmount := new(big.Float).SetFloat64(faiAmount)
+	weiFloat := new(big.Float).Mul(bigAmount, new(big.Float).SetFloat64(1e18))
+	weiInt, _ := weiFloat.Int(nil)
+	faiAmountWei = "0x" + weiInt.Text(16)
+	return faiAmount, faiAmountWei
 }
 
 func parseTime(s string) (t time.Time) {

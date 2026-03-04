@@ -723,6 +723,7 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		// FAI crypto payment (protected)
 		faiGroup := api.Group("/fai")
 		{
+			faiGroup.GET("/config", input.faiHandler.GetConfig)
 			faiGroup.GET("/products", input.faiHandler.GetProducts)
 			faiGroup.POST("/payment-intent", input.faiHandler.CreatePaymentIntent)
 			faiGroup.GET("/payment-intent/:paymentId", input.faiHandler.GetPaymentIntent)

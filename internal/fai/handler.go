@@ -27,11 +27,14 @@ type CreatePaymentIntentRequest struct {
 
 // PaymentIntentAPIResponse is returned to the client.
 type PaymentIntentAPIResponse struct {
-	PaymentID string  `json:"payment_id"`
-	ProductID string  `json:"product_id"`
-	PriceUSD  float64 `json:"price_usd"`
-	FaiPrice  float64 `json:"fai_price"`
-	Status    string  `json:"status"`
+	PaymentID    string  `json:"payment_id"`
+	ProductID    string  `json:"product_id"`
+	PriceUSD     float64 `json:"price_usd"`
+	FaiPrice     float64 `json:"fai_price"`
+	FaiAmount    float64 `json:"fai_amount"`
+	FaiAmountWei string  `json:"fai_amount_wei"`
+	PaymentIDHex string  `json:"payment_id_hex"`
+	Status       string  `json:"status"`
 }
 
 // GET /api/v1/fai/products
@@ -65,11 +68,14 @@ func (h *Handler) CreatePaymentIntent(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, PaymentIntentAPIResponse{
-		PaymentID: intent.PaymentID,
-		ProductID: intent.ProductID,
-		PriceUSD:  intent.PriceUSD,
-		FaiPrice:  intent.FaiPrice,
-		Status:    intent.Status,
+		PaymentID:    intent.PaymentID,
+		ProductID:    intent.ProductID,
+		PriceUSD:     intent.PriceUSD,
+		FaiPrice:     intent.FaiPrice,
+		FaiAmount:    intent.FaiAmount,
+		FaiAmountWei: intent.FaiAmountWei,
+		PaymentIDHex: intent.PaymentIDHex,
+		Status:       intent.Status,
 	})
 }
 
@@ -99,10 +105,25 @@ func (h *Handler) GetPaymentIntent(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, PaymentIntentAPIResponse{
-		PaymentID: intent.PaymentID,
-		ProductID: intent.ProductID,
-		PriceUSD:  intent.PriceUSD,
-		FaiPrice:  intent.FaiPrice,
-		Status:    intent.Status,
+		PaymentID:    intent.PaymentID,
+		ProductID:    intent.ProductID,
+		PriceUSD:     intent.PriceUSD,
+		FaiPrice:     intent.FaiPrice,
+		FaiAmount:    intent.FaiAmount,
+		FaiAmountWei: intent.FaiAmountWei,
+		PaymentIDHex: intent.PaymentIDHex,
+		Status:       intent.Status,
 	})
+}
+
+// GET /api/v1/fai/config
+func (h *Handler) GetConfig(c *gin.Context) {
+	cfg, err := h.service.GetConfig()
+	if err != nil {
+		h.logger.Error("failed to get FAI config", slog.String("error", err.Error()))
+		apierrors.Internal(c, "FAI payments not configured", nil)
+		return
+	}
+
+	c.JSON(http.StatusOK, cfg)
 }
