@@ -44,6 +44,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
 	"github.com/eternisai/enchanted-proxy/internal/tools"
+	"github.com/eternisai/enchanted-proxy/internal/fai"
 	"github.com/eternisai/enchanted-proxy/internal/zcash"
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
@@ -153,19 +154,36 @@ func main() {
 		zcashFirestoreClient = firebaseClient.GetFirestoreClient()
 	}
 	zcashService := zcash.NewService(db.Queries, zcashFirestoreClient, logger.WithComponent("zcash"))
+
+	// Initialize FAI payment service
+	faiService := fai.NewService(db.Queries, logger.WithComponent("fai"))
+	if config.AppConfig.FaiEnabled && config.AppConfig.FaiWsRpcURL != "" && config.AppConfig.FaiPaymentContract != "" {
+		if err := faiService.InitBlockchain(config.AppConfig.FaiWsRpcURL, config.AppConfig.FaiPaymentContract); err != nil {
+			log.Error("failed to initialize FAI blockchain connection", slog.String("error", err.Error()))
+			// Don't exit — FAI payments just won't have event listening, but API endpoints still work
+		} else {
+			log.Info("FAI blockchain connection initialized")
+		}
+	}
+
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
 
-	taskService, err := task.NewService(
-		config.AppConfig.TemporalEndpoint,
-		config.AppConfig.TemporalNamespace,
-		config.AppConfig.TemporalAPIKey,
-		db.Queries,
-		logger.WithComponent("task"),
-	)
-	if err != nil {
-		log.Error("failed to initialize task service", slog.String("error", err.Error()))
-		os.Exit(1)
+	var taskService *task.Service
+	if config.AppConfig.TemporalEndpoint != "" && config.AppConfig.TemporalNamespace != "" && config.AppConfig.TemporalAPIKey != "" {
+		taskService, err = task.NewService(
+			config.AppConfig.TemporalEndpoint,
+			config.AppConfig.TemporalNamespace,
+			config.AppConfig.TemporalAPIKey,
+			db.Queries,
+			logger.WithComponent("task"),
+		)
+		if err != nil {
+			log.Error("failed to initialize task service", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
+	} else {
+		log.Warn("temporal configuration incomplete - task service disabled")
 	}
 
 	// Initialize deep research storage
@@ -304,6 +322,31 @@ func main() {
 		expiryWorkerCancel()
 	}()
 
+	// Initialize FAI payment event listener and expiry worker
+	faiExpiryWorkerCtx, faiExpiryWorkerCancel := context.WithCancel(context.Background())
+	faiExpiryWorker := fai.NewExpiryWorker(db.Queries, logger.WithComponent("fai-expiry"))
+	go faiExpiryWorker.Run(faiExpiryWorkerCtx)
+	log.Info("FAI payment intent expiry worker started")
+	defer func() {
+		log.Info("stopping FAI payment intent expiry worker")
+		faiExpiryWorkerCancel()
+	}()
+
+	if config.AppConfig.FaiEnabled && config.AppConfig.FaiWsRpcURL != "" {
+		faiListenerCtx, faiListenerCancel := context.WithCancel(context.Background())
+		go func() {
+			if err := faiService.StartEventListener(faiListenerCtx); err != nil {
+				log.Error("FAI event listener stopped", slog.String("error", err.Error()))
+			}
+		}()
+		log.Info("FAI payment event listener started")
+		defer func() {
+			log.Info("stopping FAI payment event listener")
+			faiListenerCancel()
+			faiService.Close()
+		}()
+	}
+
 	// Initialize model router for automatic provider routing
 	modelRouter := routing.NewModelRouter(config.AppConfig, logger.WithComponent("routing"))
 
@@ -345,6 +388,7 @@ func main() {
 	iapHandler := iap.NewHandler(iapService, logger.WithComponent("iap"))
 	stripeHandler := stripe.NewHandler(stripeService, logger.WithComponent("stripe"))
 	zcashHandler := zcash.NewHandler(zcashService, logger.WithComponent("zcash"))
+	faiHandler := fai.NewHandler(faiService, logger.WithComponent("fai"))
 	mcpHandler := mcp.NewHandler(mcpService)
 	searchHandler := search.NewHandler(searchService, logger.WithComponent("search"))
 	taskHandler := task.NewHandler(taskService, logger.WithComponent("task"))
@@ -443,6 +487,7 @@ func main() {
 		iapHandler:             iapHandler,
 		stripeHandler:          stripeHandler,
 		zcashHandler:           zcashHandler,
+		faiHandler:             faiHandler,
 		mcpHandler:             mcpHandler,
 		searchHandler:          searchHandler,
 		taskHandler:            taskHandler,
@@ -569,6 +614,7 @@ type restServerInput struct {
 	iapHandler             *iap.Handler
 	stripeHandler          *stripe.Handler
 	zcashHandler           *zcash.Handler
+	faiHandler             *fai.Handler
 	mcpHandler             *mcp.Handler
 	searchHandler          *search.Handler
 	taskHandler            *task.Handler
@@ -672,6 +718,14 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 			zcashGroup.GET("/products", input.zcashHandler.GetProducts)
 			zcashGroup.POST("/invoice", input.zcashHandler.CreateInvoice)
 			zcashGroup.GET("/invoice/:invoiceId", input.zcashHandler.GetInvoice)
+		}
+
+		// FAI crypto payment (protected)
+		faiGroup := api.Group("/fai")
+		{
+			faiGroup.GET("/products", input.faiHandler.GetProducts)
+			faiGroup.POST("/payment-intent", input.faiHandler.CreatePaymentIntent)
+			faiGroup.GET("/payment-intent/:paymentId", input.faiHandler.GetPaymentIntent)
 		}
 
 		// Search API routes (protected)
