@@ -78,6 +78,7 @@ var Configs = map[Tier]Config{
 		// AllowedModels uses canonical model names only (from config.yaml).
 		// Aliases are resolved to canonical names by the middleware before this check.
 		AllowedModels: []string{
+			"moonshot/kimi-k2",                       // Kimi 2.5 (0.75×)
 			"deepseek-ai/DeepSeek-R1-0528",          // DeepSeek R1 (1×)
 			"meta-llama/Llama-3.3-70B",              // Llama 3.3 70B (1×)
 			"zai-org/GLM-5-FP8",                     // GLM 5 (0.6×)
@@ -100,6 +101,7 @@ var Configs = map[Tier]Config{
 		FallbackDailyPlanTokens: 40_000,
 		FallbackModel:           "Qwen/Qwen3-30B-A3B-Instruct-2507",
 		AllowedModels: []string{
+			"moonshot/kimi-k2",                  // Kimi 2.5 (0.75×)
 			"zai-org/GLM-5-FP8",                 // GLM 5 (0.6×)
 			"Qwen/Qwen3-30B-A3B-Instruct-2507", // Qwen3 30B (0.04×)
 		},
