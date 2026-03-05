@@ -90,30 +90,37 @@ func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
 }
 
 // InitBlockchain connects to the blockchain via WebSocket and sets up event listening.
-func (s *Service) InitBlockchain(wsRpcURL, contractAddress string) error {
+func (s *Service) InitBlockchain(wsRpcURL, contractAddress string) (err error) {
 	ethClient, err := ethclient.Dial(wsRpcURL)
 	if err != nil {
 		return fmt.Errorf("failed to connect to Ethereum WebSocket: %w", err)
 	}
+	defer func() {
+		if err != nil {
+			ethClient.Close()
+		}
+	}()
 
-	s.ethClient = ethClient
-	s.contractAddress = common.HexToAddress(contractAddress)
-	s.eventSignature = crypto.Keccak256Hash([]byte("PaymentReceived(bytes32,address,uint256,address)"))
+	contractAddr := common.HexToAddress(contractAddress)
+	eventSig := crypto.Keccak256Hash([]byte("PaymentReceived(bytes32,address,uint256,address)"))
 
 	chainID, err := ethClient.ChainID(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to get chain ID: %w", err)
 	}
-	s.chainID = chainID.Uint64()
 
-	tokenConfigs, err := GetTokenConfigByChainID(s.chainID)
+	tokenConfigs, err := GetTokenConfigByChainID(chainID.Uint64())
 	if err != nil {
 		return fmt.Errorf("failed to get token configs: %w", err)
 	}
+
+	s.ethClient = ethClient
+	s.contractAddress = contractAddr
+	s.eventSignature = eventSig
+	s.chainID = chainID.Uint64()
 	s.tokenConfigs = tokenConfigs
 
 	s.logger.Info("connected to blockchain",
-		"ws_url", wsRpcURL,
 		"contract_address", contractAddress,
 		"chain_id", s.chainID)
 
@@ -400,11 +407,10 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 
 	// Use the stored FAI price from intent creation for validation to avoid
 	// rejecting valid payments due to price changes between creation and payment.
+	// Fall back to live CoinGecko price if the stored price is unavailable.
 	var tokenPriceUSD float64
 	if intent.FaiPrice.Valid && intent.FaiPrice.Float64 > 0 {
 		tokenPriceUSD = intent.FaiPrice.Float64
-	} else if tokenConfig.HardcodedPrice != nil {
-		tokenPriceUSD = *tokenConfig.HardcodedPrice
 	} else {
 		tokenPriceUSD, err = s.coingecko.GetTokenPrice(ctx, tokenConfig.CoingeckoID)
 		if err != nil {
