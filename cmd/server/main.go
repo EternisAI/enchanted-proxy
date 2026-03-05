@@ -326,14 +326,16 @@ func main() {
 	}()
 
 	// Initialize FAI payment event listener and expiry worker
-	faiExpiryWorkerCtx, faiExpiryWorkerCancel := context.WithCancel(context.Background())
-	faiExpiryWorker := fai.NewExpiryWorker(db.Queries, logger.WithComponent("fai-expiry"))
-	go faiExpiryWorker.Run(faiExpiryWorkerCtx)
-	log.Info("FAI payment intent expiry worker started")
-	defer func() {
-		log.Info("stopping FAI payment intent expiry worker")
-		faiExpiryWorkerCancel()
-	}()
+	if config.AppConfig.FaiEnabled {
+		faiExpiryWorkerCtx, faiExpiryWorkerCancel := context.WithCancel(context.Background())
+		faiExpiryWorker := fai.NewExpiryWorker(db.Queries, logger.WithComponent("fai-expiry"))
+		go faiExpiryWorker.Run(faiExpiryWorkerCtx)
+		log.Info("FAI payment intent expiry worker started")
+		defer func() {
+			log.Info("stopping FAI payment intent expiry worker")
+			faiExpiryWorkerCancel()
+		}()
+	}
 
 	if faiReady {
 		faiListenerCtx, faiListenerCancel := context.WithCancel(context.Background())
@@ -494,6 +496,7 @@ func main() {
 		stripeHandler:          stripeHandler,
 		zcashHandler:           zcashHandler,
 		faiHandler:             faiHandler,
+		faiReady:               faiReady,
 		mcpHandler:             mcpHandler,
 		searchHandler:          searchHandler,
 		taskHandler:            taskHandler,
@@ -621,6 +624,7 @@ type restServerInput struct {
 	stripeHandler          *stripe.Handler
 	zcashHandler           *zcash.Handler
 	faiHandler             *fai.Handler
+	faiReady               bool
 	mcpHandler             *mcp.Handler
 	searchHandler          *search.Handler
 	taskHandler            *task.Handler
@@ -726,8 +730,8 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 			zcashGroup.GET("/invoice/:invoiceId", input.zcashHandler.GetInvoice)
 		}
 
-		// FAI crypto payment (protected, only registered when enabled)
-		if config.AppConfig.FaiEnabled {
+		// FAI crypto payment (protected, only registered when blockchain is ready)
+		if input.faiReady {
 			faiGroup := api.Group("/fai")
 			{
 				faiGroup.GET("/config", input.faiHandler.GetConfig)
