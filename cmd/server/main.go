@@ -258,10 +258,12 @@ func main() {
 		log.Error("failed to register exa search tool", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
-	scheduledTasksTool := tools.NewScheduledTasksTool(taskService, logger.WithComponent("scheduled-tasks-tool"))
-	if err := toolRegistry.Register(scheduledTasksTool); err != nil {
-		log.Error("failed to register scheduled tasks tool", slog.String("error", err.Error()))
-		os.Exit(1)
+	if taskService != nil {
+		scheduledTasksTool := tools.NewScheduledTasksTool(taskService, logger.WithComponent("scheduled-tasks-tool"))
+		if err := toolRegistry.Register(scheduledTasksTool); err != nil {
+			log.Error("failed to register scheduled tasks tool", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
 	}
 	log.Info("tool system initialized", slog.Int("registered_tools", len(toolRegistry.List())))
 
@@ -392,7 +394,10 @@ func main() {
 	faiHandler := fai.NewHandler(faiService, logger.WithComponent("fai"))
 	mcpHandler := mcp.NewHandler(mcpService)
 	searchHandler := search.NewHandler(searchService, logger.WithComponent("search"))
-	taskHandler := task.NewHandler(taskService, logger.WithComponent("task"))
+	var taskHandler *task.Handler
+	if taskService != nil {
+		taskHandler = task.NewHandler(taskService, logger.WithComponent("task"))
+	}
 	problemReportsService := problem_reports.NewService(
 		db.Queries,
 		config.AppConfig.LinearAPIKey,
@@ -736,12 +741,14 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		api.POST("/search", input.searchHandler.PostSearchHandler)        // POST /api/v1/search (SerpAPI)
 		api.POST("/exa/search", input.searchHandler.PostExaSearchHandler) // POST /api/v1/exa/search (Exa AI)
 
-		// Task API routes (protected)
-		tasks := api.Group("/tasks")
-		{
-			tasks.POST("", input.taskHandler.CreateTask)           // POST /api/v1/tasks - Create a new task
-			tasks.GET("", input.taskHandler.GetTasks)              // GET /api/v1/tasks - Get all tasks for user
-			tasks.DELETE("/:taskId", input.taskHandler.DeleteTask) // DELETE /api/v1/tasks/:taskId - Delete a task
+		// Task API routes (protected, only when Temporal is configured)
+		if input.taskHandler != nil {
+			tasks := api.Group("/tasks")
+			{
+				tasks.POST("", input.taskHandler.CreateTask)           // POST /api/v1/tasks - Create a new task
+				tasks.GET("", input.taskHandler.GetTasks)              // GET /api/v1/tasks - Get all tasks for user
+				tasks.DELETE("/:taskId", input.taskHandler.DeleteTask) // DELETE /api/v1/tasks/:taskId - Delete a task
+			}
 		}
 
 		// Problem Reports API routes (protected)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -28,9 +29,9 @@ func NewCoinGeckoService(logger *logger.Logger) *CoinGeckoService {
 
 // GetTokenPrice fetches the current USD price for a token by its CoinGecko ID.
 func (c *CoinGeckoService) GetTokenPrice(ctx context.Context, tokenID string) (float64, error) {
-	url := fmt.Sprintf("%s/simple/price?ids=%s&vs_currencies=usd", c.baseURL, tokenID)
+	reqURL := fmt.Sprintf("%s/simple/price?ids=%s&vs_currencies=usd", c.baseURL, url.QueryEscape(tokenID))
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create request: %w", err)
 	}

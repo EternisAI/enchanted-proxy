@@ -209,8 +209,10 @@ func (s *Service) CreatePaymentIntent(ctx context.Context, userID, productID str
 
 	faiPrice, err := s.coingecko.GetAverageFAIPrice(ctx, 5)
 	if err != nil {
-		s.logger.Error("failed to get FAI price, continuing without price", "error", err.Error())
-		faiPrice = 0
+		return nil, fmt.Errorf("failed to get FAI price: %w", err)
+	}
+	if faiPrice <= 0 {
+		return nil, fmt.Errorf("invalid FAI price: %f", faiPrice)
 	}
 
 	id := uuid.New().String()
@@ -396,8 +398,12 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 		new(big.Float).SetInt(divisor),
 	).Float64()
 
+	// Use the stored FAI price from intent creation for validation to avoid
+	// rejecting valid payments due to price changes between creation and payment.
 	var tokenPriceUSD float64
-	if tokenConfig.HardcodedPrice != nil {
+	if intent.FaiPrice.Valid && intent.FaiPrice.Float64 > 0 {
+		tokenPriceUSD = intent.FaiPrice.Float64
+	} else if tokenConfig.HardcodedPrice != nil {
 		tokenPriceUSD = *tokenConfig.HardcodedPrice
 	} else {
 		tokenPriceUSD, err = s.coingecko.GetTokenPrice(ctx, tokenConfig.CoingeckoID)
