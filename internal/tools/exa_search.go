@@ -47,7 +47,7 @@ func (t *ExaSearchTool) Definition() ToolDefinition {
 					},
 					"numResults": map[string]interface{}{
 						"type":        "integer",
-						"description": "Number of results to return (default: 10)",
+						"description": "Number of results to return (1-10, default: 5). Use fewer for simple factual queries (weather, stock price), more for research or comparison queries.",
 					},
 					"requires_live_results": map[string]interface{}{
 						"type":        "boolean",
@@ -87,7 +87,7 @@ func (t *ExaSearchTool) Execute(ctx context.Context, args string) (string, error
 
 	// Set default numResults
 	if searchArgs.NumResults == 0 {
-		searchArgs.NumResults = 10
+		searchArgs.NumResults = 5
 	}
 
 	// Clamp to valid range (1-10)
@@ -127,17 +127,30 @@ func (t *ExaSearchTool) Execute(ctx context.Context, args string) (string, error
 }
 
 // formatResults formats search results as plain text for AI consumption.
-// Matches iOS app format: "url: title. Snippet: summary"
 func (t *ExaSearchTool) formatResults(resp *search.ExaSearchResponse) string {
-	if len(resp.Results) == 0 {
+	if len(resp.Results) == 0 && resp.SynthesizedAnswer == "" {
 		return "No search results found."
 	}
 
-	var formattedResults []string
-	for _, r := range resp.Results {
-		formatted := fmt.Sprintf("%s: %s. Snippet: %s", r.URL, r.Title, r.Summary)
-		formattedResults = append(formattedResults, formatted)
+	var parts []string
+
+	// Lead with the synthesized answer — this is Exa's AI-generated answer grounded
+	// in actual page content (e.g., real weather data, stock prices, facts).
+	if resp.SynthesizedAnswer != "" {
+		parts = append(parts, fmt.Sprintf("Answer: %s", resp.SynthesizedAnswer))
 	}
 
-	return strings.Join(formattedResults, "\n")
+	// Include individual results as supporting sources
+	if len(resp.Results) > 0 {
+		parts = append(parts, "\nSources:")
+		for _, r := range resp.Results {
+			entry := fmt.Sprintf("- %s: %s", r.URL, r.Title)
+			if r.Summary != "" {
+				entry += fmt.Sprintf(" — %s", r.Summary)
+			}
+			parts = append(parts, entry)
+		}
+	}
+
+	return strings.Join(parts, "\n")
 }

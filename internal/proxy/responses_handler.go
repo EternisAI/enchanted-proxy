@@ -142,7 +142,7 @@ func handleResponsesAPI(
 
 	// Step 2: Trigger title generation using cost-effective model (GLM 4.6)
 	if titleConfig, err := modelRouter.GetTitleGenerationConfig(); err != nil {
-		log.Warn("GLM 4.6 not configured for title generation, skipping",
+		log.Warn("Kimi 2.5 not configured for title generation, skipping",
 			slog.String("error", err.Error()))
 	} else {
 		platform := c.GetHeader("X-Client-Platform")
@@ -152,7 +152,7 @@ func handleResponsesAPI(
 		TriggerTitleGeneration(c, titleService, requestBody, TitleGenerationParams{
 			UserID:            userID,
 			ChatID:            chatID,
-			Model:             "zai-org/GLM-4.6",
+			Model:             titleConfig.Model,
 			BaseURL:           titleConfig.BaseURL,
 			APIKey:            titleConfig.APIKey,
 			Platform:          platform,
@@ -377,7 +377,7 @@ func streamToClientWithResponseID(
 		return
 	}
 
-	// Stream chunks to client
+	// Stream chunks to client.
 	for {
 		select {
 		case chunk, ok := <-subscriber.Ch:

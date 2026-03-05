@@ -134,7 +134,7 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 				// First run for this chat - generate title with GLM 4.6
 				titleConfig, err := modelRouter.GetTitleGenerationConfig()
 				if err != nil {
-					log.Warn("GLM 4.6 not configured for deep research title generation",
+					log.Warn("Kimi 2.5 not configured for deep research title generation",
 						slog.String("error", err.Error()))
 				} else {
 					platform := c.GetHeader("X-Client-Platform")
@@ -144,12 +144,12 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 
 					log.Info("queuing title generation for deep research chat",
 						slog.String("chat_id", req.ChatID),
-						slog.String("model", "zai-org/GLM-4.6"))
+						slog.String("model", titleConfig.Model))
 
 					go titleService.GenerateAndStore(
 						context.Background(),
 						title_generation.GenerateRequest{
-							Model:       "zai-org/GLM-4.6",
+							Model:       titleConfig.Model,
 							BaseURL:     titleConfig.BaseURL,
 							APIKey:      titleConfig.APIKey,
 							UserContent: req.Query,

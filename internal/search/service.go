@@ -90,10 +90,11 @@ type SearchMetadata struct {
 
 // ExaSearchResponse represents the response from Exa search.
 type ExaSearchResponse struct {
-	Query          string            `json:"query"`
-	Results        []ExaSearchResult `json:"results"`
-	ProcessingTime string            `json:"processing_time"`
-	SearchMetadata ExaSearchMetadata `json:"search_metadata"`
+	Query            string            `json:"query"`
+	Results          []ExaSearchResult `json:"results"`
+	SynthesizedAnswer string           `json:"synthesized_answer,omitempty"` // Exa's AI-synthesized answer grounded in results
+	ProcessingTime   string            `json:"processing_time"`
+	SearchMetadata   ExaSearchMetadata `json:"search_metadata"`
 }
 
 // ExaSearchMetadata contains metadata about the Exa search.
@@ -137,6 +138,20 @@ type ExaAPIResponse struct {
 		Image         string  `json:"image,omitempty"`
 		Favicon       string  `json:"favicon,omitempty"`
 	} `json:"results"`
+	// Output contains Exa's synthesized answer from the search results.
+	// This is a high-quality AI-generated summary grounded in the actual page content
+	// (e.g., actual weather data, stock prices, facts) — much richer than per-result summaries.
+	Output *struct {
+		Content   string `json:"content"`
+		Grounding []struct {
+			Field     string `json:"field"`
+			Citations []struct {
+				URL   string `json:"url"`
+				Title string `json:"title"`
+			} `json:"citations"`
+			Confidence string `json:"confidence"`
+		} `json:"grounding"`
+	} `json:"output,omitempty"`
 	AutoPromptString string `json:"autopromptString,omitempty"`
 	RequestID        string `json:"requestId,omitempty"`
 }
@@ -209,9 +224,10 @@ func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSear
 
 	// Create channels for results and errors
 	type searchResult struct {
-		query   string
-		results []ExaSearchResult
-		err     error
+		query             string
+		results           []ExaSearchResult
+		synthesizedAnswer string
+		err               error
 	}
 	resultChan := make(chan searchResult, len(req.Queries))
 
@@ -280,12 +296,19 @@ func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSear
 				})
 			}
 
-			resultChan <- searchResult{query: q, results: results}
+			// Extract synthesized answer from Exa's output field
+			var synthesized string
+			if exaResp.Output != nil && exaResp.Output.Content != "" {
+				synthesized = exaResp.Output.Content
+			}
+
+			resultChan <- searchResult{query: q, results: results, synthesizedAnswer: synthesized}
 		}(query)
 	}
 
 	// Collect results
 	var allResults []ExaSearchResult
+	var synthesizedAnswers []string
 	var errors []error
 	for i := 0; i < len(req.Queries); i++ {
 		result := <-resultChan
@@ -293,6 +316,9 @@ func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSear
 			errors = append(errors, fmt.Errorf("query '%s': %w", result.query, result.err))
 		} else {
 			allResults = append(allResults, result.results...)
+			if result.synthesizedAnswer != "" {
+				synthesizedAnswers = append(synthesizedAnswers, result.synthesizedAnswer)
+			}
 		}
 	}
 
@@ -303,9 +329,10 @@ func (s *Service) SearchExa(ctx context.Context, req ExaSearchRequest) (*ExaSear
 
 	// Build combined response
 	return &ExaSearchResponse{
-		Query:          strings.Join(req.Queries, ", "),
-		Results:        allResults,
-		ProcessingTime: fmt.Sprintf("%.2fms", float64(time.Since(start).Nanoseconds())/1000000),
+		Query:             strings.Join(req.Queries, ", "),
+		Results:           allResults,
+		SynthesizedAnswer: strings.Join(synthesizedAnswers, "\n"),
+		ProcessingTime:    fmt.Sprintf("%.2fms", float64(time.Since(start).Nanoseconds())/1000000),
 		SearchMetadata: ExaSearchMetadata{
 			Engine:       "exa",
 			Status:       "success",
