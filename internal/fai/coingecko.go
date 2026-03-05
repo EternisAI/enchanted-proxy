@@ -106,13 +106,20 @@ func (c *CoinGeckoService) GetAverageFAIPrice(ctx context.Context, minutes int) 
 	}
 
 	var sum float64
+	var validCount int
 	for _, pricePoint := range histData.Prices {
 		if len(pricePoint) >= 2 {
 			sum += pricePoint[1]
+			validCount++
 		}
 	}
 
-	average := sum / float64(len(histData.Prices))
-	c.logger.Info("calculated average FAI price", "average_price", average, "data_points", len(histData.Prices))
+	if validCount == 0 {
+		c.logger.Info("no valid price points in historical data, falling back to current price")
+		return c.GetTokenPrice(ctx, "freysa-ai")
+	}
+
+	average := sum / float64(validCount)
+	c.logger.Info("calculated average FAI price", "average_price", average, "data_points", validCount)
 	return average, nil
 }

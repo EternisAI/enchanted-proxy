@@ -157,11 +157,12 @@ func main() {
 
 	// Initialize FAI payment service
 	faiService := fai.NewService(db.Queries, logger.WithComponent("fai"))
+	faiReady := false
 	if config.AppConfig.FaiEnabled && config.AppConfig.FaiWsRpcURL != "" && config.AppConfig.FaiPaymentContract != "" {
 		if err := faiService.InitBlockchain(config.AppConfig.FaiWsRpcURL, config.AppConfig.FaiPaymentContract); err != nil {
 			log.Error("failed to initialize FAI blockchain connection", slog.String("error", err.Error()))
-			// Don't exit — FAI payments just won't have event listening, but API endpoints still work
 		} else {
+			faiReady = true
 			log.Info("FAI blockchain connection initialized")
 		}
 	}
@@ -332,7 +333,7 @@ func main() {
 		faiExpiryWorkerCancel()
 	}()
 
-	if config.AppConfig.FaiEnabled && config.AppConfig.FaiWsRpcURL != "" {
+	if faiReady {
 		faiListenerCtx, faiListenerCancel := context.WithCancel(context.Background())
 		go func() {
 			if err := faiService.StartEventListener(faiListenerCtx); err != nil {
@@ -720,13 +721,15 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 			zcashGroup.GET("/invoice/:invoiceId", input.zcashHandler.GetInvoice)
 		}
 
-		// FAI crypto payment (protected)
-		faiGroup := api.Group("/fai")
-		{
-			faiGroup.GET("/config", input.faiHandler.GetConfig)
-			faiGroup.GET("/products", input.faiHandler.GetProducts)
-			faiGroup.POST("/payment-intent", input.faiHandler.CreatePaymentIntent)
-			faiGroup.GET("/payment-intent/:paymentId", input.faiHandler.GetPaymentIntent)
+		// FAI crypto payment (protected, only registered when enabled)
+		if config.AppConfig.FaiEnabled {
+			faiGroup := api.Group("/fai")
+			{
+				faiGroup.GET("/config", input.faiHandler.GetConfig)
+				faiGroup.GET("/products", input.faiHandler.GetProducts)
+				faiGroup.POST("/payment-intent", input.faiHandler.CreatePaymentIntent)
+				faiGroup.GET("/payment-intent/:paymentId", input.faiHandler.GetPaymentIntent)
+			}
 		}
 
 		// Search API routes (protected)

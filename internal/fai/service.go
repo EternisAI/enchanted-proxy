@@ -491,10 +491,15 @@ func (s *Service) grantEntitlement(ctx context.Context, intent pgdb.FaiPaymentIn
 		durationDays = 30
 	}
 
+	baseTime := time.Now()
+	if intent.PaidAt.Valid {
+		baseTime = intent.PaidAt.Time
+	}
+
 	err := s.queries.UpsertEntitlementWithExtension(ctx, pgdb.UpsertEntitlementWithExtensionParams{
 		UserID:               intent.UserID,
 		SubscriptionTier:     product.Tier,
-		BaseTime:             intent.CreatedAt,
+		BaseTime:             baseTime,
 		DurationDays:         durationDays,
 		SubscriptionProvider: "fai",
 		StripeCustomerID:     nil,

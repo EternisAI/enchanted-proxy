@@ -54,7 +54,9 @@ func (w *ExpiryWorker) expireIntents(ctx context.Context) {
 		default:
 		}
 
-		intents, err := w.queries.GetExpiredPendingFaiPaymentIntents(ctx, w.batchSize)
+		queryCtx, queryCancel := context.WithTimeout(ctx, 30*time.Second)
+		intents, err := w.queries.GetExpiredPendingFaiPaymentIntents(queryCtx, w.batchSize)
+		queryCancel()
 		if err != nil {
 			w.logger.Error("failed to get expired FAI payment intents", "error", err.Error())
 			return
@@ -67,10 +69,13 @@ func (w *ExpiryWorker) expireIntents(ctx context.Context) {
 		w.logger.Info("expiring old FAI payment intents", "count", len(intents))
 
 		for _, intent := range intents {
-			if err := w.queries.UpdateFaiPaymentIntentToExpired(ctx, intent.ID); err != nil {
+			updateCtx, updateCancel := context.WithTimeout(ctx, 10*time.Second)
+			if err := w.queries.UpdateFaiPaymentIntentToExpired(updateCtx, intent.ID); err != nil {
 				w.logger.Error("failed to expire FAI payment intent", "error", err.Error(), "id", intent.ID)
+				updateCancel()
 				continue
 			}
+			updateCancel()
 			w.logger.Info("FAI payment intent expired", "id", intent.ID, "user_id", intent.UserID)
 		}
 

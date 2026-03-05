@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -403,7 +404,11 @@ func LoadConfig() {
 		if AppConfig.FaiWsRpcURL == "" || AppConfig.FaiPaymentContract == "" {
 			log.Println("Warning: FAI_ENABLED is true but FAI_WS_RPC_URL or FAI_PAYMENT_CONTRACT is missing.")
 		} else {
-			log.Printf("FAI payment configured: contract=%s, ws_rpc_url=%s", AppConfig.FaiPaymentContract, AppConfig.FaiWsRpcURL)
+			safeRpcURL := AppConfig.FaiWsRpcURL
+			if u, err := url.Parse(AppConfig.FaiWsRpcURL); err == nil {
+				safeRpcURL = u.Scheme + "://" + u.Host + u.Path
+			}
+			log.Printf("FAI payment configured: contract=%s, ws_rpc_url=%s", AppConfig.FaiPaymentContract, safeRpcURL)
 		}
 	} else {
 		log.Println("FAI payment disabled (set FAI_ENABLED=true to enable)")
