@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -137,6 +138,12 @@ type Config struct {
 	ZCashBackendAPIKey        string
 	ZCashBackendSkipTLSVerify bool    // Skip TLS verification (for local dev only)
 	ZCashDebugMultiplier      float64 // Price multiplier for testing (e.g., 0.01 for 1% of normal price, 0 = disabled)
+
+	// FAI Payment (Base blockchain)
+	FaiWsRpcURL          string  // WebSocket RPC URL for Base (e.g., wss://base-sepolia.g.alchemy.com/v2/<key>)
+	FaiPaymentContract   string  // Payment Router contract address
+	FaiEnabled           bool    // Enable FAI payment event listener
+	FaiDebugMultiplier   float64 // Price multiplier for testing (e.g., 0.01 for 1% of normal price, 0 = disabled)
 
 	// Linear API (problem reports)
 	LinearAPIKey    string
@@ -300,6 +307,12 @@ func LoadConfig() {
 		ZCashBackendSkipTLSVerify: getEnvOrDefault("ZCASH_BACKEND_SKIP_TLS_VERIFY", "false") == "true",
 		ZCashDebugMultiplier:      getEnvFloat("ZCASH_DEBUG_MULTIPLIER", 0),
 
+		// FAI Payment (Base blockchain)
+		FaiWsRpcURL:        getEnvOrDefault("FAI_WS_RPC_URL", ""),
+		FaiPaymentContract: getEnvOrDefault("FAI_PAYMENT_CONTRACT", ""),
+		FaiEnabled:         getEnvOrDefault("FAI_ENABLED", "false") == "true",
+		FaiDebugMultiplier: getEnvFloat("FAI_DEBUG_MULTIPLIER", 0),
+
 		// Linear API (problem reports)
 		LinearAPIKey:    getEnvOrDefault("LINEAR_API_KEY", ""),
 		LinearLabelID:   getEnvOrDefault("LINEAR_LABEL_ID", ""),
@@ -385,6 +398,20 @@ func LoadConfig() {
 
 	if AppConfig.InternalAPIKey == "" {
 		log.Println("Warning: Internal API key is missing. /internal/ endpoints will reject all requests. Please set INTERNAL_API_KEY environment variable.")
+	}
+
+	if AppConfig.FaiEnabled {
+		if AppConfig.FaiWsRpcURL == "" || AppConfig.FaiPaymentContract == "" {
+			log.Println("Warning: FAI_ENABLED is true but FAI_WS_RPC_URL or FAI_PAYMENT_CONTRACT is missing.")
+		} else {
+			safeRpcURL := AppConfig.FaiWsRpcURL
+			if u, err := url.Parse(AppConfig.FaiWsRpcURL); err == nil {
+				safeRpcURL = u.Scheme + "://" + u.Host + u.Path
+			}
+			log.Printf("FAI payment configured: contract=%s, ws_rpc_url=%s", AppConfig.FaiPaymentContract, safeRpcURL)
+		}
+	} else {
+		log.Println("FAI payment disabled (set FAI_ENABLED=true to enable)")
 	}
 
 	if AppConfig.AppStoreAPIKeyP8 == "" || AppConfig.AppStoreAPIKeyID == "" || AppConfig.AppStoreBundleID == "" || AppConfig.AppStoreIssuerID == "" {
