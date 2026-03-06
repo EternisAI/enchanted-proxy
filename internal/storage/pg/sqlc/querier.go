@@ -18,6 +18,7 @@ type Querier interface {
 	CountInviteCodesByRedeemedBy(ctx context.Context, redeemedBy *string) (int64, error)
 	CountProblemReportsByUserID(ctx context.Context, userID string) (int64, error)
 	CreateDeepResearchRun(ctx context.Context, arg CreateDeepResearchRunParams) (int64, error)
+	CreateFaiPaymentIntent(ctx context.Context, arg CreateFaiPaymentIntentParams) error
 	CreateInviteCode(ctx context.Context, arg CreateInviteCodeParams) (InviteCode, error)
 	CreateProblemReport(ctx context.Context, arg CreateProblemReportParams) (ProblemReport, error)
 	CreateRequestLog(ctx context.Context, arg CreateRequestLogParams) error
@@ -33,7 +34,10 @@ type Querier interface {
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
 	GetDeepResearchRunCountForChat(ctx context.Context, arg GetDeepResearchRunCountForChatParams) (int64, error)
 	GetEntitlement(ctx context.Context, userID string) (GetEntitlementRow, error)
+	GetExpiredPendingFaiPaymentIntents(ctx context.Context, limit int32) ([]FaiPaymentIntent, error)
 	GetExpiredPendingInvoices(ctx context.Context, limit int32) ([]ZcashInvoice, error)
+	GetFaiPaymentIntentByPaymentID(ctx context.Context, paymentID string) (FaiPaymentIntent, error)
+	GetFaiPaymentIntentForUser(ctx context.Context, arg GetFaiPaymentIntentForUserParams) (FaiPaymentIntent, error)
 	GetInviteCodeByCodeHash(ctx context.Context, codeHash string) (InviteCode, error)
 	GetInviteCodeByID(ctx context.Context, id int64) (InviteCode, error)
 	GetProblemReportByID(ctx context.Context, id string) (ProblemReport, error)
@@ -80,6 +84,8 @@ type Querier interface {
 	ResetInviteCode(ctx context.Context, codeHash string) error
 	SoftDeleteInviteCode(ctx context.Context, id int64) error
 	UpdateDeepResearchRunTokens(ctx context.Context, arg UpdateDeepResearchRunTokensParams) error
+	UpdateFaiPaymentIntentToCompleted(ctx context.Context, arg UpdateFaiPaymentIntentToCompletedParams) error
+	UpdateFaiPaymentIntentToExpired(ctx context.Context, id string) error
 	UpdateInviteCodeActive(ctx context.Context, arg UpdateInviteCodeActiveParams) error
 	UpdateInviteCodeUsage(ctx context.Context, arg UpdateInviteCodeUsageParams) error
 	UpdateTaskStatus(ctx context.Context, arg UpdateTaskStatusParams) error

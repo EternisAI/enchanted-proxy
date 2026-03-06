@@ -29,6 +29,10 @@ egress:
   - api.storekit-sandbox.itunes.apple.com
   # Stripe API
   - api.stripe.com
+  # FAI crypto payments (Base RPC + CoinGecko price feed)
+  - base-sepolia.drpc.org
+  - base.drpc.org
+  - api.coingecko.com
   # MCP API client endpoints
   - api.perplexity.ai
   - api.replicate.com
@@ -96,6 +100,10 @@ env:
 - ENABLE_TELEGRAM_SERVER
 - ETERNIS_INFERENCE_API_KEY
 - EXA_API_KEY
+- FAI_ENABLED
+- FAI_WS_RPC_URL
+- FAI_PAYMENT_CONTRACT
+- FAI_DEBUG_MULTIPLIER
 - FALLBACK_CHECK_INTERVAL
 - FALLBACK_PROMETHEUS_TOKEN
 - FALLBACK_PROMETHEUS_URL
