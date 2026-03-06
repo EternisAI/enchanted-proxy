@@ -389,9 +389,9 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 		return fmt.Errorf("failed to query payment intent: %w", err)
 	}
 
-	// Idempotency: skip if already completed
-	if intent.Status == "completed" {
-		s.logger.Info("payment already processed", "payment_id", paymentIDHex)
+	// Idempotency: skip if not pending (already completed or expired)
+	if intent.Status != "pending" {
+		s.logger.Info("payment intent not pending, skipping", "payment_id", paymentIDHex, "status", intent.Status)
 		return nil
 	}
 

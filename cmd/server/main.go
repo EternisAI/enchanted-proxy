@@ -340,8 +340,20 @@ func main() {
 	if faiReady {
 		faiListenerCtx, faiListenerCancel := context.WithCancel(context.Background())
 		go func() {
-			if err := faiService.StartEventListener(faiListenerCtx); err != nil {
-				log.Error("FAI event listener stopped", slog.String("error", err.Error()))
+			for {
+				if err := faiService.StartEventListener(faiListenerCtx); err != nil {
+					if errors.Is(err, context.Canceled) {
+						return
+					}
+					log.Error("FAI event listener stopped, restarting in 5s", slog.String("error", err.Error()))
+					select {
+					case <-time.After(5 * time.Second):
+						continue
+					case <-faiListenerCtx.Done():
+						return
+					}
+				}
+				return
 			}
 		}()
 		log.Info("FAI payment event listener started")
