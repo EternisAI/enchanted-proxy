@@ -302,8 +302,11 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 
 	blockNumber, err := s.syncHistoricalBlocks(ctx)
 	if err != nil {
-		s.logger.Error("failed to sync historical blocks", "error", err.Error())
-		return fmt.Errorf("failed to sync historical blocks: %w", err)
+		s.logger.Warn("failed to sync historical blocks, starting from current block", "error", err.Error())
+		blockNumber, err = s.ethClient.BlockNumber(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get current block number: %w", err)
+		}
 	}
 
 	query := ethereum.FilterQuery{
