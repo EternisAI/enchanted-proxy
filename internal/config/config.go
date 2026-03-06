@@ -144,6 +144,7 @@ type Config struct {
 	FaiPaymentContract   string  // Payment Router contract address
 	FaiEnabled           bool    // Enable FAI payment event listener
 	FaiDebugMultiplier   float64 // Price multiplier for testing (e.g., 0.01 for 1% of normal price, 0 = disabled)
+	FaiDiscountPercent   float64 // Discount percentage for FAI payments (e.g., 20 for 20% off, 0 = no discount)
 
 	// Linear API (problem reports)
 	LinearAPIKey    string
@@ -312,6 +313,7 @@ func LoadConfig() {
 		FaiPaymentContract: getEnvOrDefault("FAI_PAYMENT_CONTRACT", ""),
 		FaiEnabled:         getEnvOrDefault("FAI_ENABLED", "false") == "true",
 		FaiDebugMultiplier: getEnvFloat("FAI_DEBUG_MULTIPLIER", 0),
+		FaiDiscountPercent: getEnvFloat("FAI_DISCOUNT_PERCENT", 0),
 
 		// Linear API (problem reports)
 		LinearAPIKey:    getEnvOrDefault("LINEAR_API_KEY", ""),
