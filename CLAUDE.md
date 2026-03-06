@@ -90,6 +90,35 @@ All model and provider definitions live in `config/config.yaml` (loaded via `CON
 
 Dev config: `config/config.dev.yaml` (redirects to local Ollama). Run with `make run-dev`.
 
+## Crypto Payment Systems
+
+### FAI Payments (`internal/fai/`)
+
+On-chain ERC-20 token payments via a Payment Router smart contract on Base (Ethereum L2). The proxy connects directly to the blockchain — no separate backend.
+
+- `service.go` — Core logic: creates payment intents, subscribes to `PaymentReceived` events via WebSocket RPC, validates payments (5% slippage tolerance), grants entitlements
+- `handler.go` — REST endpoints under `/api/v1/fai/` (config, products, payment-intent CRUD)
+- `coingecko.go` — Fetches FAI/USD price (5-min average) from CoinGecko API
+- `token_data.go` — FAI token contract addresses per chain (Base mainnet + Sepolia testnet)
+- `expiry_worker.go` — Hourly job that marks pending intents older than 24h as expired
+
+**Env vars**: `FAI_ENABLED`, `FAI_WS_RPC_URL`, `FAI_PAYMENT_CONTRACT`, `FAI_DEBUG_MULTIPLIER`
+
+**DB**: `fai_payment_intents` table (queries in `internal/storage/pg/queries/fai_payment_intents.sql`)
+
+### Zcash Payments (`internal/zcash/`)
+
+Shielded Zcash payments via a separate Rust microservice (`zcash-payment-backend/`). The proxy acts as intermediary between clients and the backend.
+
+- `service.go` — Creates invoices (calls zcash-backend for shielded address), handles payment callbacks (verifies with backend before granting), uses Kraken for ZEC/USD pricing
+- `handler.go` — REST endpoints under `/api/v1/zcash/` (products, invoice CRUD) + internal callback endpoint
+- `firestore.go` — Writes invoice status to Firestore for real-time client updates
+- `expiry_worker.go` — Cleans up stale invoices
+
+**Env vars**: `ZCASH_BACKEND_URL`, `ZCASH_BACKEND_API_KEY`, `ZCASH_BACKEND_SKIP_TLS_VERIFY`, `ZCASH_DEBUG_MULTIPLIER`
+
+**Security**: Callbacks are verified by re-fetching invoice status from the zcash-backend (prevents spoofed callbacks).
+
 ## Unauth Routes (No Auth Middleware)
 
 - `/stripe/webhook` - Stripe (signature verified)
