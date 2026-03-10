@@ -42,12 +42,14 @@ type Service struct {
 
 // Product represents a purchasable subscription product.
 type Product struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	PriceUSD    float64 `json:"price_usd"`
-	Tier        string  `json:"tier"`
-	IsLifetime  bool    `json:"is_lifetime"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Description     string  `json:"description"`
+	PriceUSD        float64 `json:"price_usd"`
+	DiscountPercent float64 `json:"discount_percent"`
+	DiscountedPrice float64 `json:"discounted_price"`
+	Tier            string  `json:"tier"`
+	IsLifetime      bool    `json:"is_lifetime"`
 }
 
 // PaymentIntentResponse is returned when creating a payment intent.
@@ -133,7 +135,9 @@ func (s *Service) GetProducts() []Product {
 	if config.AppConfig.FaiDebugMultiplier > 0 {
 		multiplier = config.AppConfig.FaiDebugMultiplier
 	}
-	return []Product{
+	discount := config.AppConfig.FaiDiscountPercent
+
+	products := []Product{
 		{
 			ID:          ProductWeeklyPro,
 			Name:        "Pro Weekly",
@@ -167,6 +171,17 @@ func (s *Service) GetProducts() []Product {
 			IsLifetime:  true,
 		},
 	}
+
+	for i := range products {
+		products[i].DiscountPercent = discount
+		if discount > 0 {
+			products[i].DiscountedPrice = products[i].PriceUSD * (1 - discount/100)
+		} else {
+			products[i].DiscountedPrice = products[i].PriceUSD
+		}
+	}
+
+	return products
 }
 
 // GetProduct returns a product by ID, or nil if not found.
@@ -222,33 +237,38 @@ func (s *Service) CreatePaymentIntent(ctx context.Context, userID, productID str
 		return nil, fmt.Errorf("invalid FAI price: %f", faiPrice)
 	}
 
+	// Use discounted price for FAI amount calculation
+	chargePrice := product.DiscountedPrice
+
 	id := uuid.New().String()
 	err = s.queries.CreateFaiPaymentIntent(ctx, pgdb.CreateFaiPaymentIntentParams{
 		ID:        id,
 		UserID:    userID,
 		PaymentID: paymentID,
 		ProductID: productID,
-		PriceUsd:  product.PriceUSD,
+		PriceUsd:  chargePrice,
 		FaiPrice:  sql.NullFloat64{Float64: faiPrice, Valid: faiPrice > 0},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to store payment intent: %w", err)
 	}
 
-	faiAmount, faiAmountWei := computeFaiAmountFields(product.PriceUSD, faiPrice)
+	faiAmount, faiAmountWei := computeFaiAmountFields(chargePrice, faiPrice)
 
 	s.logger.Info("created FAI payment intent",
 		"payment_id", paymentID,
 		"user_id", userID,
 		"product_id", productID,
-		"price_usd", product.PriceUSD,
+		"original_price_usd", product.PriceUSD,
+		"discount_percent", product.DiscountPercent,
+		"charge_price_usd", chargePrice,
 		"fai_price", faiPrice,
 		"fai_amount", faiAmount)
 
 	return &PaymentIntentResponse{
 		PaymentID:    paymentID,
 		ProductID:    productID,
-		PriceUSD:     product.PriceUSD,
+		PriceUSD:     chargePrice,
 		FaiPrice:     faiPrice,
 		FaiAmount:    faiAmount,
 		FaiAmountWei: faiAmountWei,
