@@ -46,6 +46,23 @@ type Entitlement struct {
 	SubscriptionTier string  `json:"subscriptionTier"`
 }
 
+type FaiPaymentIntent struct {
+	ID           string          `json:"id"`
+	UserID       string          `json:"userId"`
+	PaymentID    string          `json:"paymentId"`
+	ProductID    string          `json:"productId"`
+	TokenAddress *string         `json:"tokenAddress"`
+	TokenAmount  sql.NullFloat64 `json:"tokenAmount"`
+	PriceUsd     float64         `json:"priceUsd"`
+	FaiPrice     sql.NullFloat64 `json:"faiPrice"`
+	Status       string          `json:"status"`
+	PaidBlock    sql.NullInt64   `json:"paidBlock"`
+	TxHash       *string         `json:"txHash"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	UpdatedAt    time.Time       `json:"updatedAt"`
+	PaidAt       sql.NullTime    `json:"paidAt"`
+}
+
 type InviteCode struct {
 	ID         int64      `json:"id"`
 	Code       string     `json:"code"`
