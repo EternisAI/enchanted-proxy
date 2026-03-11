@@ -103,9 +103,11 @@ model_router:
     - zai-org/GLM-4.6
     - z-ai/glm-4.6
     - glm-4.6
-    token_multiplier: 0.6
+    token_multiplier: 0.75
     providers:
-    - name: NEAR AI
+    # Temporary reroute due to GLM issues
+    - name: Tinfoil
+      model: kimi-k2-5
 
   # GLM 5 - via NEAR AI (0.6× multiplier) - Available when explicitly requested
   - name: zai-org/GLM-5-FP8
@@ -114,9 +116,11 @@ model_router:
     - glm5
     - z-ai/glm-5
     - zai-org/glm-5.0
-    token_multiplier: 0.6
+    token_multiplier: 0.75
     providers:
-    - name: NEAR AI
+    # Temporary reroute due to GLM issues
+    - name: Tinfoil
+      model: kimi-k2-5
 
   # Qwen3 30B A3B - Free & Pro - via NEAR AI (0.04× multiplier, fallback model)
   - name: Qwen/Qwen3-30B-A3B-Instruct-2507
