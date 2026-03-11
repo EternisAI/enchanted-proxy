@@ -17,12 +17,12 @@ INSERT INTO fai_payment_intents (
 `
 
 type CreateFaiPaymentIntentParams struct {
-	ID        string         `json:"id"`
-	UserID    string         `json:"userId"`
-	PaymentID string         `json:"paymentId"`
-	ProductID string         `json:"productId"`
-	PriceUsd  string         `json:"priceUsd"`
-	FaiPrice  sql.NullString `json:"faiPrice"`
+	ID        string          `json:"id"`
+	UserID    string          `json:"userId"`
+	PaymentID string          `json:"paymentId"`
+	ProductID string          `json:"productId"`
+	PriceUsd  float64         `json:"priceUsd"`
+	FaiPrice  sql.NullFloat64 `json:"faiPrice"`
 }
 
 func (q *Queries) CreateFaiPaymentIntent(ctx context.Context, arg CreateFaiPaymentIntentParams) error {
@@ -153,11 +153,11 @@ WHERE payment_id = $1 AND status = 'pending'
 `
 
 type UpdateFaiPaymentIntentToCompletedParams struct {
-	PaymentID    string         `json:"paymentId"`
-	TokenAddress *string        `json:"tokenAddress"`
-	TokenAmount  sql.NullString `json:"tokenAmount"`
-	PaidBlock    sql.NullInt64  `json:"paidBlock"`
-	TxHash       *string        `json:"txHash"`
+	PaymentID    string          `json:"paymentId"`
+	TokenAddress *string         `json:"tokenAddress"`
+	TokenAmount  sql.NullFloat64 `json:"tokenAmount"`
+	PaidBlock    sql.NullInt64   `json:"paidBlock"`
+	TxHash       *string         `json:"txHash"`
 }
 
 func (q *Queries) UpdateFaiPaymentIntentToCompleted(ctx context.Context, arg UpdateFaiPaymentIntentToCompletedParams) error {
