@@ -29,6 +29,7 @@ type Querier interface {
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	DeleteTask(ctx context.Context, arg DeleteTaskParams) (sql.Result, error)
 	DeleteTelegramChat(ctx context.Context, chatID int64) error
+	DeleteZcashInvoice(ctx context.Context, id uuid.UUID) error
 	GetActiveDeepResearchRun(ctx context.Context, arg GetActiveDeepResearchRunParams) (GetActiveDeepResearchRunRow, error)
 	GetAllActiveTasks(ctx context.Context) ([]Task, error)
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)

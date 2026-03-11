@@ -23,8 +23,9 @@ import (
 )
 
 var (
-	ErrInvalidInvoiceID = errors.New("invalid invoice ID")
-	ErrInvoiceNotFound  = errors.New("invoice not found")
+	ErrInvalidInvoiceID          = errors.New("invalid invoice ID")
+	ErrInvoiceNotFound           = errors.New("invoice not found")
+	ErrExistingInvoiceProcessing = errors.New("existing invoice has a pending payment and cannot be replaced")
 )
 
 const (
@@ -206,12 +207,20 @@ func (s *Service) GetZecPriceUSD(ctx context.Context) (float64, error) {
 
 // CreateInvoice creates a new invoice, stores it locally, writes to Firestore,
 // and calls the zcash-backend to get a receiving address.
-// If the backend returns an existing invoice (e.g., user already has a pending invoice
-// for the same product), we return that existing invoice instead of creating a new one.
+// If the backend returns an existing invoice for the same product, we return it.
+// If the user has a pending invoice for a different product, we cancel the old one
+// and create a new one. If the old invoice is processing (payment detected), we
+// return ErrExistingInvoiceProcessing.
 func (s *Service) CreateInvoice(ctx context.Context, userID, productID string) (*Invoice, error) {
 	product := s.GetProduct(productID)
 	if product == nil {
 		return nil, fmt.Errorf("unknown product: %s", productID)
+	}
+
+	// Check if user already has a pending invoice for a different product.
+	// If so, cancel it before creating a new one.
+	if err := s.cancelConflictingInvoice(ctx, userID, productID); err != nil {
+		return nil, err
 	}
 
 	// Get ZEC price from Kraken
@@ -561,6 +570,92 @@ func (s *Service) grantEntitlement(ctx context.Context, invoice pgdb.ZcashInvoic
 	)
 
 	return nil
+}
+
+// cancelConflictingInvoice checks if the user has a pending invoice for a different product
+// and cancels it. Returns ErrExistingInvoiceProcessing if the existing invoice has a
+// pending payment (processing status) and cannot be safely cancelled.
+func (s *Service) cancelConflictingInvoice(ctx context.Context, userID, newProductID string) error {
+	existingInvoices, err := s.queries.GetZcashInvoicesByUserAndStatus(ctx, pgdb.GetZcashInvoicesByUserAndStatusParams{
+		UserID: userID,
+		Status: "pending",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to check existing invoices: %w", err)
+	}
+
+	for _, existing := range existingInvoices {
+		if existing.ProductID == newProductID {
+			continue
+		}
+
+		s.logger.Info("cancelling conflicting invoice",
+			"existing_invoice_id", existing.ID.String(),
+			"existing_product_id", existing.ProductID,
+			"new_product_id", newProductID,
+			"user_id", userID,
+		)
+
+		// Try to delete on the zcash-backend first
+		if err := s.deleteBackendInvoice(ctx, existing.ID.String()); err != nil {
+			s.logger.Warn("failed to delete conflicting invoice on backend",
+				"error", err.Error(),
+				"invoice_id", existing.ID.String(),
+			)
+			return ErrExistingInvoiceProcessing
+		}
+
+		// Mark as expired in Firestore
+		if err := s.UpdateInvoiceStatusInFirestore(ctx, existing.ID.String(), "expired"); err != nil {
+			s.logger.Error("failed to update Firestore for cancelled invoice",
+				"error", err.Error(),
+				"invoice_id", existing.ID.String(),
+			)
+		}
+
+		// Delete from local database
+		if err := s.queries.DeleteZcashInvoice(ctx, existing.ID); err != nil {
+			s.logger.Error("failed to delete cancelled invoice from local DB",
+				"error", err.Error(),
+				"invoice_id", existing.ID.String(),
+			)
+		}
+	}
+
+	return nil
+}
+
+// deleteBackendInvoice calls zcash-backend to delete an unpaid invoice.
+// Returns an error if the invoice is processing (payment detected) or paid.
+func (s *Service) deleteBackendInvoice(ctx context.Context, invoiceID string) error {
+	backendURL := config.AppConfig.ZCashBackendURL + "/invoices/" + invoiceID
+	apiKey := config.AppConfig.ZCashBackendAPIKey
+
+	req, err := http.NewRequestWithContext(ctx, "DELETE", backendURL, nil)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+
+	if resp.StatusCode == http.StatusConflict {
+		return ErrExistingInvoiceProcessing
+	}
+
+	return fmt.Errorf("backend returned status %d", resp.StatusCode)
 }
 
 // verifyInvoiceWithBackend calls zcash-backend to get the actual invoice status.
