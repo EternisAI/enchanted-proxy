@@ -37,6 +37,9 @@ WHERE status = 'pending'
 ORDER BY created_at ASC
 LIMIT $1;
 
+-- name: DeleteZcashInvoice :exec
+DELETE FROM zcash_invoices WHERE id = $1;
+
 -- name: UpdateZcashInvoiceToExpired :exec
 UPDATE zcash_invoices
 SET status = 'expired', updated_at = NOW()

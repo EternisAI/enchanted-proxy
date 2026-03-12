@@ -41,6 +41,15 @@ func (q *Queries) CreateZcashInvoice(ctx context.Context, arg CreateZcashInvoice
 	return err
 }
 
+const deleteZcashInvoice = `-- name: DeleteZcashInvoice :exec
+DELETE FROM zcash_invoices WHERE id = $1
+`
+
+func (q *Queries) DeleteZcashInvoice(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.ExecContext(ctx, deleteZcashInvoice, id)
+	return err
+}
+
 const getExpiredPendingInvoices = `-- name: GetExpiredPendingInvoices :many
 SELECT id, user_id, product_id, amount_zatoshis, zec_amount, price_usd, receiving_address, status, created_at, updated_at, paid_at FROM zcash_invoices
 WHERE status = 'pending'

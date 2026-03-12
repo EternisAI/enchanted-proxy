@@ -51,6 +51,10 @@ func (h *Handler) CreateInvoice(c *gin.Context) {
 
 	invoice, err := h.service.CreateInvoice(c.Request.Context(), userID, req.ProductID)
 	if err != nil {
+		if errors.Is(err, ErrExistingInvoiceProcessing) {
+			apierrors.Conflict(c, "You have an existing invoice with a pending payment. Please wait for it to complete or expire before switching plans.", nil)
+			return
+		}
 		h.logger.Error("failed to create zcash invoice", "error", err.Error(), "user_id", userID)
 		apierrors.Internal(c, "failed to create invoice", nil)
 		return
