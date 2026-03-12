@@ -99,6 +99,7 @@ make test                          # All tests
 
 ## Gotchas
 
+- **Env vars must be allowlisted in `deploy/enclaver.yaml`** — The TEE strips all env vars not explicitly listed in the `env:` section. If you add a new env var to the Go code and it silently reads as empty, this is why. Add it to `deploy/enclaver.yaml` under `env:` and redeploy.
 - Auth middleware applied globally in `main.go` (exceptions listed above)
 - E2EE encryption coordinated across iOS/Web/Proxy - constants MUST match
 - Structured logging: use `logger.WithComponent("mycomponent")`

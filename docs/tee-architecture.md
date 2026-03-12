@@ -157,4 +157,6 @@ PCR measurements are the cryptographic fingerprint of the enclave contents. User
 
 **TLS handshake failure to internal service**: Some services use a custom CA (`/etc/ssl/certs/eternis/llm-ca.pem`). Check the Envoy cluster config for the target service in `deploy/envoy.yaml`.
 
+**Environment variable reads as empty**: The enclave strips all env vars not explicitly allowlisted in `deploy/enclaver.yaml` under the `env:` section. If you add a new env var to the Go code and it silently reads as empty at runtime, add it to the allowlist and redeploy. This is easy to miss because the var will exist in your deployment config (e.g., Kubernetes secrets) but never reach the process inside the enclave.
+
 **Server not starting**: The Go server waits for Envoy (port 9101) before launching. If Envoy fails to start, the server will wait indefinitely. Check Envoy logs for config errors.
