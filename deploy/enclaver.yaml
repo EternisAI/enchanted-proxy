@@ -59,6 +59,8 @@ egress:
   # Internal deepresearch API endpoint
   - flow-dev.dr-use1.ghostagent.org
   - flow.deepr.freysa.ai
+  # Self-hosted Anonymizer-4B
+  - anonymizer-4b.llm.eternisai.net
   # Self-hosted Venice (GCP)
   - 34.30.193.13
   # aws-0-us-east-2.pooler.supabase.com
