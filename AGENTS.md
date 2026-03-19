@@ -31,15 +31,7 @@ make sqlc         # Regenerate SQL after editing queries/
 
 ## Tier Limits (Gotcha: Values Must Match Client Apps)
 
-| Tier | Plan Tokens | Reset | Deep Research | Fallback |
-|------|-------------|-------|---------------|----------|
-| Free | 20k monthly | 1st of month | 1 lifetime | None |
-| Plus | 40k daily | Daily 00:00 UTC | Unlimited | 40k/day |
-| Pro | 500k daily | Daily 00:00 UTC | 10/day | 500k/day |
-
-**Model multipliers**: 0.04× (Qwen3), 0.5× (Dolphin), 1× (DeepSeek, Llama), 3× (GLM-4.6), 4× (GPT-4.1), 6× (GPT-5.2), 70× (GPT-5.2 Pro)
-
-See `TIER_LIMITS.md` for complete reference.
+**Source of truth**: `internal/tiers/tiers.go` (tier configs, quotas, allowed models) and `config/config.yaml` (model multipliers, provider routing). Don't duplicate values here — check the code.
 
 ## E2EE Constants (Critical: Must Match iOS/Web/Proxy)
 
@@ -99,6 +91,7 @@ make test                          # All tests
 
 ## Gotchas
 
+- **Env vars must be allowlisted in `deploy/enclaver.yaml`** — The TEE strips all env vars not explicitly listed in the `env:` section. If you add a new env var to the Go code and it silently reads as empty, this is why. Add it to `deploy/enclaver.yaml` under `env:` and redeploy.
 - Auth middleware applied globally in `main.go` (exceptions listed above)
 - E2EE encryption coordinated across iOS/Web/Proxy - constants MUST match
 - Structured logging: use `logger.WithComponent("mycomponent")`

@@ -9,6 +9,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
+	"github.com/eternisai/enchanted-proxy/internal/routing"
 	"github.com/gin-gonic/gin"
 )
 
@@ -58,7 +59,7 @@ type DeepResearchInfo struct {
 }
 
 // RateLimitStatusHandler returns comprehensive rate limit and tier information.
-func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.HandlerFunc {
+func RateLimitStatusHandler(trackingService *Service, log *logger.Logger, modelRouter ...*routing.ModelRouter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, exists := auth.GetUserID(c)
 		if !exists {
@@ -88,6 +89,22 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 			allowedFeatures[i] = string(feature)
 		}
 
+		// Expand allowed models to include aliases so clients can match by any known name
+		allowedModels := tierConfig.AllowedModels
+		if len(allowedModels) > 0 && len(modelRouter) > 0 && modelRouter[0] != nil {
+			seen := make(map[string]bool)
+			var expanded []string
+			for _, canonical := range allowedModels {
+				for _, name := range modelRouter[0].GetAliases(canonical) {
+					if !seen[name] {
+						seen[name] = true
+						expanded = append(expanded, name)
+					}
+				}
+			}
+			allowedModels = expanded
+		}
+
 		// Build response
 		response := RateLimitStatusResponse{
 			Enabled:              config.AppConfig.RateLimitEnabled,
@@ -96,7 +113,7 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger) gin.Ha
 			RateLimitingEnabled:  config.AppConfig.RateLimitEnabled,
 			SubscriptionProvider: provider,
 			ExpiresAt:            expiresAt,
-			AllowedModels:        tierConfig.AllowedModels,
+			AllowedModels:        allowedModels,
 			AllowedFeatures:      allowedFeatures,
 		}
 
