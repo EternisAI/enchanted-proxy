@@ -52,6 +52,19 @@ func (mr *ModelRouter) SetRoutes(routes map[string]ModelRoute) {
 	mr.routes.Store(&routes)
 }
 
+// GetAliases returns all aliases (including the canonical name itself) for a given canonical model name.
+// Useful for expanding allowed model lists so clients can match by any known name.
+func (mr *ModelRouter) GetAliases(canonicalName string) []string {
+	result := []string{canonicalName}
+	lower := strings.ToLower(strings.TrimSpace(canonicalName))
+	for alias, canonical := range mr.aliases {
+		if strings.ToLower(canonical) == lower && alias != lower {
+			result = append(result, alias)
+		}
+	}
+	return result
+}
+
 // ResolveAlias resolves a model ID to its canonical name using the alias map.
 // Returns the canonical model name if an alias exists, otherwise returns the input unchanged.
 // This is useful for consistent model identification across the codebase (e.g., rate limiting).
