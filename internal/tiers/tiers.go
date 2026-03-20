@@ -100,11 +100,7 @@ var Configs = map[Tier]Config{
 		DailyPlanTokens:         40_000,
 		FallbackDailyPlanTokens: 40_000,
 		FallbackModel:           "Qwen/Qwen3-30B-A3B-Instruct-2507",
-		AllowedModels: []string{
-			"moonshot/kimi-k2",                  // Kimi 2.5 (0.75×)
-			"zai-org/GLM-5-FP8",                 // GLM 5 (0.6×)
-			"Qwen/Qwen3-30B-A3B-Instruct-2507", // Qwen3 30B (0.04×)
-		},
+		AllowedModels: []string{}, // All models allowed (same as Pro)
 		DeepResearchDailyRuns:         -1, // Unlimited daily runs
 		DeepResearchLifetimeRuns:      0,  // Check daily only
 		DeepResearchTokenCap:          10_000,
