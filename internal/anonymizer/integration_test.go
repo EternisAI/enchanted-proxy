@@ -10,17 +10,17 @@ import (
 )
 
 // These tests hit the real anonymizer CVM endpoint.
-// Run with: ANONYMIZER_TEST_URL=... ANONYMIZER_TEST_KEY=... go test -tags=integration -v ./internal/anonymizer/
+// Run with: ANONYMIZER_BASE_URL=... ANONYMIZER_API_KEY=... go test -tags=integration -v ./internal/anonymizer/
 //
 // Required env vars:
-//   ANONYMIZER_TEST_URL - base URL (e.g. https://b775ab37.igw.ghostagent.org)
-//   ANONYMIZER_TEST_KEY - API key
+//   ANONYMIZER_BASE_URL - base URL (e.g. https://b775ab37.igw.ghostagent.org)
+//   ANONYMIZER_API_KEY  - API key
 
 func getTestConfig(t *testing.T) ClientConfig {
-	baseURL := os.Getenv("ANONYMIZER_TEST_URL")
-	apiKey := os.Getenv("ANONYMIZER_TEST_KEY")
+	baseURL := os.Getenv("ANONYMIZER_BASE_URL")
+	apiKey := os.Getenv("ANONYMIZER_API_KEY")
 	if baseURL == "" || apiKey == "" {
-		t.Skip("ANONYMIZER_TEST_URL and ANONYMIZER_TEST_KEY must be set")
+		t.Skip("ANONYMIZER_BASE_URL and ANONYMIZER_API_KEY must be set")
 	}
 	return ClientConfig{
 		BaseURL: baseURL,
