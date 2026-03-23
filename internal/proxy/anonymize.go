@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 
 	"github.com/eternisai/enchanted-proxy/internal/anonymizer"
@@ -65,7 +66,7 @@ func replaceLastUserMessage(requestBody []byte, newContent string) ([]byte, erro
 
 	messages, ok := reqBody["messages"].([]interface{})
 	if !ok || len(messages) == 0 {
-		return nil, json.Unmarshal([]byte("null"), nil)
+		return nil, fmt.Errorf("no messages in request body")
 	}
 
 	// Find and replace the last user message

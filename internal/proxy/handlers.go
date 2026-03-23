@@ -930,6 +930,13 @@ func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model s
 		logRequestToDatabase(c, trackingService, model, tokenUsage)
 	}
 
+	// Include anonymizer replacements if present
+	if replacements, exists := c.Get("anonymizerReplacements"); exists {
+		if replacementsStr, ok := replacements.(string); ok {
+			c.Writer.Header().Set("X-Anonymizer-Replacements", replacementsStr)
+		}
+	}
+
 	// Save message to Firestore asynchronously
 	isError := resp.StatusCode >= 400
 	saveMessageAsync(c, messageService, content, isError)

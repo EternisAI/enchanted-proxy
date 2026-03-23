@@ -1,6 +1,7 @@
 package anonymizer
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -58,32 +59,19 @@ func TestApplyReplacements_MultipleOccurrences(t *testing.T) {
 func TestBuildPrompt(t *testing.T) {
 	prompt := BuildPrompt("Hello, my name is Joel.")
 
-	if !contains(prompt, "<|im_start|>system") {
+	if !strings.Contains(prompt, "<|im_start|>system") {
 		t.Error("prompt missing system start tag")
 	}
-	if !contains(prompt, "<|im_start|>user") {
+	if !strings.Contains(prompt, "<|im_start|>user") {
 		t.Error("prompt missing user start tag")
 	}
-	if !contains(prompt, "Hello, my name is Joel.") {
+	if !strings.Contains(prompt, "Hello, my name is Joel.") {
 		t.Error("prompt missing user text")
 	}
-	if !contains(prompt, "/no_think") {
+	if !strings.Contains(prompt, "/no_think") {
 		t.Error("prompt missing /no_think directive")
 	}
-	if !contains(prompt, "<|im_start|>assistant") {
+	if !strings.Contains(prompt, "<|im_start|>assistant") {
 		t.Error("prompt missing assistant start tag")
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
