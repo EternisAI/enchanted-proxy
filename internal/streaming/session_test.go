@@ -292,8 +292,8 @@ func TestStreamSessionStop(t *testing.T) {
 	}
 	longContent = append(longContent, "data: [DONE]")
 
-	// Use slow mock with 5ms delay per line (100 lines * 5ms = 500ms total)
-	body := newSlowMockSSEStream(longContent, 5*time.Millisecond)
+	// Use slow mock with 10ms delay per line (100 lines * 10ms = 1000ms total)
+	body := newSlowMockSSEStream(longContent, 10*time.Millisecond)
 	session := NewStreamSession("chat-123", "msg-456", body, log)
 
 	session.Start()
@@ -319,7 +319,7 @@ func TestStreamSessionStop(t *testing.T) {
 	}()
 
 	// Wait for some chunks to be processed, then stop
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	err := session.Stop("user-123", StopReasonUserCancelled)
 	if err != nil {
