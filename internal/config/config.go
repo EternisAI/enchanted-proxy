@@ -152,6 +152,11 @@ type Config struct {
 	LinearProjectID string
 	LinearLabelID   string
 
+	// Anonymizer CVM
+	AnonymizerBaseURL string // Base URL for anonymizer CVM (default: http://127.0.0.1:20120)
+	AnonymizerAPIKey  string // API key (defaults to ETERNIS_INFERENCE_API_KEY)
+	AnonymizerTimeout int    // Timeout in seconds (default: 10)
+
 	// Internal API Key (for /internal/ endpoints)
 	InternalAPIKey string
 }
@@ -320,6 +325,11 @@ func LoadConfig() {
 		LinearLabelID:   getEnvOrDefault("LINEAR_LABEL_ID", ""),
 		LinearProjectID: getEnvOrDefault("LINEAR_PROJECT_ID", ""),
 		LinearTeamID:    getEnvOrDefault("LINEAR_TEAM_ID", ""),
+
+		// Anonymizer CVM
+		AnonymizerBaseURL: getEnvOrDefault("ANONYMIZER_BASE_URL", "http://127.0.0.1:20120"),
+		AnonymizerAPIKey:  getEnvOrDefault("ANONYMIZER_API_KEY", getEnvOrDefault("ETERNIS_INFERENCE_API_KEY", "")),
+		AnonymizerTimeout: getEnvAsInt("ANONYMIZER_TIMEOUT_SECONDS", 10),
 
 		// Internal API Key (for /internal/ endpoints)
 		InternalAPIKey: getEnvOrDefault("INTERNAL_API_KEY", ""),

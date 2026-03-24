@@ -162,6 +162,9 @@ env:
 - ZCASH_BACKEND_SKIP_TLS_VERIFY
 - ZCASH_BACKEND_URL
 - ZCASH_DEBUG_MULTIPLIER
+- ANONYMIZER_BASE_URL
+- ANONYMIZER_API_KEY
+- ANONYMIZER_TIMEOUT_SECONDS
 files:
 - /etc/ssl/certs/eternis/llm-ca.pem
 - /var/run/secrets/tls/tls.crt

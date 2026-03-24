@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eternisai/enchanted-proxy/internal/anonymizer"
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/background"
 	"github.com/eternisai/enchanted-proxy/internal/config"
@@ -74,6 +75,7 @@ func ProxyHandler(
 	pollingManager *background.PollingManager,
 	modelRouter *routing.ModelRouter,
 	toolRegistry *tools.Registry,
+	anonymizerService *anonymizer.Service,
 	cfg *config.Config,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -228,6 +230,16 @@ func ProxyHandler(
 		}
 
 		// Continue with Chat Completions API (existing logic below)
+
+		// Anonymize user message if requested
+		if c.GetHeader("X-Anonymize") == "true" && anonymizerService != nil {
+			if anonymizedBody, replacementsJSON, ok := anonymizeRequestBody(c.Request.Context(), log, anonymizerService, requestBody); ok {
+				requestBody = anonymizedBody
+				c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
+				c.Request.ContentLength = int64(len(requestBody))
+				c.Set("anonymizerReplacements", replacementsJSON)
+			}
+		}
 
 		// Extract encryption enabled header
 		encryptionEnabledStr := c.GetHeader("X-Encryption-Enabled")
@@ -750,6 +762,14 @@ func handleStreamingDirect(
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
+
+	// Include anonymizer replacements if present
+	if replacements, exists := c.Get("anonymizerReplacements"); exists {
+		if replacementsStr, ok := replacements.(string); ok {
+			c.Writer.Header().Set("X-Anonymizer-Replacements", replacementsStr)
+		}
+	}
+
 	c.Writer.WriteHeader(http.StatusOK)
 
 	// Subscribe to session
@@ -908,6 +928,13 @@ func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model s
 		logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
 	} else {
 		logRequestToDatabase(c, trackingService, model, tokenUsage)
+	}
+
+	// Include anonymizer replacements if present
+	if replacements, exists := c.Get("anonymizerReplacements"); exists {
+		if replacementsStr, ok := replacements.(string); ok {
+			c.Writer.Header().Set("X-Anonymizer-Replacements", replacementsStr)
+		}
 	}
 
 	// Save message to Firestore asynchronously

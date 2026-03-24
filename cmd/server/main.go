@@ -18,6 +18,7 @@ import (
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/eternisai/enchanted-proxy/graph"
+	"github.com/eternisai/enchanted-proxy/internal/anonymizer"
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/background"
 	"github.com/eternisai/enchanted-proxy/internal/composio"
@@ -487,6 +488,21 @@ func main() {
 		log.Info("telegram service disabled")
 	}
 
+	// Initialize anonymizer service
+	var anonymizerSvc *anonymizer.Service
+	if config.AppConfig.AnonymizerAPIKey != "" {
+		anonymizerClient := anonymizer.NewClient(anonymizer.ClientConfig{
+			BaseURL: config.AppConfig.AnonymizerBaseURL,
+			APIKey:  config.AppConfig.AnonymizerAPIKey,
+			Timeout: time.Duration(config.AppConfig.AnonymizerTimeout) * time.Second,
+		})
+		anonymizerSvc = anonymizer.NewService(anonymizerClient)
+		log.Info("anonymizer service initialized",
+			slog.String("base_url", config.AppConfig.AnonymizerBaseURL))
+	} else {
+		log.Warn("anonymizer service disabled (no API key)")
+	}
+
 	// Initialize REST API router (original proxy functionality)
 	router := setupRESTServer(restServerInput{
 		logger:                 logger,
@@ -501,6 +517,7 @@ func main() {
 		pollingManager:         pollingManager,
 		modelRouter:            modelRouter,
 		toolRegistry:           toolRegistry,
+		anonymizerService:      anonymizerSvc,
 		oauthHandler:           oauthHandler,
 		composioHandler:        composioHandler,
 		inviteCodeHandler:      inviteCodeHandler,
@@ -629,6 +646,7 @@ type restServerInput struct {
 	pollingManager         *background.PollingManager
 	modelRouter            *routing.ModelRouter
 	toolRegistry           *tools.Registry
+	anonymizerService      *anonymizer.Service
 	oauthHandler           *oauth.Handler
 	composioHandler        *composio.Handler
 	inviteCodeHandler      *invitecode.Handler
@@ -803,13 +821,13 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	proxyGroup.Use(request_tracking.RequestTrackingMiddleware(input.requestTrackingService, input.logger, input.modelRouter))
 	{
 		// AI service endpoints
-		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
-		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.config))
+		proxyGroup.POST("/chat/completions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.anonymizerService, input.config))
+		proxyGroup.POST("/responses", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.anonymizerService, input.config))
+		proxyGroup.GET("/responses/:responseId", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.anonymizerService, input.config))
+		proxyGroup.POST("/embeddings", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.anonymizerService, input.config))
+		proxyGroup.POST("/audio/speech", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.anonymizerService, input.config))
+		proxyGroup.POST("/audio/transcriptions", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.anonymizerService, input.config))
+		proxyGroup.POST("/audio/translations", proxy.ProxyHandler(input.logger, input.requestTrackingService, input.messageService, input.titleService, input.streamManager, input.pollingManager, input.modelRouter, input.toolRegistry, input.anonymizerService, input.config))
 	}
 
 	return router
