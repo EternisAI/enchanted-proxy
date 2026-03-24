@@ -112,9 +112,6 @@ type StreamSession struct {
 	continuationCount int    // Number of tool continuations executed
 	requestMu         sync.RWMutex
 
-	// De-anonymization (reverse replacement of anonymized tokens in AI responses)
-	deanonymizer *Deanonymizer
-
 	// Model info (for model-specific content filtering)
 	model   string
 	modelMu sync.RWMutex
@@ -244,12 +241,6 @@ func (s *StreamSession) SetUserID(userID string) {
 
 // SetModel stores the model name for model-specific content filtering.
 // Must be called before Start() if GLM content filtering is desired.
-// SetDeanonymizer attaches a deanonymizer to reverse anonymized tokens in AI responses.
-// Must be called before Start().
-func (s *StreamSession) SetDeanonymizer(d *Deanonymizer) {
-	s.deanonymizer = d
-}
-
 func (s *StreamSession) SetModel(model string) {
 	s.modelMu.Lock()
 	defer s.modelMu.Unlock()
@@ -409,14 +400,6 @@ func (s *StreamSession) readUpstream() {
 					slog.String("line", line),
 					slog.String("chat_id", s.chatID))
 			}
-		}
-
-		// De-anonymize: reverse anonymized tokens back to originals in the content delta.
-		// Limitation: replacements are matched per-chunk, so a multi-token replacement
-		// (e.g. "Mike Jones") split across two SSE deltas ("Mike" + " Jones") won't match.
-		// This is rare in practice since LLMs emit names/addresses as cohesive token groups.
-		if s.deanonymizer != nil {
-			line = s.deanonymizer.ReplaceInSSELine(line)
 		}
 
 		// Check if this is the final chunk

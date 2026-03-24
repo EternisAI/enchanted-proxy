@@ -8,7 +8,6 @@ import (
 
 	"github.com/eternisai/enchanted-proxy/internal/anonymizer"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
-	"github.com/eternisai/enchanted-proxy/internal/streaming"
 )
 
 // anonymizeRequestBody runs the last user message through the anonymizer and returns
@@ -83,50 +82,4 @@ func replaceLastUserMessage(requestBody []byte, newContent string) ([]byte, erro
 	}
 
 	return json.Marshal(reqBody)
-}
-
-// deanonymizeResponseBody reverses anonymized tokens in the content field of a
-// non-streaming OpenAI-compatible response body. Returns the modified JSON, or nil if
-// no changes were needed.
-func deanonymizeResponseBody(body []byte, d *streaming.Deanonymizer) []byte {
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil
-	}
-
-	choices, ok := parsed["choices"].([]interface{})
-	if !ok || len(choices) == 0 {
-		return nil
-	}
-
-	changed := false
-	for _, choice := range choices {
-		choiceMap, ok := choice.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		msg, ok := choiceMap["message"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		content, ok := msg["content"].(string)
-		if !ok || content == "" {
-			continue
-		}
-		replaced := d.ReplaceInText(content)
-		if replaced != content {
-			msg["content"] = replaced
-			changed = true
-		}
-	}
-
-	if !changed {
-		return nil
-	}
-
-	modified, err := json.Marshal(parsed)
-	if err != nil {
-		return nil
-	}
-	return modified
 }

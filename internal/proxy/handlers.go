@@ -565,14 +565,6 @@ func handleStreamingDirect(
 	requestPath := c.Request.URL.Path
 	targetURL := target.String()
 
-	// Capture anonymizer replacements for de-anonymizing AI responses
-	var deanon *streaming.Deanonymizer
-	if replacementsJSON, exists := c.Get("anonymizerReplacements"); exists {
-		if jsonStr, ok := replacementsJSON.(string); ok {
-			deanon = streaming.NewDeanonymizer(jsonStr)
-		}
-	}
-
 	// Channel to signal upstream status before foreground writes HTTP headers.
 	// This lets us return a proper HTTP error to the client when the upstream provider rejects the request
 	// (e.g., unknown model, invalid API key) instead of sending 200 OK with garbled error data.
@@ -690,12 +682,6 @@ func handleStreamingDirect(
 		// Set user ID for tool authentication
 		if userID != "" {
 			session.SetUserID(userID)
-		}
-
-		// Attach deanonymizer before starting the stream so all chunks get de-anonymized
-		if deanon != nil {
-			session.SetDeanonymizer(deanon)
-			log.Info("direct streaming: deanonymizer attached to session")
 		}
 
 		// CRITICAL: Stream directly, do NOT buffer with io.ReadAll
@@ -918,20 +904,6 @@ func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model s
 	if resp.Body != nil {
 		responseBody, _ = io.ReadAll(resp.Body)
 		resp.Body = io.NopCloser(bytes.NewReader(responseBody))
-	}
-
-	// De-anonymize response content if anonymizer replacements are present
-	if replacementsJSON, exists := c.Get("anonymizerReplacements"); exists {
-		if jsonStr, ok := replacementsJSON.(string); ok {
-			if d := streaming.NewDeanonymizer(jsonStr); d != nil {
-				if modified := deanonymizeResponseBody(responseBody, d); modified != nil {
-					responseBody = modified
-					resp.Body = io.NopCloser(bytes.NewReader(responseBody))
-					resp.ContentLength = int64(len(responseBody))
-					resp.Header.Set("Content-Length", fmt.Sprintf("%d", len(responseBody)))
-				}
-			}
-		}
 	}
 
 	var tokenUsage *Usage

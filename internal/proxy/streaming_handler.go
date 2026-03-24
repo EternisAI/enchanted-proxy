@@ -152,16 +152,6 @@ func handleStreamingWithBroadcast(
 		// Set model for model-specific content filtering (e.g., GLM <tool_call> XML stripping)
 		session.SetModel(model)
 
-		// Attach deanonymizer to reverse anonymized tokens in AI responses
-		if replacementsJSON, exists := c.Get("anonymizerReplacements"); exists {
-			if jsonStr, ok := replacementsJSON.(string); ok {
-				if d := streaming.NewDeanonymizer(jsonStr); d != nil {
-					session.SetDeanonymizer(d)
-					log.Info("deanonymizer attached to stream session")
-				}
-			}
-		}
-
 		if requestBody, exists := c.Get("originalRequestBody"); exists {
 			if bodyBytes, ok := requestBody.([]byte); ok {
 				session.SetOriginalRequest(bodyBytes)
