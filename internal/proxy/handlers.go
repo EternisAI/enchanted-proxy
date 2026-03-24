@@ -906,6 +906,20 @@ func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model s
 		resp.Body = io.NopCloser(bytes.NewReader(responseBody))
 	}
 
+	// De-anonymize response content if anonymizer replacements are present
+	if replacementsJSON, exists := c.Get("anonymizerReplacements"); exists {
+		if jsonStr, ok := replacementsJSON.(string); ok {
+			if d := streaming.NewDeanonymizer(jsonStr); d != nil {
+				if modified := deanonymizeResponseBody(responseBody, d); modified != nil {
+					responseBody = modified
+					resp.Body = io.NopCloser(bytes.NewReader(responseBody))
+					resp.ContentLength = int64(len(responseBody))
+					resp.Header.Set("Content-Length", fmt.Sprintf("%d", len(responseBody)))
+				}
+			}
+		}
+	}
+
 	var tokenUsage *Usage
 	var content string
 	if len(responseBody) > 0 {
