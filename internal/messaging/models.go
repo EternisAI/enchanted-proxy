@@ -23,6 +23,9 @@ type ChatMessage struct {
 	GenerationStartedAt   time.Time `firestore:"generationStartedAt,omitempty"`   // When generation started
 	GenerationCompletedAt time.Time `firestore:"generationCompletedAt,omitempty"` // When generation completed/failed
 	GenerationError       string    `firestore:"generationError,omitempty"`       // Error message if failed
+
+	// Anonymizer: encrypted replacement map (original→replacement) for PII redaction
+	EncryptedMaskedKeywords string `firestore:"encryptedMaskedKeywords,omitempty"`
 }
 
 // UserPublicKey represents a user's ECDSA P-256 public key
@@ -64,6 +67,9 @@ type MessageToStore struct {
 	GenerationStartedAt   *time.Time
 	GenerationCompletedAt *time.Time
 	GenerationError       string
+
+	// Anonymizer replacement map JSON (e.g. [{"original":"John","replacement":"Mark"}])
+	MaskedKeywords string
 }
 
 // ChatTitle represents a stored chat title in Firestore

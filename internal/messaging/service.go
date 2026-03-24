@@ -173,21 +173,39 @@ func (s *Service) handleMessage(msg MessageToStore) {
 		}
 	}
 
+	// Encrypt masked keywords with the same key used for content
+	var encryptedMaskedKeywords string
+	if msg.MaskedKeywords != "" {
+		if publicKeyUsed != "none" {
+			encrypted, err := s.encryptionService.EncryptMessage(msg.MaskedKeywords, publicKeyUsed)
+			if err != nil {
+				log.Warn("failed to encrypt masked keywords, storing without them",
+					slog.String("message_id", msg.MessageID),
+					slog.String("error", err.Error()))
+			} else {
+				encryptedMaskedKeywords = encrypted
+			}
+		} else {
+			encryptedMaskedKeywords = msg.MaskedKeywords
+		}
+	}
+
 	// Create Firestore message
 	chatMsg := &ChatMessage{
-		ID:                  msg.MessageID,
-		EncryptedContent:    encryptedContent,
-		IsFromUser:          msg.IsFromUser,
-		ChatID:              msg.ChatID,
-		IsError:             msg.IsError,
-		Timestamp:           time.Now(),
-		PublicEncryptionKey: publicKeyUsed,
-		Stopped:             msg.Stopped,
-		StoppedBy:           msg.StoppedBy,
-		StopReason:          msg.StopReason,
-		Model:               msg.Model,
-		GenerationState:     msg.GenerationState,
-		GenerationError:     msg.GenerationError,
+		ID:                      msg.MessageID,
+		EncryptedContent:        encryptedContent,
+		IsFromUser:              msg.IsFromUser,
+		ChatID:                  msg.ChatID,
+		IsError:                 msg.IsError,
+		Timestamp:               time.Now(),
+		PublicEncryptionKey:     publicKeyUsed,
+		Stopped:                 msg.Stopped,
+		StoppedBy:               msg.StoppedBy,
+		StopReason:              msg.StopReason,
+		Model:                   msg.Model,
+		GenerationState:         msg.GenerationState,
+		GenerationError:         msg.GenerationError,
+		EncryptedMaskedKeywords: encryptedMaskedKeywords,
 	}
 
 	// Set generation timestamps if provided
