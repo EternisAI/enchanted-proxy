@@ -565,6 +565,14 @@ func handleStreamingDirect(
 	requestPath := c.Request.URL.Path
 	targetURL := target.String()
 
+	// Capture anonymizer replacements for de-anonymizing AI responses
+	var deanon *streaming.Deanonymizer
+	if replacementsJSON, exists := c.Get("anonymizerReplacements"); exists {
+		if jsonStr, ok := replacementsJSON.(string); ok {
+			deanon = streaming.NewDeanonymizer(jsonStr)
+		}
+	}
+
 	// Channel to signal upstream status before foreground writes HTTP headers.
 	// This lets us return a proper HTTP error to the client when the upstream provider rejects the request
 	// (e.g., unknown model, invalid API key) instead of sending 200 OK with garbled error data.
@@ -682,6 +690,12 @@ func handleStreamingDirect(
 		// Set user ID for tool authentication
 		if userID != "" {
 			session.SetUserID(userID)
+		}
+
+		// Attach deanonymizer before starting the stream so all chunks get de-anonymized
+		if deanon != nil {
+			session.SetDeanonymizer(deanon)
+			log.Info("direct streaming: deanonymizer attached to session")
 		}
 
 		// CRITICAL: Stream directly, do NOT buffer with io.ReadAll
