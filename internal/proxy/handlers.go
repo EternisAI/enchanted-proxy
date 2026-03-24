@@ -231,6 +231,9 @@ func ProxyHandler(
 
 		// Continue with Chat Completions API (existing logic below)
 
+		// Preserve original body for Firestore storage (before anonymization replaces it)
+		originalRequestBody := requestBody
+
 		// Anonymize user message if requested
 		if c.GetHeader("X-Anonymize") == "true" && anonymizerService != nil {
 			if anonymizedBody, replacementsJSON, ok := anonymizeRequestBody(c.Request.Context(), log, anonymizerService, requestBody); ok {
@@ -249,10 +252,10 @@ func ProxyHandler(
 		}
 		// If header not provided, leave as nil for backward compatibility
 
-		// Save user message to Firestore before forwarding request
-		// This ensures consistent server-side timestamps and eliminates client-side storage complexity
-		if len(requestBody) > 0 {
-			saveUserMessageAsync(c, messageService, requestBody)
+		// Save original (pre-anonymization) user message to Firestore
+		// The user should always see their real message; anonymization is only for the AI provider
+		if len(originalRequestBody) > 0 {
+			saveUserMessageAsync(c, messageService, originalRequestBody)
 		}
 
 		// Trigger title generation/regeneration if applicable
