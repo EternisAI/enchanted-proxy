@@ -156,6 +156,14 @@ func saveUserMessageAsync(c *gin.Context, messageService *messaging.Service, req
 		}
 	}
 
+	// Extract anonymizer replacements if present (set by ProxyHandler after anonymization)
+	var maskedKeywords string
+	if val, exists := c.Get("anonymizerReplacements"); exists {
+		if s, ok := val.(string); ok {
+			maskedKeywords = s
+		}
+	}
+
 	// Build message (user message)
 	msg := messaging.MessageToStore{
 		UserID:            userID,
@@ -165,6 +173,7 @@ func saveUserMessageAsync(c *gin.Context, messageService *messaging.Service, req
 		Content:           content,
 		IsError:           false,
 		EncryptionEnabled: encryptionEnabled,
+		MaskedKeywords:    maskedKeywords,
 	}
 
 	// Store asynchronously using background context
