@@ -85,6 +85,7 @@ egress:
   - 172.18.3.203
   # Attestation endorsements
   - provenance.eternis.ai
+  - tuf-repo-cdn.sigstore.dev
 env:
 - APPSTORE_API_KEY_ID
 - APPSTORE_API_KEY_P8
