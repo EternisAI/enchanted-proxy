@@ -165,12 +165,12 @@ jobs:
           "RunInvocationURI": "${{ github.server_url }}/\(.repository)/actions/runs/\(.run_id)/attempts/\(.run_attempt)",
           "SourceRepositoryVisibility": .repository_visibility,
           "DeploymentEnvironment": .environment
-        }' | tee build-info.json
+        }' | tee deploy/build-info.json
 
     - name: Generate Endorsement Info
       run: >-
         jq -n '["https://provenance.eternis.ai/enchanted-proxy/server/${{ github.sha }}.json"]'
-        | tee endorsements.json
+        | tee deploy/endorsements.json
 
     - name: Build App Image
       id: build-app-image
