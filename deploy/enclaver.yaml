@@ -7,7 +7,7 @@ sources:
   wrapper: ghcr.io/eternisai/enclaver-wrapper-base:v0.5.0-eternis.2@sha256:2632b353dac79c175ed3613569e76c051109cda7ada0bcc456001fdc32c87dfc
 defaults:
   cpu_count: 2
-  memory_mb: 2048
+  memory_mb: 3072
 api:
   listen_port: 9900
 ingress:
