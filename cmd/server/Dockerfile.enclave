@@ -38,7 +38,7 @@ RUN git clone --depth 1 https://github.com/linkdd/procfusion.git && \
 RUN cargo build --release --manifest-path /root/procfusion/Cargo.toml
 
 # Fetch attestation-server
-FROM ghcr.io/eternisai/attestation-server:v1.3.0@sha256:7f1c9e8b25cebd65ebe11c0379eef610a3250611d924ec98b229e7b72996bb00 AS attestation_server
+FROM ghcr.io/eternisai/attestation-server:v1.3.1@sha256:abb32b7eea0741c4f34eaf82984c12dfde1764f4d3021ab3bf28b0a5ad922c89 AS attestation_server
 
 # Runtime stage
 FROM envoyproxy/envoy:v1.37.1@sha256:bf446757c8070d98cb8ca8236177efa2372a35593525b12f09b15ae376d247fa
@@ -66,7 +66,5 @@ ENV ATTESTATION_SERVER_TLS_PUBLIC_KEY_PATH=/var/run/secrets/tls/tls.key
 ENV ATTESTATION_SERVER_REPORT_EVIDENCE_NITRONSM=true
 ENV ATTESTATION_SERVER_REPORT_USER_DATA_ENV=GIN_MODE,LOG_LEVEL
 ENV ATTESTATION_SERVER_ENDORSEMENTS_ALLOWED_DOMAINS=provenance.eternis.ai
-ENV ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_VERIFY=false
-ENV ATTESTATION_SERVER_ENDORSEMENTS_SKIP_VERIFY=true
 ENV ATTESTATION_SERVER_HTTP_ALLOW_PROXY=true
 ENV CONFIG_FILE=/etc/enchanted-proxy/config.yaml
