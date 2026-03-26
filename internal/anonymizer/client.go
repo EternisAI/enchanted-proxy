@@ -16,7 +16,7 @@ const (
 	defaultTemp       = 0.3
 	defaultTopP       = 0.9
 	defaultTimeout    = 10 * time.Second
-	completionsPath   = "/anonymizer/v1/chat/completions"
+	completionsPath   = "/v1/chat/completions"
 )
 
 // ClientConfig holds configuration for the anonymizer HTTP client.
