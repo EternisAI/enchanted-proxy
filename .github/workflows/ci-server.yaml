@@ -131,7 +131,7 @@ jobs:
         IMAGE="$(grep 'FROM .*attestation-server' cmd/server/Dockerfile.enclave | cut -f2 -d' ')"
         cosign verify "$IMAGE" \
           --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-          --certificate-identity "https://github.com/${{ github.repository_owner }}/attestation-server/.github/workflows/release.yaml@refs/heads/main"
+          --certificate-identity "https://github.com/${{ github.repository_owner }}/attestation-server/.github/workflows/release.yml@refs/heads/main"
 
     - name: Generate Build Info
       run: |
