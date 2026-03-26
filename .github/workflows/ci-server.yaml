@@ -39,7 +39,7 @@ jobs:
       digest: ${{ steps.check.outputs.digest }}
     steps:
     - name: Checkout
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
     - name: Get Enclave Image Ref
       id: enclave-image
@@ -51,7 +51,7 @@ jobs:
 
     - name: Docker Meta
       id: enclave-meta
-      uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+      uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
       with:
         images: |
           ${{ steps.enclave-image.outputs.ref }}
@@ -59,7 +59,7 @@ jobs:
           type=sha
 
     - name: Log in to GHCR
-      uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+      uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
@@ -88,7 +88,7 @@ jobs:
       digest: ${{ steps.push-enclave-image.outputs.digest }}
     steps:
     - name: Checkout
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
     - name: Get App Image Ref
       id: app-image
@@ -100,7 +100,7 @@ jobs:
 
     - name: Docker Meta
       id: app-meta
-      uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+      uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
       with:
         images: |
           ${{ steps.app-image.outputs.ref }}
@@ -108,45 +108,73 @@ jobs:
           type=sha
 
     - name: Install Cosign
-      uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
-
-    - name: Get Cosign OIDC Token
-      id: cosign-token
-      run: |
-        OIDC_TOKEN="$(
-          curl -sSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sigstore" | jq -r .value
-        )"
-        test -n "$OIDC_TOKEN"
-        echo "::add-mask::$OIDC_TOKEN"
-        echo "token=$OIDC_TOKEN" >> $GITHUB_OUTPUT
+      uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
 
     - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d116df # v4.2.1
+      uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6.0.0
       with:
         aws-region: us-east-1
         role-to-assume: arn:aws:iam::314146293458:role/github-ci-enchanted-proxy
 
     - name: Log in to GHCR
-      uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+      uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
-    - name: Verify Attestation Proxy Image
+    - name: Verify Attestation Server Image
       run: |
-        IMAGE="$(grep 'FROM .*attestation-proxy' cmd/server/Dockerfile.enclave | cut -f2 -d' ')"
+        IMAGE="$(grep 'FROM .*attestation-server' cmd/server/Dockerfile.enclave | cut -f2 -d' ')"
         cosign verify "$IMAGE" \
           --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-          --certificate-identity "https://github.com/${{ github.repository_owner }}/attestation-proxy/.github/workflows/ci-server.yaml@refs/heads/main"
+          --certificate-identity "https://github.com/${{ github.repository_owner }}/attestation-server/.github/workflows/release.yaml@refs/heads/main"
+
+    - name: Generate Build Info
+      run: |
+        TOKEN="$(curl -sS \
+          -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=ci" \
+          | jq -r .value
+        )"
+        test -n "$TOKEN"
+
+        PAYLOAD="$(
+          printf '%s' "$TOKEN" | cut -d. -f2 | tr '_-' '/+' \
+          | awk '{ l=length%4; if (l==2) printf "%s==", $0; else if (l==3) printf "%s=", $0; else printf "%s", $0 }' \
+          | base64 -d | jq -c .
+        )"
+        test -n "$PAYLOAD"
+
+        printf '%s' "$PAYLOAD" | jq -e '{
+          "BuildSignerURI": "${{ github.server_url }}/\(.job_workflow_ref)",
+          "BuildSignerDigest": .job_workflow_sha,
+          "RunnerEnvironment": .runner_environment,
+          "SourceRepositoryURI": "${{ github.server_url }}/\(.repository)",
+          "SourceRepositoryDigest": .sha,
+          "SourceRepositoryRef": .ref,
+          "SourceRepositoryIdentifier": .repository_id,
+          "SourceRepositoryOwnerURI": "${{ github.server_url }}/\(.repository_owner)",
+          "SourceRepositoryOwnerIdentifier": .repository_owner_id,
+          "BuildConfigURI": "${{ github.server_url }}/\(.workflow_ref)",
+          "BuildConfigDigest": .workflow_sha,
+          "BuildTrigger": .event_name,
+          "RunInvocationURI": "${{ github.server_url }}/\(.repository)/actions/runs/\(.run_id)/attempts/\(.run_attempt)",
+          "SourceRepositoryVisibility": .repository_visibility,
+          "DeploymentEnvironment": .environment
+        }' | tee build-info.json
+
+    - name: Generate Endorsement Info
+      run: >-
+        jq -n '["https://provenance.eternis.ai/enchanted-proxy/server/${{ github.sha }}.json"]'
+        | tee endorsements.json
 
     - name: Build App Image
       id: build-app-image
-      uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+      uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
       with:
         context: .
         file: cmd/server/Dockerfile.enclave
@@ -157,19 +185,13 @@ jobs:
         push: true
         outputs: type=docker,dest=${{ runner.temp }}/image.tar
         build-args: |
-          ENCLAVE_BUILD_ID=${{ github.sha }}
-          ENCLAVE_BUILD_VERSION=${{ steps.app-meta.outputs.version }}
-          ENCLAVE_PROVENANCE_PATH=enchanted-proxy/server
+          ATTESTATION_SERVER_LOG_LEVEL=${{ github.ref_name == 'production' && 'info' || 'debug' }}
 
     - name: Load App Image
       run: docker load -i ${{ runner.temp }}/image.tar
 
     - name: Cosign App Image
-      run: >-
-        cosign sign --yes --identity-token "$COSIGN_OIDC_TOKEN"
-        "${{ steps.app-image.outputs.ref }}@${{ steps.build-app-image.outputs.digest }}"
-      env:
-        COSIGN_OIDC_TOKEN: ${{ steps.cosign-token.outputs.token }}
+      run: cosign sign --yes "${{ steps.app-image.outputs.ref }}@${{ steps.build-app-image.outputs.digest }}"
 
     - name: Verify Enclaver Odyn Image
       run: |
@@ -256,22 +278,36 @@ jobs:
 
     - name: Cosign Enclave Image
       run: >-
-        cosign sign --yes --identity-token "$COSIGN_OIDC_TOKEN"
+        cosign sign --yes
         -a awsNitroEnclavePCR0="${{ steps.build-enclave-image.outputs.pcr0 }}"
         -a awsNitroEnclavePCR1="${{ steps.build-enclave-image.outputs.pcr1 }}"
         -a awsNitroEnclavePCR2="${{ steps.build-enclave-image.outputs.pcr2 }}"
         "${{ steps.build-enclave-image.outputs.image }}@${{ steps.push-enclave-image.outputs.digest }}"
-      env:
-        COSIGN_OIDC_TOKEN: ${{ steps.cosign-token.outputs.token }}
 
-    - name: Upload Enclave Measurements
+    - name: Prepare Endorsement
       run: >-
-        aws s3 cp --sse AES256 --endpoint-url https://s3.us-east-1.amazonaws.com
-        --cache-control max-age=86400 --content-type "application/json"
-        "${{ runner.temp }}/measurements.json"
-        "s3://provenance.eternis.ai/enchanted-proxy/server/${SHA:0:2}/${SHA:2:2}/${SHA:4:2}/$SHA"
-      env:
-        SHA: ${{ github.sha }}
+        jq -n '{"nitronsm": {"PCR0": "${{ steps.build-enclave-image.outputs.pcr0 }}",
+        "PCR1": "${{ steps.build-enclave-image.outputs.pcr1 }}",
+        "PCR2": "${{ steps.build-enclave-image.outputs.pcr2 }}"}}'
+        | tee "${{ runner.temp }}/endorsement.json"
+
+    - name: Sign Endorsement
+      run: >-
+        cosign sign-blob --yes
+        --bundle "${{ runner.temp }}/endorsement.json.sig"
+        "${{ runner.temp }}/endorsement.json"
+
+    - name: Upload Endorsement
+      run: |
+        aws s3 cp --sse AES256 --endpoint-url https://s3.us-east-1.amazonaws.com \
+        --cache-control max-age=86400 --content-type "application/json" \
+        "${{ runner.temp }}/endorsement.json" \
+        "s3://provenance.eternis.ai/enchanted-proxy/server/${{ github.sha }}.json"
+
+        aws s3 cp --sse AES256 --endpoint-url https://s3.us-east-1.amazonaws.com \
+        --cache-control max-age=86400 --content-type "application/json" \
+        "${{ runner.temp }}/endorsement.json.sig" \
+        "s3://provenance.eternis.ai/enchanted-proxy/server/${{ github.sha }}.json.sig"
 
   repush:
     name: Repush Enclave Image
@@ -284,7 +320,7 @@ jobs:
       digest: ${{ steps.push-enclave-image.outputs.digest }}
     steps:
     - name: Log in to GHCR
-      uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+      uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
@@ -311,7 +347,7 @@ jobs:
     - check
     - build
     - repush
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.repush.result == 'success') }}
     steps:
     - name: Authenticate
       run: >-

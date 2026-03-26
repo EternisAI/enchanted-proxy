@@ -305,26 +305,6 @@ static_resources:
               response_direction_config:
                 disable_on_etag_header: true
                 remove_accept_encoding_header: true
-          - &inline_attestation
-            name: envoy.filters.http.ext_authz
-            typed_config:
-              '@type': type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
-              http_service:
-                server_uri:
-                  uri: http://127.0.0.1:9901
-                  cluster: attestation_proxy
-                  timeout: 1s
-                authorization_response:
-                  allowed_client_headers_on_success:
-                    patterns:
-                    - exact: x-attestation-payload
-              failure_mode_allow: true
-              allowed_headers:
-                patterns:
-                - exact: x-attestation-nonce
-                  ignore_case: true
-                - exact: x-request-id
-                  ignore_case: true
           - name: envoy.filters.http.router
             typed_config:
               '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -339,14 +319,10 @@ static_resources:
               routes:
               - name: enchanted_proxy_attestation
                 match:
-                  path: /-/attestation
+                  path: /api/v1/attestation
                 route:
-                  cluster: attestation_proxy
+                  cluster: attestation_server
                   timeout: 0s
-                typed_per_filter_config: &disable_inline_attestation
-                  envoy.filters.http.ext_authz:
-                    '@type': type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
-                    disabled: true
               - name: enchanted_proxy
                 match:
                   prefix: /
@@ -384,7 +360,6 @@ static_resources:
           access_log: *access_log_http
           http_filters:
           - *http_compressor
-          - *inline_attestation
           - name: envoy.filters.http.router
             typed_config:
               '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -399,11 +374,10 @@ static_resources:
               routes:
               - name: enchanted_telegram_server_attestation
                 match:
-                  path: /-/attestation
+                  path: /api/v1/attestation
                 route:
-                  cluster: attestation_proxy
+                  cluster: attestation_server
                   timeout: 0s
-                typed_per_filter_config: *disable_inline_attestation
               - name: enchanted_telegram_server
                 match:
                   prefix: /
@@ -423,8 +397,8 @@ static_resources:
             address:
               pipe:
                 path: '@envoy/admin'
-  # attestation proxy endpoint
-  - name: attestation_proxy
+  # attestation server endpoint
+  - name: attestation_server
     connect_timeout: 0.5s
     circuit_breakers: &circuit_breakers
       thresholds:
@@ -435,14 +409,14 @@ static_resources:
           budget_percent:
             value: 50
     load_assignment:
-      cluster_name: attestation_proxy
+      cluster_name: attestation_server
       endpoints:
       - lb_endpoints:
         - endpoint:
             address:
               socket_address:
                 address: 127.0.0.1
-                port_value: 9901
+                port_value: 8187
   # internal endpoints
   - name: internal_anonymizer
     load_assignment:

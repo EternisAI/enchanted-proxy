@@ -69,3 +69,7 @@ __pycache__/
 
 # Deep research session files (deprecated, now using database)
 deepr_sessions/.env.test
+
+# dynamically generated build/endorsement information
+deploy/build-info.json
+deploy/endorsements.json

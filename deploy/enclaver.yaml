@@ -83,6 +83,8 @@ egress:
   - 172.17.14.64
   - 172.18.4.136
   - 172.18.3.203
+  # Attestation endorsements
+  - provenance.eternis.ai
 env:
 - APPSTORE_API_KEY_ID
 - APPSTORE_API_KEY_P8

@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.25.0-alpine3.22@sha256:f18a072054848d87a8077455f0ac8a25886f2397f88bfdd222d6fafbb5bba440 AS builder
+FROM golang:1.26.1-alpine3.23@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039 AS builder
 
 # Set working directory
 WORKDIR /app
@@ -22,10 +22,10 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server cmd/server/main.go
 
 # Fetch Prometheus Node Exporter
-FROM quay.io/prometheus/node-exporter:v1.9.1@sha256:d00a542e409ee618a4edc67da14dd48c5da66726bbd5537ab2af9c1dfc442c8a AS node_exporter
+FROM quay.io/prometheus/node-exporter:v1.10.2@sha256:337ff1d356b68d39cef853e8c6345de11ce7556bb34cda8bd205bcf2ed30b565 AS node_exporter
 
 # Build procfusion
-FROM rust:1.89.0-alpine3.22@sha256:4b800f2e72e04be908e5f634c504c741bd943b763d1d8ad7b096cc340e1b5b46 AS procfusion
+FROM rust:1.94.0-alpine3.23@sha256:ff0adc35894eb79586ce752a1b5a9eadc88b938c56d8f2b4b537b6258ff3fa10 AS procfusion
 WORKDIR /root
 RUN apk add --no-cache git musl-dev
 # v0.2.2
@@ -37,26 +37,36 @@ RUN git clone --depth 1 https://github.com/linkdd/procfusion.git && \
     git checkout "$PROCFUSION_COMMIT_SHA"
 RUN cargo build --release --manifest-path /root/procfusion/Cargo.toml
 
-# Fetch attestation-proxy
-FROM ghcr.io/eternisai/attestation-proxy/server:sha-0f0ff7f@sha256:7f1ca69cfffd6f7f46afe023843c670eb24edfdec78bf70d189e5250bb6a9643 AS attestation_proxy
+# Fetch attestation-server
+FROM ghcr.io/eternisai/attestation-server:v1.3.0@sha256:7f1c9e8b25cebd65ebe11c0379eef610a3250611d924ec98b229e7b72996bb00 AS attestation_server
 
 # Runtime stage
-FROM envoyproxy/envoy:v1.35.1@sha256:522f4f88bdd741fe87b813bdca678a11c13e42e630cc4304a9e18193813c935d
+FROM envoyproxy/envoy:v1.37.1@sha256:bf446757c8070d98cb8ca8236177efa2372a35593525b12f09b15ae376d247fa
 RUN apt -qq update && \
     apt install -y --no-install-recommends \
         ca-certificates dnsmasq iproute2 netcat-openbsd \
     && apt clean && find /var/lib/apt/lists -type f -size +0 -delete
-COPY config/ /etc/enchanted-proxy/
-ENV CONFIG_FILE=/etc/enchanted-proxy/config.yaml
+COPY --from=node_exporter /bin/node_exporter /usr/local/bin/node_exporter
+COPY --from=procfusion /root/procfusion/target/release/procfusion /usr/local/bin/procfusion
+COPY --from=attestation_server /usr/local/bin/attestation-server /usr/local/bin/attestation-server
 COPY deploy/envoy.yaml /etc/envoy/envoy.yaml
 COPY deploy/hosts /etc/hosts.enclave
 COPY deploy/procfusion.toml /etc/procfusion/config.toml
 COPY deploy/server.sh /usr/local/bin/server.sh
-COPY --from=node_exporter /bin/node_exporter /usr/local/bin/node_exporter
-COPY --from=procfusion /root/procfusion/target/release/procfusion /usr/local/bin/procfusion
-COPY --from=attestation_proxy /server /usr/local/bin/attestation-proxy
+COPY config/ /etc/enchanted-proxy/
+COPY deploy/build-info.json /etc/build-info.json
+COPY deploy/endorsements.json /etc/endorsements.json
 COPY --from=builder /app/server /usr/local/bin/server
 ENTRYPOINT ["procfusion", "/etc/procfusion/config.toml"]
 CMD []
-ARG ENCLAVE_BUILD_ID ENCLAVE_BUILD_VERSION ENCLAVE_PROVENANCE_PATH
-ENV ENCLAVE_BUILD_ID=$ENCLAVE_BUILD_ID ENCLAVE_BUILD_VERSION=$ENCLAVE_BUILD_VERSION ENCLAVE_PROVENANCE_PATH=$ENCLAVE_PROVENANCE_PATH
+ARG ATTESTATION_SERVER_LOG_LEVEL=info
+ENV ATTESTATION_SERVER_LOG_LEVEL=${ATTESTATION_SERVER_LOG_LEVEL}
+ENV ATTESTATION_SERVER_TLS_PUBLIC_CERT_PATH=/var/run/secrets/tls/tls.crt
+ENV ATTESTATION_SERVER_TLS_PUBLIC_KEY_PATH=/var/run/secrets/tls/tls.key
+ENV ATTESTATION_SERVER_REPORT_EVIDENCE_NITRONSM=true
+ENV ATTESTATION_SERVER_REPORT_USER_DATA_ENV=GIN_MODE,LOG_LEVEL
+ENV ATTESTATION_SERVER_ENDORSEMENTS_ALLOWED_DOMAINS=provenance.eternisai.net
+ENV ATTESTATION_SERVER_ENDORSEMENTS_COSIGN_VERIFY=false
+ENV ATTESTATION_SERVER_ENDORSEMENTS_SKIP_VERIFY=true
+ENV ATTESTATION_SERVER_HTTP_ALLOW_PROXY=true
+ENV CONFIG_FILE=/etc/enchanted-proxy/config.yaml
