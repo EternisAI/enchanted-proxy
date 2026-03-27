@@ -184,8 +184,6 @@ jobs:
         cache-to: type=gha,mode=max
         push: true
         outputs: type=docker,dest=${{ runner.temp }}/image.tar
-        build-args: |
-          ATTESTATION_SERVER_LOG_LEVEL=${{ github.ref_name == 'production' && 'info' || 'debug' }}
 
     - name: Load App Image
       run: docker load -i ${{ runner.temp }}/image.tar

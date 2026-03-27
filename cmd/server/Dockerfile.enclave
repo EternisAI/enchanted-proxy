@@ -59,8 +59,6 @@ COPY deploy/endorsements.json /etc/endorsements.json
 COPY --from=builder /app/server /usr/local/bin/server
 ENTRYPOINT ["procfusion", "/etc/procfusion/config.toml"]
 CMD []
-ARG ATTESTATION_SERVER_LOG_LEVEL=info
-ENV ATTESTATION_SERVER_LOG_LEVEL=${ATTESTATION_SERVER_LOG_LEVEL}
 ENV ATTESTATION_SERVER_TLS_PRIVATE_CA_PATH=/var/run/secrets/mtls/ca.crt
 ENV ATTESTATION_SERVER_TLS_PRIVATE_CERT_PATH=/var/run/secrets/mtls/tls.crt
 ENV ATTESTATION_SERVER_TLS_PRIVATE_KEY_PATH=/var/run/secrets/mtls/tls.key
