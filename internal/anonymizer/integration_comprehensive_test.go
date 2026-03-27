@@ -150,6 +150,13 @@ var comprehensiveTests = []testCase{
 		mustRedact: []string{"482-36-7291"},
 	},
 	{
+		name:         "SSN in casual message",
+		input:        "My ssn is 404-03-4040 where was I born?",
+		expectPII:    true,
+		mustRedact:   []string{"404-03-4040"},
+		mustPreserve: []string{"where was I born?"},
+	},
+	{
 		name:       "passport number",
 		input:      "My passport number is X12345678, expiring in 2027.",
 		expectPII:  true,
