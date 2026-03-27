@@ -3,8 +3,8 @@ name: enchanted-proxy/server
 target: ghcr.io/eternisai/enchanted-proxy/server:${version}
 sources:
   app: ghcr.io/eternisai/enchanted-proxy/server-base:${version}@${digest}
-  supervisor: ghcr.io/eternisai/odyn:v0.5.0-eternis.4@sha256:e923b09864787b52dc53c65e7116d2a906e827b1c760067037f7b63d590cba12
-  wrapper: ghcr.io/eternisai/enclaver-wrapper-base:v0.5.0-eternis.4@sha256:3a223d08a87cd99177ac2c572ab50c592519c2ee6a6b2e8ab2ef665aa23048a1
+  supervisor: ghcr.io/eternisai/odyn:v0.5.0-eternis.5@sha256:5cdc8f6bf91a20f7f6270646bccc64038f0b6ebde8da78b6b5998c6c2cefe01b
+  wrapper: ghcr.io/eternisai/enclaver-wrapper-base:v0.5.0-eternis.5@sha256:5332c875e0891a028b91604af5b12016e72a156cd5d506219a29ba0a37140433
 defaults:
   cpu_count: 2
   memory_mb: 3072

@@ -230,10 +230,10 @@ jobs:
     - name: Verify Enclaver CLI Image
       id: enclaver-cli
       run: |
-        CLI_IMAGE="ghcr.io/eternisai/enclaver:v0.5.0-eternis.4@sha256:c0c489ea006c9c629767c789e14718d6ea3e58046509a4ebee93b8087a70ee6c"
+        CLI_IMAGE="ghcr.io/eternisai/enclaver:v0.5.0-eternis.5@sha256:881bf8f4027dd4d523007ad8d1bc5b7d2ce5dac46984d9f841f9713bb7f99a6e"
         cosign verify "$CLI_IMAGE" \
           --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-          --certificate-identity "https://github.com/${{ github.repository_owner }}/enclaver/.github/workflows/release.yaml@refs/tags/v0.5.0-eternis.4"
+          --certificate-identity "https://github.com/${{ github.repository_owner }}/enclaver/.github/workflows/release.yaml@refs/tags/v0.5.0-eternis.5"
         echo "image=$CLI_IMAGE" | tee -a "$GITHUB_OUTPUT"
 
     - name: Prepare Enclaver Manifest
