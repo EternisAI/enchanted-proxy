@@ -337,14 +337,15 @@ static_resources:
         typed_config:
           '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
           common_tls_context:
+            alpn_protocols: ["h2", "http/1.1"]
             tls_params:
               tls_minimum_protocol_version: TLSv1_2
               tls_maximum_protocol_version: TLSv1_3
             tls_certificate_sds_secret_configs:
-            - name: tls_sds
+            - name: sds_tls
               sds_config:
                 path_config_source:
-                  path: /etc/envoy/sds.yaml
+                  path: /etc/envoy/sds/tls.yaml
                   watched_directory:
                     path: /var/run/secrets/tls
   - name: ingress_telegram_api
@@ -471,10 +472,10 @@ static_resources:
           alpn_protocols: ["h2", "http/1.1"]
           tls_params: *mtls_params
           validation_context_sds_secret_config:
-            name: llm_ca_sds
+            name: sds_llm_ca
             sds_config:
               path_config_source:
-                path: /etc/envoy/sds.yaml
+                path: /etc/envoy/sds/llm_ca.yaml
                 watched_directory:
                   path: /etc/ssl/certs/eternis
   # transparent proxy endpoint

@@ -1,13 +1,8 @@
 resources:
 - '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret
-  name: tls_sds
+  name: sds_tls
   tls_certificate:
     certificate_chain:
       filename: /var/run/secrets/tls/tls.crt
     private_key:
       filename: /var/run/secrets/tls/tls.key
-- '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret
-  name: llm_ca_sds
-  validation_context:
-    trusted_ca:
-      filename: /etc/ssl/certs/eternis/llm-ca.pem
