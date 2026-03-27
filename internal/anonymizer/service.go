@@ -37,6 +37,19 @@ func (s *Service) Anonymize(ctx context.Context, userMessage string) (*Anonymize
 		return nil, fmt.Errorf("failed to parse anonymizer response: %w", err)
 	}
 
+	// Filter out invalid replacements: empty original/replacement, or no-op substitutions
+	valid := replacements[:0]
+	for _, r := range replacements {
+		if r.Original == "" || r.Replacement == "" || r.Original == r.Replacement {
+			continue
+		}
+		if !strings.Contains(userMessage, r.Original) {
+			continue
+		}
+		valid = append(valid, r)
+	}
+	replacements = valid
+
 	if len(replacements) == 0 {
 		return &AnonymizeResult{Text: userMessage}, nil
 	}

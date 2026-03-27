@@ -50,6 +50,11 @@ func anonymizeRequestBody(ctx context.Context, log *logger.Logger, svc *anonymiz
 		return nil, "", false
 	}
 
+	for _, r := range result.Replacements {
+		log.Debug("anonymizer: replacement",
+			slog.String("original", r.Original),
+			slog.String("replacement", r.Replacement))
+	}
 	log.Info("anonymizer: message anonymized",
 		slog.Int("replacements", len(result.Replacements)))
 
