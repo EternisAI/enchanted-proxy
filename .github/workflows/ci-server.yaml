@@ -347,7 +347,7 @@ jobs:
     - check
     - build
     - repush
-    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.repush.result == 'success') }}
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.repush.result == 'success' || (needs.check.outputs.digest && needs.build.result == 'skipped')) }}
     steps:
     - name: Authenticate
       run: >-
