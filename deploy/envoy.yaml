@@ -471,8 +471,8 @@ static_resources:
         common_tls_context:
           alpn_protocols: ["h2", "http/1.1"]
           tls_params: *mtls_params
-          validation_context:
-          - name: llm_ca_sds
+          validation_context_sds_secret_config:
+            name: llm_ca_sds
             sds_config:
               path_config_source:
                 path: /etc/envoy/sds.yaml
