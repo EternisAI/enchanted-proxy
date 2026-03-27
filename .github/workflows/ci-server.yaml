@@ -23,8 +23,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow_ref }}-${{ github.ref_type == 'tag' && 'refs/heads/production' || github.ref }}
-  cancel-in-progress: ${{ github.ref_type == 'branch' && github.ref_name != 'production' }}
+  # Prevent race conditions from simultaneous runs for the same commit reference.
+  # Only the first run generates the image and the endorsement.
+  # Subsequent runs will reuse the image for deployment.
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   check:
