@@ -50,6 +50,7 @@ COPY --from=node_exporter /bin/node_exporter /usr/local/bin/node_exporter
 COPY --from=procfusion /root/procfusion/target/release/procfusion /usr/local/bin/procfusion
 COPY --from=attestation_server /usr/local/bin/attestation-server /usr/local/bin/attestation-server
 COPY deploy/envoy.yaml /etc/envoy/envoy.yaml
+COPY deploy/sds.yaml /etc/envoy/sds.yaml
 COPY deploy/hosts /etc/hosts.enclave
 COPY deploy/procfusion.toml /etc/procfusion/config.toml
 COPY deploy/server.sh /usr/local/bin/server.sh

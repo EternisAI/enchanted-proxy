@@ -6,6 +6,9 @@ bootstrap_extensions:
 - name: envoy.bootstrap.internal_listener
   typed_config:
     '@type': type.googleapis.com/envoy.extensions.bootstrap.internal_listener.v3.InternalListener
+node:
+  id: envoy
+  cluster: envoy
 overload_manager:
   resource_monitors:
   - name: envoy.resource_monitors.global_downstream_max_connections
@@ -334,11 +337,17 @@ static_resources:
         typed_config:
           '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
           common_tls_context:
-            tls_certificates:
-            - certificate_chain:
-                filename: /var/run/secrets/tls/tls.crt
-              private_key:
-                filename: /var/run/secrets/tls/tls.key
+            alpn_protocols: ["h2", "http/1.1"]
+            tls_params:
+              tls_minimum_protocol_version: TLSv1_2
+              tls_maximum_protocol_version: TLSv1_3
+            tls_certificate_sds_secret_configs:
+            - name: tls_sds
+              sds_config:
+                path_config_source:
+                  path: /etc/envoy/sds.yaml
+                  watched_directory:
+                    path: /var/run/secrets/tls
   - name: ingress_telegram_api
     address:
       socket_address:
@@ -427,7 +436,6 @@ static_resources:
             address:
               envoy_internal_address:
                 server_listener_name: internal_anonymizer
-    # Enable HTTP/2 for Near AI Cloud API (required for streaming)
     typed_extension_protocol_options:
       envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
         '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
@@ -438,10 +446,8 @@ static_resources:
       typed_config:
         '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
         common_tls_context:
-          # Temporary trust the peer certificate until proper mTLS is deployed
-          # Negotiate HTTP/2 via ALPN
           alpn_protocols: ["h2", "http/1.1"]
-          tls_params:
+          tls_params: &mtls_params
             tls_minimum_protocol_version: TLSv1_3
             tls_maximum_protocol_version: TLSv1_3
             ecdh_curves:
@@ -463,11 +469,15 @@ static_resources:
         '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
         sni: zcash.eternisai.net
         common_tls_context:
+          alpn_protocols: ["h2", "http/1.1"]
+          tls_params: *mtls_params
           validation_context:
-            trusted_ca:
-              filename: /etc/ssl/certs/eternis/llm-ca.pem
-            watched_directory:
-              path: /etc/ssl/certs/eternis
+          - name: llm_ca_sds
+            sds_config:
+              path_config_source:
+                path: /etc/envoy/sds.yaml
+                watched_directory:
+                  path: /etc/ssl/certs/eternis
   # transparent proxy endpoint
   - name: enclaver_odyn_egress
     connect_timeout: 1s
