@@ -170,5 +170,8 @@ env:
 - ANONYMIZER_TIMEOUT_SECONDS
 files:
 - /etc/ssl/certs/eternis/llm-ca.pem
+- /var/run/secrets/mtls/ca.crt
+- /var/run/secrets/mtls/tls.crt
+- /var/run/secrets/mtls/tls.key
 - /var/run/secrets/tls/tls.crt
 - /var/run/secrets/tls/tls.key

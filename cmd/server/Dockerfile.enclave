@@ -49,9 +49,7 @@ RUN apt -qq update && \
 COPY --from=node_exporter /bin/node_exporter /usr/local/bin/node_exporter
 COPY --from=procfusion /root/procfusion/target/release/procfusion /usr/local/bin/procfusion
 COPY --from=attestation_server /usr/local/bin/attestation-server /usr/local/bin/attestation-server
-COPY deploy/envoy.yaml /etc/envoy/envoy.yaml
-COPY deploy/sds_llm_ca.yaml /etc/envoy/sds/llm_ca.yaml
-COPY deploy/sds_tls.yaml /etc/envoy/sds/tls.yaml
+COPY deploy/envoy/ /etc/envoy/
 COPY deploy/hosts /etc/hosts.enclave
 COPY deploy/procfusion.toml /etc/procfusion/config.toml
 COPY deploy/server.sh /usr/local/bin/server.sh
@@ -63,6 +61,9 @@ ENTRYPOINT ["procfusion", "/etc/procfusion/config.toml"]
 CMD []
 ARG ATTESTATION_SERVER_LOG_LEVEL=info
 ENV ATTESTATION_SERVER_LOG_LEVEL=${ATTESTATION_SERVER_LOG_LEVEL}
+ENV ATTESTATION_SERVER_TLS_PRIVATE_CA_PATH=/var/run/secrets/mtls/ca.crt
+ENV ATTESTATION_SERVER_TLS_PRIVATE_CERT_PATH=/var/run/secrets/mtls/tls.crt
+ENV ATTESTATION_SERVER_TLS_PRIVATE_KEY_PATH=/var/run/secrets/mtls/tls.key
 ENV ATTESTATION_SERVER_TLS_PUBLIC_CERT_PATH=/var/run/secrets/tls/tls.crt
 ENV ATTESTATION_SERVER_TLS_PUBLIC_KEY_PATH=/var/run/secrets/tls/tls.key
 ENV ATTESTATION_SERVER_REPORT_EVIDENCE_NITRONSM=true
