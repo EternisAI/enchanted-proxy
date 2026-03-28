@@ -1,6 +1,6 @@
 resources:
 - '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret
-  name: sds_mtls
+  name: mtls
   tls_certificate:
     certificate_chain:
       filename: /var/run/secrets/mtls/tls.crt

@@ -342,7 +342,7 @@ static_resources:
               tls_minimum_protocol_version: TLSv1_2
               tls_maximum_protocol_version: TLSv1_3
             tls_certificate_sds_secret_configs:
-            - name: sds_tls
+            - name: tls
               sds_config:
                 path_config_source:
                   path: /etc/envoy/sds/tls.yaml
@@ -454,6 +454,20 @@ static_resources:
             - X25519
             - P-256
             - P-384
+          tls_certificate_sds_secret_configs:
+          - name: mtls
+            sds_config:
+              path_config_source:
+                path: /etc/envoy/sds/mtls.yaml
+                watched_directory:
+                  path: /var/run/secrets/mtls
+          validation_context_sds_secret_config:
+            name: mtls-anonymizer
+            sds_config:
+              path_config_source:
+                path: /etc/envoy/sds/mtls-anonymizer.yaml
+                watched_directory:
+                  path: /var/run/secrets/mtls
   - name: internal_zcash_backend
     load_assignment:
       cluster_name: internal_zcash_backend
@@ -472,7 +486,7 @@ static_resources:
           alpn_protocols: ["h2", "http/1.1"]
           tls_params: *mtls_params
           validation_context_sds_secret_config:
-            name: sds_llm_ca
+            name: llm_ca
             sds_config:
               path_config_source:
                 path: /etc/envoy/sds/llm_ca.yaml

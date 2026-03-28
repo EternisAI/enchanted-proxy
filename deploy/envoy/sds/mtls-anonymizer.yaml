@@ -1,6 +1,10 @@
 resources:
 - '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret
-  name: sds_mtls_ca
+  name: mtls-anonymizer
   validation_context:
     trusted_ca:
       filename: /var/run/secrets/mtls/ca.crt
+    match_typed_subject_alt_names:
+    - san_type: URI
+      matcher:
+        prefix: spiffe://tee.eternis.ai/ns/anonymizer-cvm/sa/anonymizer
