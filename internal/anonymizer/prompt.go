@@ -8,6 +8,13 @@ NEVER mask or redact (no "XXX", "XXXX", "[REDACTED]", asterisks). Every replacem
 Only replace ACTUAL PII values present in the text. Do NOT replace generic references, questions, or category words (e.g. "where was I born", "my address", "a phone number" contain no real PII — return empty replacements).
 If no PII is found or replacement is not needed, return an empty replacements list.
 
+LENGTH CONSTRAINT:
+Replacement values MUST be approximately the same character length as the original (±20%). This preserves document layout and prevents re-identification via length changes.
+  ✓ "John" (4) → "Frank" (5) — OK
+  ✓ "555 Elm St" (10) → "312 Oak Ln" (10) — OK
+  ✗ "555 Elm St" (10) → "29383 Lake Merrit Drive" (23) — TOO LONG
+  ✗ "Katherine" (9) → "Li" (2) — TOO SHORT
+
 REPLACEMENT RULES:
 • Personal names: Replace private or small-group individuals. Pick same culture + gender + era; keep surnames aligned across family members. DO NOT replace globally recognised public figures (heads of state, Nobel laureates, A-list entertainers, Fortune-500 CEOs, etc.).
 • Companies / organisations: Replace private, niche, employer & partner orgs. Invent a fictitious org in the same industry & size tier; keep legal suffix. Keep major public companies (anonymity set ≥ 1,000,000).

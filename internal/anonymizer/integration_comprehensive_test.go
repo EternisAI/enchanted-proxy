@@ -5,6 +5,7 @@ package anonymizer
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -712,12 +713,39 @@ func TestComprehensive_Anonymizer(t *testing.T) {
 				}
 			}
 
+			// Check replacement length constraint (±20%)
+			for _, r := range result.Replacements {
+				if !isLengthAcceptable(r.Original, r.Replacement) {
+					ratio := float64(len(r.Replacement)) / float64(len(r.Original))
+					t.Errorf("FAIL: replacement length mismatch: %q (%d chars) → %q (%d chars), ratio=%.2f (want 0.75–1.25)",
+						r.Original, len(r.Original), r.Replacement, len(r.Replacement), ratio)
+					failed++
+					return
+				}
+			}
+
 			passed++
 		})
 	}
 
 	t.Logf("\n=== SUMMARY: %d passed, %d failed, %d warnings (false positives) out of %d tests ===",
 		passed, failed, warned, len(comprehensiveTests))
+}
+
+// isLengthAcceptable checks that a replacement is within acceptable length bounds.
+// The prompt targets ±20%; we use ±25% tolerance to allow slight model variance.
+func isLengthAcceptable(original, replacement string) bool {
+	origLen := float64(len(original))
+	replLen := float64(len(replacement))
+	if origLen == 0 {
+		return replLen == 0
+	}
+	// For very short strings (≤4 chars), allow up to ±2 chars absolute difference
+	if origLen <= 4 {
+		return math.Abs(replLen-origLen) <= 2
+	}
+	ratio := replLen / origLen
+	return ratio >= 0.75 && ratio <= 1.25
 }
 
 // TestComprehensive_Summary runs all cases and prints a summary table at the end.
@@ -782,6 +810,11 @@ func TestComprehensive_Summary(t *testing.T) {
 			lower := strings.ToLower(repl.Replacement)
 			if strings.Contains(lower, "[redacted]") || strings.Contains(lower, "xxxx") || strings.Contains(lower, "****") {
 				r.errors = append(r.errors, fmt.Sprintf("redaction pattern in replacement: %q", repl.Replacement))
+			}
+			if !isLengthAcceptable(repl.Original, repl.Replacement) {
+				ratio := float64(len(repl.Replacement)) / float64(len(repl.Original))
+				r.errors = append(r.errors, fmt.Sprintf("length mismatch: %q (%d) → %q (%d), ratio=%.2f",
+					repl.Original, len(repl.Original), repl.Replacement, len(repl.Replacement), ratio))
 			}
 		}
 
