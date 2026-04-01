@@ -170,6 +170,24 @@ var (
 		},
 		[]string{"provider", "model"},
 	)
+
+	// ProbePromptTokensTotal accumulates prompt tokens consumed by probes.
+	ProbePromptTokensTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "model_router_probe_prompt_tokens_total",
+			Help: "Total prompt tokens consumed by probe requests, by provider and model.",
+		},
+		[]string{"provider", "model"},
+	)
+
+	// ProbeCompletionTokensTotal accumulates completion tokens consumed by probes.
+	ProbeCompletionTokensTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "model_router_probe_completion_tokens_total",
+			Help: "Total completion tokens consumed by probe requests, by provider and model.",
+		},
+		[]string{"provider", "model"},
+	)
 )
 
 // isTimeout returns true if err represents any kind of timeout.
@@ -239,11 +257,18 @@ func RecordUpstreamResponse(provider, model string, statusCode int) {
 	}
 }
 
+// ProbeTokenUsage holds token counts extracted from a probe response.
+type ProbeTokenUsage struct {
+	PromptTokens     int
+	CompletionTokens int
+}
+
 // RecordProbeResult records all metrics for a completed probe attempt.
 // statusCode of 0 indicates a connection failure (no HTTP response received).
 // contentMatch indicates whether the response content matched expectations.
 // hasExpectedResponse indicates whether content checking was configured.
-func RecordProbeResult(provider, model string, statusCode int, durationSeconds float64, contentMatch bool, hasExpectedResponse bool) {
+// usage contains token counts from the response (nil if unavailable).
+func RecordProbeResult(provider, model string, statusCode int, durationSeconds float64, contentMatch bool, hasExpectedResponse bool, usage *ProbeTokenUsage) {
 	ProbeRequestsTotal.WithLabelValues(provider, model).Inc()
 	ProbeRequestTime.WithLabelValues(provider, model).Observe(durationSeconds)
 
@@ -260,6 +285,15 @@ func RecordProbeResult(provider, model string, statusCode int, durationSeconds f
 			} else {
 				ProbeResponseUnexpected.WithLabelValues(provider, model).Inc()
 			}
+		}
+	}
+
+	if usage != nil {
+		if usage.PromptTokens > 0 {
+			ProbePromptTokensTotal.WithLabelValues(provider, model).Add(float64(usage.PromptTokens))
+		}
+		if usage.CompletionTokens > 0 {
+			ProbeCompletionTokensTotal.WithLabelValues(provider, model).Add(float64(usage.CompletionTokens))
 		}
 	}
 }

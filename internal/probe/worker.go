@@ -87,7 +87,7 @@ func (w *probeWorker) runProbe() {
 	duration := time.Since(start)
 
 	if err != nil {
-		metrics.RecordProbeResult(w.provider, w.model, 0, duration.Seconds(), false, w.probe.ExpectedResponse != nil)
+		metrics.RecordProbeResult(w.provider, w.model, 0, duration.Seconds(), false, w.probe.ExpectedResponse != nil, nil)
 		w.logger.Warn("probe request failed",
 			slog.String("provider", w.provider),
 			slog.String("model", w.model),
@@ -100,7 +100,7 @@ func (w *probeWorker) runProbe() {
 	// Read response body (limited).
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		metrics.RecordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), false, w.probe.ExpectedResponse != nil)
+		metrics.RecordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), false, w.probe.ExpectedResponse != nil, nil)
 		w.logger.Warn("failed to read probe response body",
 			slog.String("provider", w.provider),
 			slog.String("model", w.model),
@@ -110,30 +110,31 @@ func (w *probeWorker) runProbe() {
 		return
 	}
 
+	// Parse the response to extract content and token usage.
+	parsed := parseResponse(respBody)
+
 	// Check content match if configured and response was successful.
 	contentMatch := false
 	hasExpectedResponse := w.probe.ExpectedResponse != nil
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && hasExpectedResponse {
-		content := extractResponseContent(respBody)
 		contentMatch = strings.Contains(
-			strings.ToLower(content),
+			strings.ToLower(parsed.content),
 			strings.ToLower(*w.probe.ExpectedResponse),
 		)
 	}
 
-	metrics.RecordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), contentMatch, hasExpectedResponse)
+	metrics.RecordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), contentMatch, hasExpectedResponse, parsed.usage)
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		if hasExpectedResponse && !contentMatch {
-			content := extractResponseContent(respBody)
 			w.logger.Warn("probe succeeded but response content unexpected",
 				slog.String("provider", w.provider),
 				slog.String("model", w.model),
 				slog.Int("status", resp.StatusCode),
 				slog.Duration("duration", duration),
 				slog.String("expected", *w.probe.ExpectedResponse),
-				slog.String("got", truncate(content, 100)))
+				slog.String("got", truncate(parsed.content, 100)))
 		} else {
 			w.logger.Debug("probe succeeded",
 				slog.String("provider", w.provider),
@@ -151,26 +152,43 @@ func (w *probeWorker) runProbe() {
 	}
 }
 
-// chatCompletionResponse is a minimal representation of the OpenAI chat completion response
-// used only to extract the first choice's message content.
+// chatCompletionResponse is a minimal representation of the OpenAI chat completion response.
 type chatCompletionResponse struct {
 	Choices []struct {
 		Message struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage,omitempty"`
 }
 
-// extractResponseContent extracts the message content from a chat completion response body.
-func extractResponseContent(body []byte) string {
+// parsedResponse holds the extracted fields from a chat completion response.
+type parsedResponse struct {
+	content string
+	usage   *metrics.ProbeTokenUsage
+}
+
+// parseResponse extracts message content and token usage from a chat completion response body.
+func parseResponse(body []byte) parsedResponse {
 	var resp chatCompletionResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return ""
+		return parsedResponse{}
 	}
+
+	var result parsedResponse
 	if len(resp.Choices) > 0 {
-		return resp.Choices[0].Message.Content
+		result.content = resp.Choices[0].Message.Content
 	}
-	return ""
+	if resp.Usage != nil {
+		result.usage = &metrics.ProbeTokenUsage{
+			PromptTokens:     resp.Usage.PromptTokens,
+			CompletionTokens: resp.Usage.CompletionTokens,
+		}
+	}
+	return result
 }
 
 // truncate shortens a string to maxLen, appending "..." if truncated.
