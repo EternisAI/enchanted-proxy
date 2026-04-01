@@ -76,6 +76,16 @@ var (
 		[]string{"provider", "model"},
 	)
 
+	// UpstreamRequestTime observes upstream request duration in seconds.
+	UpstreamRequestTime = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "model_router_upstream_rq_time",
+			Help:    "Upstream request duration in seconds, by provider and model.",
+			Buckets: []float64{0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 5, 10, 30, 60, 120},
+		},
+		[]string{"provider", "model"},
+	)
+
 	// UpstreamRequestsActive tracks the number of upstream requests currently in progress.
 	UpstreamRequestsActive = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -166,7 +176,7 @@ var (
 		prometheus.HistogramOpts{
 			Name:    "model_router_probe_rq_time",
 			Help:    "Probe request duration in seconds, by provider and model.",
-			Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+			Buckets: []float64{0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 5, 10, 30},
 		},
 		[]string{"provider", "model"},
 	)
@@ -241,8 +251,10 @@ func RecordUpstreamAttempt(provider, model string) {
 
 // RecordUpstreamResponse records an HTTP response from upstream and increments
 // the completed counter plus the appropriate Nxx response-class counter.
-func RecordUpstreamResponse(provider, model string, statusCode int) {
+// durationSeconds is the time from request start to first response byte.
+func RecordUpstreamResponse(provider, model string, statusCode int, durationSeconds float64) {
 	UpstreamRequestsCompleted.WithLabelValues(provider, model, fmt.Sprintf("%d", statusCode)).Inc()
+	UpstreamRequestTime.WithLabelValues(provider, model).Observe(durationSeconds)
 
 	switch {
 	case statusCode >= 100 && statusCode < 200:

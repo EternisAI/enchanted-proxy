@@ -351,8 +351,8 @@ func ProxyHandler(
 
 		proxy.ModifyResponse = func(resp *http.Response) error {
 			upstreamRecorded = true
-			metrics.RecordUpstreamResponse(provider.Name, canonicalModel, resp.StatusCode)
 			upstreamLatency := time.Since(start)
+			metrics.RecordUpstreamResponse(provider.Name, canonicalModel, resp.StatusCode, upstreamLatency.Seconds())
 			isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
 			if isStreaming {
@@ -666,7 +666,7 @@ func handleStreamingDirect(
 		}
 
 		upstreamLatency := time.Since(start)
-		metrics.RecordUpstreamResponse(provider.Name, canonicalModel, resp.StatusCode)
+		metrics.RecordUpstreamResponse(provider.Name, canonicalModel, resp.StatusCode, upstreamLatency.Seconds())
 		log.Info("direct streaming: response received",
 			slog.String("chat_id", chatID),
 			slog.Int("status", resp.StatusCode),

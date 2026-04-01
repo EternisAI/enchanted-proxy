@@ -240,6 +240,7 @@ func handleResponsesAPI(
 	defer done()
 	metrics.RecordUpstreamAttempt(provider.Name, canonicalModel)
 
+	upstreamStart := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		metrics.RecordUpstreamError(provider.Name, canonicalModel, err)
@@ -251,7 +252,7 @@ func handleResponsesAPI(
 	}
 	defer resp.Body.Close()
 
-	metrics.RecordUpstreamResponse(provider.Name, canonicalModel, resp.StatusCode)
+	metrics.RecordUpstreamResponse(provider.Name, canonicalModel, resp.StatusCode, time.Since(upstreamStart).Seconds())
 
 	// Check for errors
 	if resp.StatusCode >= 400 {
