@@ -106,6 +106,10 @@ func (w *probeWorker) runProbe() {
 	duration := time.Since(start)
 
 	if err != nil {
+		// Don't record metrics or log warnings for shutdown-induced cancellations.
+		if w.ctx.Err() != nil {
+			return
+		}
 		metrics.RecordProbeResult(w.provider, w.model, 0, duration.Seconds(), false, false, nil)
 		w.logger.Warn("probe request failed",
 			slog.String("provider", w.provider),
