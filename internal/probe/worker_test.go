@@ -2,6 +2,7 @@ package probe
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -169,6 +170,9 @@ func TestTruncate(t *testing.T) {
 				prefix := string(runes[:len([]rune(tt.want))])
 				if prefix != tt.want {
 					t.Errorf("truncated prefix = %q, want %q", prefix, tt.want)
+				}
+				if !strings.Contains(got, "total") {
+					t.Errorf("expected truncated result to contain %q, got %q", "total", got)
 				}
 			}
 		})
