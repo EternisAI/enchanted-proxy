@@ -26,6 +26,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/deepr"
 	"github.com/eternisai/enchanted-proxy/internal/fai"
 	"github.com/eternisai/enchanted-proxy/internal/fallback"
+	"github.com/eternisai/enchanted-proxy/internal/health"
 	"github.com/eternisai/enchanted-proxy/internal/iap"
 	"github.com/eternisai/enchanted-proxy/internal/invitecode"
 	"github.com/eternisai/enchanted-proxy/internal/keyshare"
@@ -568,6 +569,9 @@ func main() {
 		}()
 	}
 
+	// Initialize readiness probe (tracks startup completion + ongoing DB health)
+	readinessProbe := health.NewReadinessProbe(db.DB)
+
 	// Start status server (Prometheus metrics and health check endpoints)
 	statusAddr := config.AppConfig.StatusBindAddr + ":" + config.AppConfig.StatusBindPort
 	statusMux := http.NewServeMux()
@@ -575,6 +579,7 @@ func main() {
 	statusMux.HandleFunc("/healthz/live", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	statusMux.HandleFunc("/healthz/ready", readinessProbe.Handler())
 	statusServer := &http.Server{
 		Addr:    statusAddr,
 		Handler: statusMux,
@@ -616,6 +621,9 @@ func main() {
 			os.Exit(1)
 		}
 	}()
+
+	readinessProbe.MarkReady()
+	log.Info("server startup complete, readiness probe active")
 
 	<-quit
 	log.Info("shutting down servers")
