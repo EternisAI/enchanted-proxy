@@ -12,13 +12,68 @@ import (
 )
 
 var (
-	// UpstreamRequestsTotal counts HTTP responses received from upstream providers.
+	// UpstreamRequestsTotal counts all attempts to route a request upstream,
+	// regardless of whether the HTTP request succeeds or fails.
 	UpstreamRequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "model_router_upstream_rq_total",
+			Help: "Total upstream request attempts, by provider and model.",
+		},
+		[]string{"provider", "model"},
+	)
+
+	// UpstreamRequestsCompleted counts HTTP responses received from upstream providers.
+	UpstreamRequestsCompleted = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "model_router_upstream_rq_completed",
 			Help: "Total upstream responses received, by provider, model, and HTTP status code.",
 		},
 		[]string{"provider", "model", "response_code"},
+	)
+
+	// UpstreamRequests1xx counts upstream responses with 1xx status codes.
+	UpstreamRequests1xx = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "model_router_upstream_rq_1xx",
+			Help: "Total upstream 1xx responses, by provider and model.",
+		},
+		[]string{"provider", "model"},
+	)
+
+	// UpstreamRequests2xx counts upstream responses with 2xx status codes.
+	UpstreamRequests2xx = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "model_router_upstream_rq_2xx",
+			Help: "Total upstream 2xx responses, by provider and model.",
+		},
+		[]string{"provider", "model"},
+	)
+
+	// UpstreamRequests3xx counts upstream responses with 3xx status codes.
+	UpstreamRequests3xx = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "model_router_upstream_rq_3xx",
+			Help: "Total upstream 3xx responses, by provider and model.",
+		},
+		[]string{"provider", "model"},
+	)
+
+	// UpstreamRequests4xx counts upstream responses with 4xx status codes.
+	UpstreamRequests4xx = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "model_router_upstream_rq_4xx",
+			Help: "Total upstream 4xx responses, by provider and model.",
+		},
+		[]string{"provider", "model"},
+	)
+
+	// UpstreamRequests5xx counts upstream responses with 5xx status codes.
+	UpstreamRequests5xx = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "model_router_upstream_rq_5xx",
+			Help: "Total upstream 5xx responses, by provider and model.",
+		},
+		[]string{"provider", "model"},
 	)
 
 	// UpstreamRequestsActive tracks the number of upstream requests currently in progress.
@@ -102,9 +157,29 @@ func RecordUpstreamError(provider, model string, err error) {
 	}
 }
 
-// RecordUpstreamResponse records a successful HTTP response from upstream.
+// RecordUpstreamAttempt records that we are about to attempt an upstream request.
+// Call this after routing is complete, before any connection attempt.
+func RecordUpstreamAttempt(provider, model string) {
+	UpstreamRequestsTotal.WithLabelValues(provider, model).Inc()
+}
+
+// RecordUpstreamResponse records an HTTP response from upstream and increments
+// the completed counter plus the appropriate Nxx response-class counter.
 func RecordUpstreamResponse(provider, model string, statusCode int) {
-	UpstreamRequestsTotal.WithLabelValues(provider, model, fmt.Sprintf("%d", statusCode)).Inc()
+	UpstreamRequestsCompleted.WithLabelValues(provider, model, fmt.Sprintf("%d", statusCode)).Inc()
+
+	switch {
+	case statusCode >= 100 && statusCode < 200:
+		UpstreamRequests1xx.WithLabelValues(provider, model).Inc()
+	case statusCode >= 200 && statusCode < 300:
+		UpstreamRequests2xx.WithLabelValues(provider, model).Inc()
+	case statusCode >= 300 && statusCode < 400:
+		UpstreamRequests3xx.WithLabelValues(provider, model).Inc()
+	case statusCode >= 400 && statusCode < 500:
+		UpstreamRequests4xx.WithLabelValues(provider, model).Inc()
+	case statusCode >= 500 && statusCode < 600:
+		UpstreamRequests5xx.WithLabelValues(provider, model).Inc()
+	}
 }
 
 // TrackActiveRequest increments the active request gauge and returns a function

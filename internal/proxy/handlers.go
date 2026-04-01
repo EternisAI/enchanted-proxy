@@ -490,6 +490,7 @@ func ProxyHandler(
 		// Use ReverseProxy for non-streaming requests only
 		done := metrics.TrackActiveRequest(provider.Name, canonicalModel)
 		defer done()
+		metrics.RecordUpstreamAttempt(provider.Name, canonicalModel)
 		proxy.ServeHTTP(c.Writer, c.Request)
 	}
 }
@@ -586,6 +587,7 @@ func handleStreamingDirect(
 
 	// Track active request for metrics
 	metrics.UpstreamRequestsActive.WithLabelValues(provider.Name, canonicalModel).Inc()
+	metrics.RecordUpstreamAttempt(provider.Name, canonicalModel)
 
 	// Start background goroutine for upstream request
 	go func() {

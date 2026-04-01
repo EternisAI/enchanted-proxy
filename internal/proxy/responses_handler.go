@@ -238,6 +238,7 @@ func handleResponsesAPI(
 
 	done := metrics.TrackActiveRequest(provider.Name, canonicalModel)
 	defer done()
+	metrics.RecordUpstreamAttempt(provider.Name, canonicalModel)
 
 	resp, err := client.Do(req)
 	if err != nil {
