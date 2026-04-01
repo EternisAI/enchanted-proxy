@@ -314,8 +314,9 @@ func RecordProbeResult(provider, model string, statusCode int, durationSeconds f
 // TrackActiveRequest increments the active request gauge and returns a function
 // that decrements it. Intended for use with defer.
 func TrackActiveRequest(provider, model string) func() {
-	UpstreamRequestsActive.WithLabelValues(provider, model).Inc()
+	gauge := UpstreamRequestsActive.WithLabelValues(provider, model)
+	gauge.Inc()
 	return func() {
-		UpstreamRequestsActive.WithLabelValues(provider, model).Dec()
+		gauge.Dec()
 	}
 }
