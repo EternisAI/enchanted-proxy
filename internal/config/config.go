@@ -104,6 +104,8 @@ type Config struct {
 
 	// Server
 	ServerShutdownTimeoutSeconds int
+	StatusBindAddr               string
+	StatusBindPort               string
 
 	// CORS
 	CORSAllowedOrigins string
@@ -278,6 +280,8 @@ func LoadConfig() {
 
 		// Server
 		ServerShutdownTimeoutSeconds: getEnvAsInt("SERVER_SHUTDOWN_TIMEOUT_SECONDS", 30),
+		StatusBindAddr:               getEnvOrDefault("STATUS_BIND_ADDR", "127.0.0.1"),
+		StatusBindPort:               getEnvOrDefault("STATUS_BIND_PORT", "9090"),
 
 		// CORS
 		CORSAllowedOrigins: getEnvOrDefault("CORS_ALLOWED_ORIGINS", "http://localhost:3000"),

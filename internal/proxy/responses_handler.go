@@ -16,6 +16,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
+	"github.com/eternisai/enchanted-proxy/internal/metrics"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"github.com/eternisai/enchanted-proxy/internal/responses"
 	"github.com/eternisai/enchanted-proxy/internal/routing"
@@ -68,6 +69,8 @@ func handleResponsesAPI(
 	modelRouter *routing.ModelRouter,
 	cfg *config.Config,
 ) error {
+	canonicalModel := modelRouter.ResolveAlias(model)
+
 	// Validate required parameters
 	if provider == nil {
 		errors.Internal(c, "Provider configuration is nil", nil)
@@ -233,8 +236,12 @@ func handleResponsesAPI(
 		Timeout: 30 * time.Second, // Short timeout for initial submission
 	}
 
+	done := metrics.TrackActiveRequest(provider.Name, canonicalModel)
+	defer done()
+
 	resp, err := client.Do(req)
 	if err != nil {
+		metrics.RecordUpstreamError(provider.Name, canonicalModel, err)
 		log.Error("failed to submit request to Responses API",
 			slog.String("error", err.Error()),
 			slog.String("target_url", targetURL))
@@ -242,6 +249,8 @@ func handleResponsesAPI(
 		return fmt.Errorf("failed to make request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	metrics.RecordUpstreamResponse(provider.Name, canonicalModel, resp.StatusCode)
 
 	// Check for errors
 	if resp.StatusCode >= 400 {
@@ -421,8 +430,8 @@ func streamToClientWithResponseID(
 			return
 
 		case <-subscriber.Context().Done():
-			// Subscriber cancelled
-			log.Debug("subscriber cancelled",
+			// Subscriber canceled
+			log.Debug("subscriber canceled",
 				slog.String("subscriber_id", subscriber.ID))
 			return
 		}
