@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"time"
@@ -32,16 +33,30 @@ type probeWorker struct {
 	logger   *logger.Logger
 }
 
+// maxJitterFraction is the maximum jitter as a fraction of the probe interval,
+// applied to the initial delay to spread out probe workers.
+const maxJitterFraction = 0.25
+
 func (w *probeWorker) run() {
 	defer w.service.wg.Done()
+
+	// Apply random initial jitter (up to 25% of interval) to spread out workers
+	// that share the same interval and avoid synchronized bursts.
+	jitter := time.Duration(rand.Int64N(int64(float64(w.probe.Interval) * maxJitterFraction)))
 
 	w.logger.Debug("started probe worker",
 		slog.String("provider", w.provider),
 		slog.String("model", w.model),
-		slog.Duration("interval", w.probe.Interval))
+		slog.Duration("interval", w.probe.Interval),
+		slog.Duration("initial_jitter", jitter))
 
-	// Run first probe immediately, then on ticker interval.
-	w.runProbe()
+	// Wait for jitter before the first probe, respecting shutdown.
+	select {
+	case <-time.After(jitter):
+		w.runProbe()
+	case <-w.service.shutdown:
+		return
+	}
 
 	ticker := time.NewTicker(w.probe.Interval)
 	defer ticker.Stop()
@@ -196,10 +211,11 @@ func parseResponse(body []byte) parsedResponse {
 	return result
 }
 
-// truncate shortens a string to maxLen, appending "..." if truncated.
+// truncate shortens a string to maxLen runes, appending "..." if truncated.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + fmt.Sprintf("... (%d bytes total)", len(s))
+	return string(runes[:maxLen]) + fmt.Sprintf("... (%d bytes total)", len(s))
 }

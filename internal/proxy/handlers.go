@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -326,9 +327,19 @@ func ProxyHandler(
 		// Create reverse proxy for this specific target
 		proxy := createReverseProxyWithPooling(target)
 
+		// Track whether ModifyResponse already recorded upstream metrics.
+		// If ModifyResponse fires, the upstream responded — ErrorHandler should
+		// not double-count if it is subsequently called (e.g., when
+		// ModifyResponse returns an error or the response body copy fails).
+		upstreamRecorded := false
+
 		// Add error handler for upstream failures
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			metrics.RecordUpstreamError(provider.Name, canonicalModel, err)
+			// Skip recording if the upstream already responded and was recorded,
+			// or if the error is a client-side cancellation.
+			if !upstreamRecorded && !stderrors.Is(err, context.Canceled) && !stderrors.Is(err, context.DeadlineExceeded) {
+				metrics.RecordUpstreamError(provider.Name, canonicalModel, err)
+			}
 			log.Error("upstream request failed",
 				slog.String("target_url", target.String()+r.RequestURI),
 				slog.String("error", err.Error()),
@@ -339,6 +350,7 @@ func ProxyHandler(
 		}
 
 		proxy.ModifyResponse = func(resp *http.Response) error {
+			upstreamRecorded = true
 			metrics.RecordUpstreamResponse(provider.Name, canonicalModel, resp.StatusCode)
 			upstreamLatency := time.Since(start)
 			isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
