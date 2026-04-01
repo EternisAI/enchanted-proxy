@@ -35,6 +35,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/oauth"
+	"github.com/eternisai/enchanted-proxy/internal/probe"
 	"github.com/eternisai/enchanted-proxy/internal/problem_reports"
 	"github.com/eternisai/enchanted-proxy/internal/proxy"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
@@ -372,6 +373,9 @@ func main() {
 	// Initialize model routing fallback service
 	fallbackService := fallback.NewFallbackService(config.AppConfig, logger.WithComponent("fallback"), modelRouter)
 
+	// Initialize model endpoint health probe service
+	probeService := probe.NewProbeService(logger.WithComponent("probe"), modelRouter)
+
 	// Initialize key sharing service
 	var keyshareHandler *keyshare.Handler
 	if firebaseClient != nil {
@@ -631,6 +635,9 @@ func main() {
 
 	// Stop the readiness probe background check
 	readinessProbe.Stop()
+
+	// Shutdown the model endpoint health probe service
+	probeService.Shutdown()
 
 	// Shutdown the model routing fallback service
 	fallbackService.Shutdown()
