@@ -217,18 +217,19 @@ func isDialError(err error) bool {
 // RecordUpstreamError classifies a connection/request error and increments the appropriate counters.
 //
 // Classification:
-//  1. Response-phase timeout (e.g. ResponseHeaderTimeout): increments rq_timeout + cx_connect_fail
-//  2. Connect-phase timeout (e.g. dial timeout): increments cx_connect_fail + cx_connect_timeout
-//  3. Other connection failure: increments cx_connect_fail only
+//  1. Dial-phase timeout (e.g. dial timeout, TLS handshake timeout): increments cx_connect_fail + cx_connect_timeout
+//  2. Dial-phase non-timeout error (e.g. connection refused, DNS failure): increments cx_connect_fail only
+//  3. Response-phase timeout (e.g. ResponseHeaderTimeout): increments rq_timeout only
 func RecordUpstreamError(provider, model string, err error) {
-	ConnectFailures.WithLabelValues(provider, model).Inc()
-
-	if isTimeout(err) {
-		if isDialError(err) {
+	if isDialError(err) {
+		ConnectFailures.WithLabelValues(provider, model).Inc()
+		if isTimeout(err) {
 			ConnectTimeouts.WithLabelValues(provider, model).Inc()
-		} else {
-			UpstreamRequestTimeouts.WithLabelValues(provider, model).Inc()
 		}
+	} else if isTimeout(err) {
+		UpstreamRequestTimeouts.WithLabelValues(provider, model).Inc()
+	} else {
+		ConnectFailures.WithLabelValues(provider, model).Inc()
 	}
 }
 

@@ -2,6 +2,7 @@ package probe
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,8 +23,9 @@ const (
 
 type probeWorker struct {
 	service  *ProbeService
-	provider string // provider name (for metrics labels and logging)
-	model    string // canonical model name (for metrics labels and logging)
+	ctx      context.Context // cancelled on shutdown to abort in-flight requests
+	provider string          // provider name (for metrics labels and logging)
+	model    string          // canonical model name (for metrics labels and logging)
 	endpoint *routing.ProviderConfig
 	probe    *routing.ProbeConfig
 	client   *http.Client
@@ -69,8 +71,8 @@ func (w *probeWorker) runProbe() {
 		return
 	}
 
-	url := w.endpoint.BaseURL + "/chat/completions"
-	req, err := http.NewRequest("POST", url, bytes.NewReader(bodyBytes))
+	url := strings.TrimRight(w.endpoint.BaseURL, "/") + "/chat/completions"
+	req, err := http.NewRequestWithContext(w.ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		w.logger.Error("failed to create probe request",
 			slog.String("provider", w.provider),
@@ -80,14 +82,16 @@ func (w *probeWorker) runProbe() {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+w.endpoint.APIKey)
+	if w.endpoint.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+w.endpoint.APIKey)
+	}
 
 	start := time.Now()
 	resp, err := w.client.Do(req)
 	duration := time.Since(start)
 
 	if err != nil {
-		metrics.RecordProbeResult(w.provider, w.model, 0, duration.Seconds(), false, w.probe.ExpectedResponse != nil, nil)
+		metrics.RecordProbeResult(w.provider, w.model, 0, duration.Seconds(), false, false, nil)
 		w.logger.Warn("probe request failed",
 			slog.String("provider", w.provider),
 			slog.String("model", w.model),
@@ -100,7 +104,7 @@ func (w *probeWorker) runProbe() {
 	// Read response body (limited).
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		metrics.RecordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), false, w.probe.ExpectedResponse != nil, nil)
+		metrics.RecordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), false, false, nil)
 		w.logger.Warn("failed to read probe response body",
 			slog.String("provider", w.provider),
 			slog.String("model", w.model),
@@ -114,8 +118,9 @@ func (w *probeWorker) runProbe() {
 	parsed := parseResponse(respBody)
 
 	// Check content match if configured and response was successful.
+	// Content checking is only active when ExpectedResponse is non-nil AND non-empty.
 	contentMatch := false
-	hasExpectedResponse := w.probe.ExpectedResponse != nil
+	hasExpectedResponse := w.probe.ExpectedResponse != nil && *w.probe.ExpectedResponse != ""
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && hasExpectedResponse {
 		contentMatch = strings.Contains(

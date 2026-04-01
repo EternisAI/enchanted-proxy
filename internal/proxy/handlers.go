@@ -586,12 +586,12 @@ func handleStreamingDirect(
 	statusCh := make(chan upstreamStatus, 1)
 
 	// Track active request for metrics
-	metrics.UpstreamRequestsActive.WithLabelValues(provider.Name, canonicalModel).Inc()
+	done := metrics.TrackActiveRequest(provider.Name, canonicalModel)
 	metrics.RecordUpstreamAttempt(provider.Name, canonicalModel)
 
 	// Start background goroutine for upstream request
 	go func() {
-		defer metrics.UpstreamRequestsActive.WithLabelValues(provider.Name, canonicalModel).Dec()
+		defer done()
 
 		// Use context.Background() for complete isolation from client connection
 		ctx := context.Background()

@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -17,15 +18,18 @@ type ProbeService struct {
 	logger   *logger.Logger
 	wg       sync.WaitGroup
 	shutdown chan struct{}
+	cancel   context.CancelFunc
 }
 
 // NewProbeService creates a new probe service and starts a probe worker goroutine
 // for every enabled model endpoint. Endpoints using the Responses API are skipped
 // as they don't support standard chat completions.
 func NewProbeService(logger *logger.Logger, router *routing.ModelRouter) *ProbeService {
+	ctx, cancel := context.WithCancel(context.Background())
 	s := &ProbeService{
 		logger:   logger,
 		shutdown: make(chan struct{}),
+		cancel:   cancel,
 	}
 
 	routes := router.GetRoutes()
@@ -58,6 +62,7 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter) *ProbeS
 
 			w := &probeWorker{
 				service:  s,
+				ctx:      ctx,
 				provider: endpoint.Provider.Name,
 				model:    model,
 				endpoint: endpoint.Provider,
@@ -86,6 +91,7 @@ func (s *ProbeService) Shutdown() {
 		return
 	}
 
+	s.cancel()
 	close(s.shutdown)
 	s.wg.Wait()
 	s.logger.Info("probe service stopped")

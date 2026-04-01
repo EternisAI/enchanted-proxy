@@ -57,9 +57,14 @@ func (p *ReadinessProbe) Start() {
 	}()
 }
 
-// Stop terminates the background health check goroutine. Safe to call multiple times.
+// Stop terminates the background health check goroutine and marks the probe as
+// not ready so /healthz/ready immediately returns 503. Safe to call multiple times.
 func (p *ReadinessProbe) Stop() {
-	p.stopOnce.Do(func() { close(p.stop) })
+	p.stopOnce.Do(func() {
+		p.startupComplete.Store(false)
+		p.dbHealthy.Store(false)
+		close(p.stop)
+	})
 }
 
 func (p *ReadinessProbe) checkDB() {
