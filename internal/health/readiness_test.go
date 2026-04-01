@@ -10,20 +10,25 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// newTestDB opens a dummy postgres connection that will fail to ping.
-// This avoids adding a test-only dependency.
+// newUnreachableDB opens a dummy postgres connection that will fail to ping.
 func newUnreachableDB() *sql.DB {
-	// Use an invalid DSN so Ping() fails without blocking long.
 	db, _ := sql.Open("postgres", "host=127.0.0.1 port=1 connect_timeout=1 sslmode=disable")
 	return db
 }
 
-func TestReadinessProbe_NotReadyBeforeStartup(t *testing.T) {
-	// Even with an unreachable DB, startup check alone should cause 503.
+// newProbeWithDBState creates a ReadinessProbe and sets the dbHealthy flag
+// directly, avoiding the need for a real database or background goroutine.
+func newProbeWithDBState(dbUp bool) *ReadinessProbe {
 	db := newUnreachableDB()
-	defer db.Close()
+	p := NewReadinessProbe(db)
+	p.dbHealthy.Store(dbUp)
+	return p
+}
 
-	probe := NewReadinessProbe(db)
+func TestReadinessProbe_NotReadyBeforeStartup(t *testing.T) {
+	probe := newProbeWithDBState(true)
+	defer probe.db.Close()
+
 	handler := probe.Handler()
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz/ready", nil)
@@ -48,10 +53,8 @@ func TestReadinessProbe_NotReadyBeforeStartup(t *testing.T) {
 }
 
 func TestReadinessProbe_ReadyAfterStartup_DBDown(t *testing.T) {
-	db := newUnreachableDB()
-	defer db.Close()
-
-	probe := NewReadinessProbe(db)
+	probe := newProbeWithDBState(false)
+	defer probe.db.Close()
 	probe.MarkReady()
 
 	handler := probe.Handler()
@@ -80,11 +83,40 @@ func TestReadinessProbe_ReadyAfterStartup_DBDown(t *testing.T) {
 	}
 }
 
-func TestReadinessProbe_MarkReady(t *testing.T) {
-	db := newUnreachableDB()
-	defer db.Close()
+func TestReadinessProbe_ReadyAfterStartup_DBUp(t *testing.T) {
+	probe := newProbeWithDBState(true)
+	defer probe.db.Close()
+	probe.MarkReady()
 
-	probe := NewReadinessProbe(db)
+	handler := probe.Handler()
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz/ready", nil)
+	rec := httptest.NewRecorder()
+
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 when fully ready, got %d", rec.Code)
+	}
+
+	var resp readinessResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Ready {
+		t.Error("expected ready=true")
+	}
+	if resp.Checks["startup"] != "complete" {
+		t.Errorf("expected startup=complete, got %s", resp.Checks["startup"])
+	}
+	if resp.Checks["database"] != "ok" {
+		t.Errorf("expected database=ok, got %s", resp.Checks["database"])
+	}
+}
+
+func TestReadinessProbe_MarkReady(t *testing.T) {
+	probe := newProbeWithDBState(false)
+	defer probe.db.Close()
 
 	if probe.startupComplete.Load() {
 		t.Error("expected startupComplete=false initially")
@@ -98,10 +130,9 @@ func TestReadinessProbe_MarkReady(t *testing.T) {
 }
 
 func TestReadinessProbe_ResponseFormat(t *testing.T) {
-	db := newUnreachableDB()
-	defer db.Close()
+	probe := newProbeWithDBState(false)
+	defer probe.db.Close()
 
-	probe := NewReadinessProbe(db)
 	handler := probe.Handler()
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz/ready", nil)
@@ -124,4 +155,31 @@ func TestReadinessProbe_ResponseFormat(t *testing.T) {
 	if _, ok := resp.Checks["database"]; !ok {
 		t.Error("response should include database check")
 	}
+}
+
+func TestReadinessProbe_CheckDB(t *testing.T) {
+	db := newUnreachableDB()
+	defer db.Close()
+
+	probe := NewReadinessProbe(db)
+
+	// Initially false
+	if probe.dbHealthy.Load() {
+		t.Error("expected dbHealthy=false initially")
+	}
+
+	// After checkDB with unreachable DB, should remain false
+	probe.checkDB()
+	if probe.dbHealthy.Load() {
+		t.Error("expected dbHealthy=false after checkDB with unreachable DB")
+	}
+}
+
+func TestReadinessProbe_StartStop(t *testing.T) {
+	db := newUnreachableDB()
+	defer db.Close()
+
+	probe := NewReadinessProbe(db)
+	probe.Start()
+	probe.Stop() // should not panic or hang
 }

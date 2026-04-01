@@ -569,8 +569,9 @@ func main() {
 		}()
 	}
 
-	// Initialize readiness probe (tracks startup completion + ongoing DB health)
+	// Initialize readiness probe (tracks startup completion + async DB health)
 	readinessProbe := health.NewReadinessProbe(db.DB)
+	readinessProbe.Start()
 
 	// Start status server (Prometheus metrics and health check endpoints)
 	statusAddr := config.AppConfig.StatusBindAddr + ":" + config.AppConfig.StatusBindPort
@@ -627,6 +628,9 @@ func main() {
 
 	<-quit
 	log.Info("shutting down servers")
+
+	// Stop the readiness probe background check
+	readinessProbe.Stop()
 
 	// Shutdown the model routing fallback service
 	fallbackService.Shutdown()
