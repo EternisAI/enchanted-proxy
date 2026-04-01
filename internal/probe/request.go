@@ -30,10 +30,11 @@ func buildProbeRequestBody(endpoint *routing.ProviderConfig, probe *routing.Prob
 }
 
 // isOpenAIReasoningModel checks if the model name matches known OpenAI reasoning models
-// that support the reasoning_effort parameter.
+// that support the reasoning_effort parameter. It requires a delimiter ("-") after
+// the series prefix to avoid false-positives on unrelated models (e.g. "ollama-xyz").
 func isOpenAIReasoningModel(model string) bool {
 	lower := strings.ToLower(model)
-	for _, prefix := range []string{"o1", "o3", "o4"} {
+	for _, prefix := range []string{"o1-", "o3-", "o4-"} {
 		if strings.HasPrefix(lower, prefix) {
 			return true
 		}
