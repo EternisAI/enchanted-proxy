@@ -88,6 +88,7 @@ egress:
   - provenance.eternis.ai
   - tuf-repo-cdn.sigstore.dev
 env:
+- ACTIVE_HEALTH_CHECKS_ENABLED
 - ANONYMIZER_API_KEY
 - ANONYMIZER_BASE_URL
 - ANONYMIZER_TIMEOUT_SECONDS

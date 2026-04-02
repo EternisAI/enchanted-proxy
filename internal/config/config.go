@@ -132,6 +132,9 @@ type Config struct {
 	BackgroundPollingTimeout     int  // Minutes before giving up on polling (default: 30)
 	BackgroundMaxConcurrentPolls int  // Maximum number of concurrent polling workers (default: 100)
 
+	// Active Health Checks
+	ActiveHealthChecksEnabled bool // Enable/disable active health check probes for model endpoints (default: true)
+
 	// Push Notifications
 	PushNotificationsEnabled bool // Enable/disable FCM push notifications for task completions (default: true)
 
@@ -307,6 +310,9 @@ func LoadConfig() {
 		BackgroundPollingMaxInterval: getEnvAsInt("BACKGROUND_POLLING_MAX_INTERVAL", 10),
 		BackgroundPollingTimeout:     getEnvAsInt("BACKGROUND_POLLING_TIMEOUT", 30),
 		BackgroundMaxConcurrentPolls: getEnvAsInt("BACKGROUND_MAX_CONCURRENT_POLLS", 100),
+
+		// Active Health Checks
+		ActiveHealthChecksEnabled: getEnvOrDefault("ACTIVE_HEALTH_CHECKS_ENABLED", "true") == "true",
 
 		// Push Notifications
 		PushNotificationsEnabled: getEnvOrDefault("PUSH_NOTIFICATIONS_ENABLED", "true") == "true",

@@ -374,7 +374,12 @@ func main() {
 	fallbackService := fallback.NewFallbackService(config.AppConfig, logger.WithComponent("fallback"), modelRouter)
 
 	// Initialize model endpoint health probe service
-	probeService := probe.NewProbeService(logger.WithComponent("probe"), modelRouter)
+	var probeService *probe.ProbeService
+	if config.AppConfig.ActiveHealthChecksEnabled {
+		probeService = probe.NewProbeService(logger.WithComponent("probe"), modelRouter)
+	} else {
+		logger.Warn("active health checks are disabled via ACTIVE_HEALTH_CHECKS_ENABLED=false")
+	}
 
 	// Initialize key sharing service
 	var keyshareHandler *keyshare.Handler
