@@ -52,15 +52,7 @@ run:
         go run cmd/server/main.go
     fi
 
-# Run the server with dev config (optionally filter logs, e.g. just run-dev logs=token)
-run-dev:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -n "{{ logs }}" ]]; then
-        CONFIG_FILE=config/config.dev.yaml go run cmd/server/main.go 2>&1 | grep --line-buffered -i '\[{{ logs }}\]'
-    else
-        CONFIG_FILE=config/config.dev.yaml go run cmd/server/main.go
-    fi
+
 
 # Lint and fix
 lint:
