@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
+	"github.com/eternisai/enchanted-proxy/internal/metrics"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"github.com/eternisai/enchanted-proxy/internal/routing"
 	"github.com/eternisai/enchanted-proxy/internal/streaming"
@@ -148,6 +150,7 @@ func ProxyHandler(
 
 		baseURL := provider.BaseURL
 		apiKey := provider.APIKey
+		canonicalModel := modelRouter.ResolveAlias(model)
 
 		log.Info("routed model to provider",
 			slog.String("model", model),
@@ -324,8 +327,19 @@ func ProxyHandler(
 		// Create reverse proxy for this specific target
 		proxy := createReverseProxyWithPooling(target)
 
+		// Track whether ModifyResponse already recorded upstream metrics.
+		// If ModifyResponse fires, the upstream responded — ErrorHandler should
+		// not double-count if it is subsequently called (e.g., when
+		// ModifyResponse returns an error or the response body copy fails).
+		upstreamRecorded := false
+
 		// Add error handler for upstream failures
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			// Skip recording if the upstream already responded and was recorded,
+			// or if the error is a client-side cancellation.
+			if !upstreamRecorded && !stderrors.Is(err, context.Canceled) && !stderrors.Is(err, context.DeadlineExceeded) {
+				metrics.RecordUpstreamError(provider.Name, canonicalModel, err)
+			}
 			log.Error("upstream request failed",
 				slog.String("target_url", target.String()+r.RequestURI),
 				slog.String("error", err.Error()),
@@ -336,7 +350,9 @@ func ProxyHandler(
 		}
 
 		proxy.ModifyResponse = func(resp *http.Response) error {
+			upstreamRecorded = true
 			upstreamLatency := time.Since(start)
+			metrics.RecordUpstreamResponse(provider.Name, canonicalModel, resp.StatusCode, upstreamLatency.Seconds())
 			isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
 			if isStreaming {
@@ -479,11 +495,14 @@ func ProxyHandler(
 
 			log.Info("detected streaming request, using independent HTTP client",
 				slog.String("model", model))
-			handleStreamingDirect(c, target, apiKey, requestBody, log, start, model, trackingService, messageService, streamManager, cfg, provider)
+			handleStreamingDirect(c, target, apiKey, requestBody, log, start, model, canonicalModel, trackingService, messageService, streamManager, cfg, provider)
 			return
 		}
 
 		// Use ReverseProxy for non-streaming requests only
+		done := metrics.TrackActiveRequest(provider.Name, canonicalModel)
+		defer done()
+		metrics.RecordUpstreamAttempt(provider.Name, canonicalModel)
 		proxy.ServeHTTP(c.Writer, c.Request)
 	}
 }
@@ -513,6 +532,7 @@ func handleStreamingDirect(
 	log *logger.Logger,
 	start time.Time,
 	model string,
+	canonicalModel string,
 	trackingService *request_tracking.Service,
 	messageService *messaging.Service,
 	streamManager *streaming.StreamManager,
@@ -577,8 +597,14 @@ func handleStreamingDirect(
 	}
 	statusCh := make(chan upstreamStatus, 1)
 
+	// Track active request for metrics
+	done := metrics.TrackActiveRequest(provider.Name, canonicalModel)
+	metrics.RecordUpstreamAttempt(provider.Name, canonicalModel)
+
 	// Start background goroutine for upstream request
 	go func() {
+		defer done()
+
 		// Use context.Background() for complete isolation from client connection
 		ctx := context.Background()
 
@@ -628,6 +654,7 @@ func handleStreamingDirect(
 		// Make HTTP request
 		resp, err := client.Do(req)
 		if err != nil {
+			metrics.RecordUpstreamError(provider.Name, canonicalModel, err)
 			log.Error("direct streaming: upstream request failed",
 				slog.String("error", err.Error()),
 				slog.String("chat_id", chatID))
@@ -639,6 +666,7 @@ func handleStreamingDirect(
 		}
 
 		upstreamLatency := time.Since(start)
+		metrics.RecordUpstreamResponse(provider.Name, canonicalModel, resp.StatusCode, upstreamLatency.Seconds())
 		log.Info("direct streaming: response received",
 			slog.String("chat_id", chatID),
 			slog.Int("status", resp.StatusCode),

@@ -104,6 +104,8 @@ type Config struct {
 
 	// Server
 	ServerShutdownTimeoutSeconds int
+	StatusBindAddr               string
+	StatusBindPort               string
 
 	// CORS
 	CORSAllowedOrigins string
@@ -129,6 +131,9 @@ type Config struct {
 	BackgroundPollingMaxInterval int  // Maximum seconds between polls (default: 10, used after initial rapid polling)
 	BackgroundPollingTimeout     int  // Minutes before giving up on polling (default: 30)
 	BackgroundMaxConcurrentPolls int  // Maximum number of concurrent polling workers (default: 100)
+
+	// Active Health Checks
+	ActiveHealthChecksEnabled bool // Enable/disable active health check probes for model endpoints (default: true)
 
 	// Push Notifications
 	PushNotificationsEnabled bool // Enable/disable FCM push notifications for task completions (default: true)
@@ -278,6 +283,8 @@ func LoadConfig() {
 
 		// Server
 		ServerShutdownTimeoutSeconds: getEnvAsInt("SERVER_SHUTDOWN_TIMEOUT_SECONDS", 30),
+		StatusBindAddr:               getEnvOrDefault("STATUS_BIND_ADDR", "127.0.0.1"),
+		StatusBindPort:               getEnvOrDefault("STATUS_BIND_PORT", "9090"),
 
 		// CORS
 		CORSAllowedOrigins: getEnvOrDefault("CORS_ALLOWED_ORIGINS", "http://localhost:3000"),
@@ -303,6 +310,9 @@ func LoadConfig() {
 		BackgroundPollingMaxInterval: getEnvAsInt("BACKGROUND_POLLING_MAX_INTERVAL", 10),
 		BackgroundPollingTimeout:     getEnvAsInt("BACKGROUND_POLLING_TIMEOUT", 30),
 		BackgroundMaxConcurrentPolls: getEnvAsInt("BACKGROUND_MAX_CONCURRENT_POLLS", 100),
+
+		// Active Health Checks
+		ActiveHealthChecksEnabled: getEnvOrDefault("ACTIVE_HEALTH_CHECKS_ENABLED", "true") == "true",
 
 		// Push Notifications
 		PushNotificationsEnabled: getEnvOrDefault("PUSH_NOTIFICATIONS_ENABLED", "true") == "true",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,7 +25,9 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/composio"
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/deepr"
+	"github.com/eternisai/enchanted-proxy/internal/fai"
 	"github.com/eternisai/enchanted-proxy/internal/fallback"
+	"github.com/eternisai/enchanted-proxy/internal/health"
 	"github.com/eternisai/enchanted-proxy/internal/iap"
 	"github.com/eternisai/enchanted-proxy/internal/invitecode"
 	"github.com/eternisai/enchanted-proxy/internal/keyshare"
@@ -33,6 +36,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/oauth"
+	"github.com/eternisai/enchanted-proxy/internal/probe"
 	"github.com/eternisai/enchanted-proxy/internal/problem_reports"
 	"github.com/eternisai/enchanted-proxy/internal/proxy"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
@@ -45,12 +49,12 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/telegram"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
 	"github.com/eternisai/enchanted-proxy/internal/tools"
-	"github.com/eternisai/enchanted-proxy/internal/fai"
 	"github.com/eternisai/enchanted-proxy/internal/zcash"
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
 )
 
@@ -271,8 +275,7 @@ func main() {
 	// Initialize stream manager for broadcast streaming
 	// CRITICAL: Always create streamManager to ensure streaming continues after client disconnect
 	// StreamManager can work with nil messageService (storage will be disabled but streaming works)
-	var streamManager *streaming.StreamManager
-	streamManager = streaming.NewStreamManager(messageService, logger.WithComponent("streaming"))
+	var streamManager *streaming.StreamManager = streaming.NewStreamManager(messageService, logger.WithComponent("streaming"))
 	log.Info("stream manager initialized",
 		slog.Bool("message_storage_enabled", config.AppConfig.MessageStorageEnabled),
 		slog.Bool("message_service_available", messageService != nil),
@@ -370,6 +373,14 @@ func main() {
 
 	// Initialize model routing fallback service
 	fallbackService := fallback.NewFallbackService(config.AppConfig, logger.WithComponent("fallback"), modelRouter)
+
+	// Initialize model endpoint health probe service
+	var probeService *probe.ProbeService
+	if config.AppConfig.ActiveHealthChecksEnabled {
+		probeService = probe.NewProbeService(logger.WithComponent("probe"), modelRouter)
+	} else {
+		log.Warn("active health checks are disabled via ACTIVE_HEALTH_CHECKS_ENABLED=false")
+	}
 
 	// Initialize key sharing service
 	var keyshareHandler *keyshare.Handler
@@ -552,13 +563,46 @@ func main() {
 			Handler: graphqlRouter,
 		}
 
+	}
+
+	// Graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	if graphqlServer != nil {
 		go func() {
 			log.Info("starting graphql server for telegram", slog.String("port", "8081"))
 			if err := graphqlServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Error("graphql server error", slog.String("error", err.Error()))
+				log.Error("graphql server error, initiating shutdown", slog.String("error", err.Error()))
+				quit <- syscall.SIGTERM
 			}
 		}()
 	}
+
+	// Initialize readiness probe (tracks startup completion + async DB health)
+	readinessProbe := health.NewReadinessProbe(db.DB)
+	readinessProbe.Start()
+
+	// Start status server (Prometheus metrics and health check endpoints)
+	statusAddr := net.JoinHostPort(config.AppConfig.StatusBindAddr, config.AppConfig.StatusBindPort)
+	statusMux := http.NewServeMux()
+	statusMux.Handle("/metrics", promhttp.Handler())
+	statusMux.HandleFunc("/healthz/live", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	statusMux.HandleFunc("/healthz/ready", readinessProbe.Handler())
+	statusServer := &http.Server{
+		Addr:    statusAddr,
+		Handler: statusMux,
+	}
+
+	go func() {
+		log.Info("status server listening", slog.String("addr", statusAddr))
+		if err := statusServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("status server error, initiating shutdown", slog.String("error", err.Error()))
+			quit <- syscall.SIGTERM
+		}
+	}()
 
 	// Start main REST API server
 	restPort := ":" + config.AppConfig.Port
@@ -584,16 +628,22 @@ func main() {
 		}
 
 		if err := restServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error("rest server error", slog.String("error", err.Error()))
-			os.Exit(1)
+			log.Error("rest server error, initiating shutdown", slog.String("error", err.Error()))
+			quit <- syscall.SIGTERM
 		}
 	}()
 
-	// Graceful shutdown
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	readinessProbe.MarkReady()
+	log.Info("server startup complete, readiness probe active")
+
 	<-quit
 	log.Info("shutting down servers")
+
+	// Stop the readiness probe background check
+	readinessProbe.Stop()
+
+	// Shutdown the model endpoint health probe service
+	probeService.Shutdown()
 
 	// Shutdown the model routing fallback service
 	fallbackService.Shutdown()
@@ -611,7 +661,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.AppConfig.ServerShutdownTimeoutSeconds)*time.Second)
 	defer cancel()
 
-	// Shutdown both servers
+	// Shutdown all servers
 	if err := restServer.Shutdown(ctx); err != nil {
 		log.Error("rest server forced to shutdown", slog.String("error", err.Error()))
 	}
@@ -619,6 +669,9 @@ func main() {
 		if err := graphqlServer.Shutdown(ctx); err != nil {
 			log.Error("graphql server forced to shutdown", slog.String("error", err.Error()))
 		}
+	}
+	if err := statusServer.Shutdown(ctx); err != nil {
+		log.Error("status server forced to shutdown", slog.String("error", err.Error()))
 	}
 
 	log.Info("servers exited")
