@@ -730,7 +730,8 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	router.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Client-Platform, X-Chat-ID, X-Message-ID, X-User-Message-ID, X-Encryption-Enabled")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Client-Platform, X-Chat-ID, X-Message-ID, X-User-Message-ID, X-Encryption-Enabled, X-Anonymize")
+		c.Header("Access-Control-Expose-Headers", "X-Anonymizer-Replacements")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
