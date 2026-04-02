@@ -136,22 +136,6 @@ type TelegramChat struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-type UserRequestCountsDaily struct {
-	UserID       string    `json:"userId"`
-	DayBucket    time.Time `json:"dayBucket"`
-	RequestCount int64     `json:"requestCount"`
-}
-
-type UserTokenUsageDaily struct {
-	UserID                string    `json:"userId"`
-	DayBucket             time.Time `json:"dayBucket"`
-	RequestCount          int64     `json:"requestCount"`
-	TotalPromptTokens     int64     `json:"totalPromptTokens"`
-	TotalCompletionTokens int64     `json:"totalCompletionTokens"`
-	TotalTokensUsed       int64     `json:"totalTokensUsed"`
-	TotalPlanTokens       int64     `json:"totalPlanTokens"`
-}
-
 type ZcashInvoice struct {
 	ID               uuid.UUID    `json:"id"`
 	UserID           string       `json:"userId"`

@@ -252,8 +252,11 @@ func handleStreamingWithBroadcast(
 				slog.Int("prompt_tokens", tokenUsage.PromptTokens),
 				slog.Int("completion_tokens", tokenUsage.CompletionTokens),
 				slog.Int("total_tokens", tokenUsage.TotalTokens))
-		} else {
-			log.Warn("no token usage available from session",
+		} else if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			log.Error("MISSING TOKEN USAGE in streaming response — quota tracking is broken for this request",
+				slog.String("model", model),
+				slog.String("provider", provider.Name),
+				slog.Int("status_code", resp.StatusCode),
 				slog.String("chat_id", chatID),
 				slog.String("message_id", messageID))
 		}

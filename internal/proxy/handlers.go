@@ -763,11 +763,12 @@ func handleStreamingDirect(
 				Provider: provider.Name,
 			}
 			trackingService.LogRequestWithPlanTokensAsync(ctx, info, tokenData) //nolint:errcheck
-		} else if sessionUsage == nil {
-			slog.Warn("[TOKEN] request logged with NO token usage",
+		} else if sessionUsage == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			slog.Error("[TOKEN] MISSING TOKEN USAGE in streaming response — quota tracking is broken for this request",
 				slog.String("user_id", userID),
 				slog.String("model", model),
 				slog.String("provider", provider.Name),
+				slog.Int("status_code", resp.StatusCode),
 			)
 		}
 
@@ -878,13 +879,12 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 		// CRITICAL FIX: Use defer to ALWAYS log, even if client disconnects early
 		// Without this, streaming requests were not logged when client disconnected before [DONE]
 		defer func() {
-			// Debug: Log why we might have NULL tokens
-			if tokenUsage == nil {
-				log.Warn("no token usage captured from streaming response",
+			if tokenUsage == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				log.Error("MISSING TOKEN USAGE in streaming response — quota tracking is broken for this request",
 					slog.String("model", model),
 					slog.String("provider", provider.Name),
-					slog.Int("content_length", fullContent.Len()),
-					slog.String("reason", "client_disconnect_or_missing_usage_chunk"))
+					slog.Int("status_code", resp.StatusCode),
+					slog.Int("content_length", fullContent.Len()))
 			}
 
 			logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, nil, clientCtx)
@@ -961,9 +961,11 @@ func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model s
 		tokenUsage = extractTokenUsage(responseBody)
 		content = extractContentFromResponse(responseBody)
 
-		if tokenUsage == nil {
-			log.Debug("No token usage found in response",
-				slog.Bool("is_streaming", false),
+		if tokenUsage == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			log.Error("MISSING TOKEN USAGE in non-streaming response — quota tracking is broken for this request",
+				slog.String("model", model),
+				slog.String("provider", provider.Name),
+				slog.Int("status_code", resp.StatusCode),
 				slog.Int("response_size", len(responseBody)),
 				slog.String("content_type", resp.Header.Get("Content-Type")),
 			)
@@ -1045,8 +1047,6 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 		Provider: provider,
 	}
 
-	// Always log the request, even without token usage
-	// This ensures errors, audio, images, and other endpoints are tracked
 	if tokenUsage != nil && multiplier > 0 {
 		planTokens := int(float64(tokenUsage.TotalTokens) * multiplier)
 
@@ -1098,23 +1098,6 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 			if loggerValue := c.Value("logger"); loggerValue != nil {
 				if log, ok := loggerValue.(*logger.Logger); ok {
 					log.Error("failed to log request to database",
-						slog.String("user_id", userID),
-						slog.String("endpoint", endpoint),
-						slog.String("error", err.Error()))
-				}
-			}
-		}
-	} else {
-		slog.Warn("[TOKEN] request logged with NO token usage",
-			slog.String("user_id", userID),
-			slog.String("model", model),
-			slog.String("provider", provider),
-			slog.String("endpoint", endpoint),
-		)
-		if err := trackingService.LogRequestAsync(c.Request.Context(), info); err != nil {
-			if loggerValue := c.Value("logger"); loggerValue != nil {
-				if log, ok := loggerValue.(*logger.Logger); ok {
-					log.Error("failed to log request to database (no token data)",
 						slog.String("user_id", userID),
 						slog.String("endpoint", endpoint),
 						slog.String("error", err.Error()))

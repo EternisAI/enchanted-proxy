@@ -8,7 +8,6 @@ package pgdb
 import (
 	"context"
 	"database/sql"
-	"time"
 )
 
 const createRequestLog = `-- name: CreateRequestLog :exec
@@ -97,19 +96,6 @@ func (q *Queries) GetUserFallbackPlanTokensToday(ctx context.Context, arg GetUse
 	return plan_tokens, err
 }
 
-const getUserLifetimeTokenUsage = `-- name: GetUserLifetimeTokenUsage :one
-SELECT COALESCE(SUM(total_tokens), 0)::BIGINT as total_tokens
-FROM request_logs
-WHERE user_id = $1 AND total_tokens IS NOT NULL
-`
-
-func (q *Queries) GetUserLifetimeTokenUsage(ctx context.Context, userID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserLifetimeTokenUsage, userID)
-	var total_tokens int64
-	err := row.Scan(&total_tokens)
-	return total_tokens, err
-}
-
 const getUserPlanTokensThisMonth = `-- name: GetUserPlanTokensThisMonth :one
 SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
 FROM request_logs
@@ -147,113 +133,18 @@ func (q *Queries) GetUserPlanTokensThisWeek(ctx context.Context, userID string) 
 }
 
 const getUserPlanTokensToday = `-- name: GetUserPlanTokensToday :one
-SELECT COALESCE(SUM(total_plan_tokens), 0)::BIGINT as plan_tokens
-FROM user_token_usage_daily
+SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
+FROM request_logs
 WHERE user_id = $1
-  AND day_bucket = DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
+  AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
+  AND plan_tokens IS NOT NULL
 `
 
+// Queries request_logs directly for real-time data (not materialized view).
+// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast.
 func (q *Queries) GetUserPlanTokensToday(ctx context.Context, userID string) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getUserPlanTokensToday, userID)
 	var plan_tokens int64
 	err := row.Scan(&plan_tokens)
 	return plan_tokens, err
-}
-
-const getUserRequestCountInLastDay = `-- name: GetUserRequestCountInLastDay :one
-SELECT COALESCE(SUM(request_count), 0)::BIGINT as total_requests
-FROM user_request_counts_daily
-WHERE user_id = $1
-  AND day_bucket = DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
-`
-
-func (q *Queries) GetUserRequestCountInLastDay(ctx context.Context, userID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserRequestCountInLastDay, userID)
-	var total_requests int64
-	err := row.Scan(&total_requests)
-	return total_requests, err
-}
-
-const getUserRequestCountInTimeWindow = `-- name: GetUserRequestCountInTimeWindow :one
-SELECT COALESCE(SUM(request_count), 0)::BIGINT as total_requests
-FROM user_request_counts_daily
-WHERE user_id = $1
-  AND day_bucket >= $2
-`
-
-type GetUserRequestCountInTimeWindowParams struct {
-	UserID    string    `json:"userId"`
-	DayBucket time.Time `json:"dayBucket"`
-}
-
-func (q *Queries) GetUserRequestCountInTimeWindow(ctx context.Context, arg GetUserRequestCountInTimeWindowParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserRequestCountInTimeWindow, arg.UserID, arg.DayBucket)
-	var total_requests int64
-	err := row.Scan(&total_requests)
-	return total_requests, err
-}
-
-const getUserTokenUsageInLastDay = `-- name: GetUserTokenUsageInLastDay :one
-SELECT COALESCE(SUM(total_tokens_used), 0)::BIGINT as total_tokens
-FROM user_token_usage_daily
-WHERE user_id = $1
-  AND day_bucket = DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
-`
-
-func (q *Queries) GetUserTokenUsageInLastDay(ctx context.Context, userID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserTokenUsageInLastDay, userID)
-	var total_tokens int64
-	err := row.Scan(&total_tokens)
-	return total_tokens, err
-}
-
-const getUserTokenUsageInTimeWindow = `-- name: GetUserTokenUsageInTimeWindow :one
-SELECT COALESCE(SUM(total_tokens_used), 0)::BIGINT as total_tokens
-FROM user_token_usage_daily
-WHERE user_id = $1
-  AND day_bucket >= $2
-`
-
-type GetUserTokenUsageInTimeWindowParams struct {
-	UserID    string    `json:"userId"`
-	DayBucket time.Time `json:"dayBucket"`
-}
-
-func (q *Queries) GetUserTokenUsageInTimeWindow(ctx context.Context, arg GetUserTokenUsageInTimeWindowParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserTokenUsageInTimeWindow, arg.UserID, arg.DayBucket)
-	var total_tokens int64
-	err := row.Scan(&total_tokens)
-	return total_tokens, err
-}
-
-const getUserTokenUsageToday = `-- name: GetUserTokenUsageToday :one
-SELECT COALESCE(SUM(total_tokens_used), 0)::BIGINT as total_tokens
-FROM user_token_usage_daily
-WHERE user_id = $1
-  AND day_bucket = DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
-`
-
-func (q *Queries) GetUserTokenUsageToday(ctx context.Context, userID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserTokenUsageToday, userID)
-	var total_tokens int64
-	err := row.Scan(&total_tokens)
-	return total_tokens, err
-}
-
-const refreshUserRequestCountsView = `-- name: RefreshUserRequestCountsView :exec
-REFRESH MATERIALIZED VIEW CONCURRENTLY user_request_counts_daily
-`
-
-func (q *Queries) RefreshUserRequestCountsView(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, refreshUserRequestCountsView)
-	return err
-}
-
-const refreshUserTokenUsageView = `-- name: RefreshUserTokenUsageView :exec
-REFRESH MATERIALIZED VIEW CONCURRENTLY user_token_usage_daily
-`
-
-func (q *Queries) RefreshUserTokenUsageView(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, refreshUserTokenUsageView)
-	return err
 }
