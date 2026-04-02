@@ -238,30 +238,31 @@ func handleStreamingWithBroadcast(
 		}
 	}
 
-	// Log request to database with token usage
-	// Retrieve token usage from completed session
-	var tokenUsage *Usage
-	if sessionUsage := session.GetTokenUsage(); sessionUsage != nil {
-		tokenUsage = &Usage{
-			PromptTokens:     sessionUsage.PromptTokens,
-			CompletionTokens: sessionUsage.CompletionTokens,
-			TotalTokens:      sessionUsage.TotalTokens,
+	// Only log tokens for the original subscriber to avoid double-counting
+	// when clients reconnect (late joiners) to the same stream session
+	if isNew {
+		var tokenUsage *Usage
+		if sessionUsage := session.GetTokenUsage(); sessionUsage != nil {
+			tokenUsage = &Usage{
+				PromptTokens:     sessionUsage.PromptTokens,
+				CompletionTokens: sessionUsage.CompletionTokens,
+				TotalTokens:      sessionUsage.TotalTokens,
+			}
+			log.Debug("logging request with token usage from session",
+				slog.Int("prompt_tokens", tokenUsage.PromptTokens),
+				slog.Int("completion_tokens", tokenUsage.CompletionTokens),
+				slog.Int("total_tokens", tokenUsage.TotalTokens))
+		} else {
+			log.Warn("no token usage available from session",
+				slog.String("chat_id", chatID),
+				slog.String("message_id", messageID))
 		}
-		log.Debug("logging request with token usage from session",
-			slog.Int("prompt_tokens", tokenUsage.PromptTokens),
-			slog.Int("completion_tokens", tokenUsage.CompletionTokens),
-			slog.Int("total_tokens", tokenUsage.TotalTokens))
-	} else {
-		log.Warn("no token usage available from session",
-			slog.String("chat_id", chatID),
-			slog.String("message_id", messageID))
-	}
 
-	// Log with multiplier if provider is available
-	if provider != nil {
-		logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
-	} else {
-		logRequestToDatabase(c, trackingService, model, tokenUsage)
+		if provider != nil {
+			logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
+		} else {
+			logRequestToDatabase(c, trackingService, model, tokenUsage)
+		}
 	}
 
 	return nil
