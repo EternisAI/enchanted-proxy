@@ -180,9 +180,10 @@ func ProxyHandler(
 			}
 		}
 
-		// For Eternis models (GLM, Dolphin): Add stream_options to enable usage reporting
-		// vLLM and similar servers need explicit flag to include usage in streaming responses
-		if provider.Name == "Eternis" && len(requestBody) > 0 {
+		// Add stream_options to enable usage reporting in streaming responses.
+		// Many OpenAI-compatible providers (vLLM, Tinfoil, etc.) only include token
+		// usage in SSE chunks when explicitly requested.
+		if len(requestBody) > 0 {
 			var reqBody map[string]interface{}
 			if err := json.Unmarshal(requestBody, &reqBody); err == nil {
 				// Only add for streaming requests
