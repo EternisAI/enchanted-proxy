@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -583,7 +584,7 @@ func main() {
 	readinessProbe.Start()
 
 	// Start status server (Prometheus metrics and health check endpoints)
-	statusAddr := config.AppConfig.StatusBindAddr + ":" + config.AppConfig.StatusBindPort
+	statusAddr := net.JoinHostPort(config.AppConfig.StatusBindAddr, config.AppConfig.StatusBindPort)
 	statusMux := http.NewServeMux()
 	statusMux.Handle("/metrics", promhttp.Handler())
 	statusMux.HandleFunc("/healthz/live", func(w http.ResponseWriter, r *http.Request) {
