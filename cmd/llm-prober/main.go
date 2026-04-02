@@ -86,8 +86,10 @@ func main() {
 	})
 
 	server := &http.Server{
-		Addr:    *listenAddr,
-		Handler: mux,
+		Addr:              *listenAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	go func() {

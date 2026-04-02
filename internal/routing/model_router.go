@@ -476,7 +476,7 @@ func (mr *ModelRouter) getModelEndpointProvider(model string, platform string) *
 	// the selected provider endpoint configuration.
 	// This list of endpoints contains values and we are updating and returning a copy.
 	if provider.Name == "OpenRouter" {
-		apiKey := mr.getOpenRouterAPIKey(platform)
+		apiKey := mr.GetOpenRouterAPIKey(platform)
 
 		if apiKey == "" {
 			mr.logger.Warn("no API key configured for OpenRouter")
@@ -492,9 +492,9 @@ func (mr *ModelRouter) getModelEndpointProvider(model string, platform string) *
 	return provider
 }
 
-// getOpenRouterAPIKey returns the appropriate OpenRouter API key for the platform.
+// GetOpenRouterAPIKey returns the appropriate OpenRouter API key for the platform.
 // Falls back to the other platform's key if the requested platform key is not configured.
-func (mr *ModelRouter) getOpenRouterAPIKey(platform string) string {
+func (mr *ModelRouter) GetOpenRouterAPIKey(platform string) string {
 	if apiKeys, providerExists := mr.apiKeys["OpenRouter"]; providerExists {
 		// Try resolving the key for the target platform
 		if key := apiKeys[platform]; key != "" {

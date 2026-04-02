@@ -101,8 +101,8 @@ func TestNewModelRouter(t *testing.T) {
 		t.Fatal("routes map is empty")
 	}
 
-	if router.getOpenRouterAPIKey("desktop") != OpenRouterDesktopAPIKey ||
-		router.getOpenRouterAPIKey("mobile") != OpenRouterMobileAPIKey {
+	if router.GetOpenRouterAPIKey("desktop") != OpenRouterDesktopAPIKey ||
+		router.GetOpenRouterAPIKey("mobile") != OpenRouterMobileAPIKey {
 		t.Fatal("platform api keys for OpenRouter are not processed correctly")
 	}
 }

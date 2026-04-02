@@ -76,6 +76,11 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 			}
 
 			effectiveModel := endpoint.Provider.Model
+
+			// Dedupe by (base_url, effective_model). This is sufficient because each
+			// provider has a single API key (base URL uniquely identifies credentials),
+			// and when the same effective model appears under multiple canonical names
+			// the first-encountered entry wins by design (config declaration order).
 			key := strings.TrimRight(endpoint.Provider.BaseURL, "/") + "|" + effectiveModel
 
 			if existing, exists := seen[key]; exists {
@@ -88,8 +93,24 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 				continue
 			}
 
+			// OpenRouter endpoints have empty API keys in the route table because
+			// the key is normally resolved per-request based on platform. For probes
+			// we resolve it once here (defaulting to mobile).
+			provider := endpoint.Provider
+			if provider.Name == "OpenRouter" {
+				apiKey := router.GetOpenRouterAPIKey("mobile")
+				if apiKey == "" {
+					logger.Warn("skipping OpenRouter probe: no API key configured",
+						slog.String("model", modelCfg.Name))
+					continue
+				}
+				provCopy := *provider
+				provCopy.APIKey = apiKey
+				provider = &provCopy
+			}
+
 			target := &probeTarget{
-				provider:       endpoint.Provider,
+				provider:       provider,
 				probe:          endpoint.Probe,
 				providerName:   endpoint.Provider.Name,
 				canonicalModel: modelCfg.Name,
