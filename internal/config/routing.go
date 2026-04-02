@@ -3,8 +3,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-yaml"
@@ -387,8 +389,12 @@ type ProbeConfig struct {
 	// Defaults to true when the probe section is omitted or enabled is not specified.
 	Enabled *bool `yaml:"enabled,omitempty"`
 
-	// Interval is the time between probe requests. Minimum 30s, default 60s.
+	// Interval is the time between probe requests. Minimum 30s, default 15m.
 	Interval time.Duration `yaml:"interval,omitempty"`
+
+	// RetryInterval is the time between probe requests after a failure.
+	// Minimum 30s, maximum is clamped to Interval. Default: 1m.
+	RetryInterval time.Duration `yaml:"retry_interval,omitempty"`
 
 	// Prompt is the user message sent in the probe request. Default: "Say OK"
 	Prompt string `yaml:"prompt,omitempty"`
@@ -398,7 +404,7 @@ type ProbeConfig struct {
 	// When nil (field omitted), the default "OK" is used.
 	ExpectedResponse *string `yaml:"expected_response,omitempty"`
 
-	// MaxTokens limits the response length. Default: 3.
+	// MaxTokens limits the response length. Default: 100.
 	MaxTokens int `yaml:"max_tokens,omitempty"`
 
 	// Temperature controls response randomness. Default: 0 (deterministic).
@@ -413,11 +419,12 @@ type ProbeConfig struct {
 }
 
 const (
-	DefaultProbeInterval         = 60 * time.Second
+	DefaultProbeInterval         = 15 * time.Minute
 	MinProbeInterval             = 30 * time.Second
+	DefaultProbeRetryInterval    = 1 * time.Minute
 	DefaultProbePrompt           = "Say OK"
 	DefaultProbeExpectedResponse = "OK"
-	DefaultProbeMaxTokens        = 3
+	DefaultProbeMaxTokens        = 100
 	DefaultProbeTemperature      = 0.0
 )
 
@@ -434,6 +441,16 @@ func (cfg *ProbeConfig) Validate() error {
 		cfg.Interval = MinProbeInterval
 	}
 
+	if cfg.RetryInterval <= 0 {
+		cfg.RetryInterval = DefaultProbeRetryInterval
+	}
+	if cfg.RetryInterval < MinProbeInterval {
+		cfg.RetryInterval = MinProbeInterval
+	}
+	if cfg.RetryInterval > cfg.Interval {
+		cfg.RetryInterval = cfg.Interval
+	}
+
 	if cfg.Prompt == "" {
 		cfg.Prompt = DefaultProbePrompt
 	}
@@ -441,6 +458,16 @@ func (cfg *ProbeConfig) Validate() error {
 	if cfg.ExpectedResponse == nil {
 		defaultResp := DefaultProbeExpectedResponse
 		cfg.ExpectedResponse = &defaultResp
+	}
+
+	// Trim whitespace from expected response to avoid false mismatches with
+	// thinking models that pad their output with whitespace.
+	if cfg.ExpectedResponse != nil && *cfg.ExpectedResponse != "" {
+		trimmed := strings.TrimSpace(*cfg.ExpectedResponse)
+		if trimmed != *cfg.ExpectedResponse {
+			log.Printf("Warning: probe expected_response has leading/trailing whitespace, trimming %q to %q", *cfg.ExpectedResponse, trimmed)
+			cfg.ExpectedResponse = &trimmed
+		}
 	}
 
 	if cfg.MaxTokens <= 0 {

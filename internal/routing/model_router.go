@@ -139,6 +139,7 @@ type FallbackConfig struct {
 type ProbeConfig struct {
 	Enabled          bool
 	Interval         time.Duration
+	RetryInterval    time.Duration
 	Prompt           string
 	ExpectedResponse *string // nil = no content check, non-nil = check substring
 	MaxTokens        int
@@ -152,6 +153,7 @@ func defaultProbeConfig() *ProbeConfig {
 	return &ProbeConfig{
 		Enabled:          true,
 		Interval:         config.DefaultProbeInterval,
+		RetryInterval:    config.DefaultProbeRetryInterval,
 		Prompt:           config.DefaultProbePrompt,
 		ExpectedResponse: &defaultResp,
 		MaxTokens:        config.DefaultProbeMaxTokens,
@@ -163,12 +165,13 @@ func defaultProbeConfig() *ProbeConfig {
 // probeConfigFromConfig converts a validated config.ProbeConfig to a routing.ProbeConfig.
 func probeConfigFromConfig(cfg *config.ProbeConfig) *ProbeConfig {
 	p := &ProbeConfig{
-		Enabled:     *cfg.Enabled,
-		Interval:    cfg.Interval,
-		Prompt:      cfg.Prompt,
-		MaxTokens:   cfg.MaxTokens,
-		Temperature: *cfg.Temperature,
-		Thinking:    cfg.Thinking,
+		Enabled:       *cfg.Enabled,
+		Interval:      cfg.Interval,
+		RetryInterval: cfg.RetryInterval,
+		Prompt:        cfg.Prompt,
+		MaxTokens:     cfg.MaxTokens,
+		Temperature:   *cfg.Temperature,
+		Thinking:      cfg.Thinking,
 	}
 
 	// Distinguish "explicitly set to empty" from "default OK".

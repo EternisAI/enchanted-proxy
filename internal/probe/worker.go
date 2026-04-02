@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/logger"
-	"github.com/eternisai/enchanted-proxy/internal/metrics"
 	"github.com/eternisai/enchanted-proxy/internal/routing"
 )
 
@@ -48,23 +47,46 @@ func (w *probeWorker) run() {
 		slog.String("provider", w.provider),
 		slog.String("model", w.model),
 		slog.Duration("interval", w.probe.Interval),
+		slog.Duration("retry_interval", w.probe.RetryInterval),
 		slog.Duration("initial_jitter", jitter))
 
 	// Wait for jitter before the first probe, respecting shutdown.
+	var success bool
 	select {
 	case <-time.After(jitter):
-		w.runProbe()
+		success = w.runProbe()
 	case <-w.service.shutdown:
 		return
 	}
 
-	ticker := time.NewTicker(w.probe.Interval)
+	healthy := success
+	currentInterval := w.probe.Interval
+	if !healthy {
+		currentInterval = w.probe.RetryInterval
+	}
+
+	ticker := time.NewTicker(currentInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			w.runProbe()
+			success = w.runProbe()
+			if success && !healthy {
+				healthy = true
+				ticker.Reset(w.probe.Interval)
+				w.logger.Info("probe recovered, switching to normal interval",
+					slog.String("provider", w.provider),
+					slog.String("model", w.model),
+					slog.Duration("interval", w.probe.Interval))
+			} else if !success && healthy {
+				healthy = false
+				ticker.Reset(w.probe.RetryInterval)
+				w.logger.Warn("probe failed, switching to retry interval",
+					slog.String("provider", w.provider),
+					slog.String("model", w.model),
+					slog.Duration("retry_interval", w.probe.RetryInterval))
+			}
 		case <-w.service.shutdown:
 			w.logger.Debug("stopped probe worker",
 				slog.String("provider", w.provider),
@@ -74,7 +96,8 @@ func (w *probeWorker) run() {
 	}
 }
 
-func (w *probeWorker) runProbe() {
+// runProbe executes a single probe request. Returns true if the probe succeeded (2xx status).
+func (w *probeWorker) runProbe() bool {
 	reqBody := buildProbeRequestBody(w.endpoint, w.probe)
 
 	bodyBytes, err := json.Marshal(reqBody)
@@ -83,7 +106,7 @@ func (w *probeWorker) runProbe() {
 			slog.String("provider", w.provider),
 			slog.String("model", w.model),
 			slog.String("error", err.Error()))
-		return
+		return false
 	}
 
 	url := strings.TrimRight(w.endpoint.BaseURL, "/") + "/chat/completions"
@@ -93,7 +116,7 @@ func (w *probeWorker) runProbe() {
 			slog.String("provider", w.provider),
 			slog.String("model", w.model),
 			slog.String("error", err.Error()))
-		return
+		return false
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -108,29 +131,29 @@ func (w *probeWorker) runProbe() {
 	if err != nil {
 		// Don't record metrics or log warnings for shutdown-induced cancellations.
 		if w.ctx.Err() != nil {
-			return
+			return false
 		}
-		metrics.RecordProbeResult(w.provider, w.model, 0, duration.Seconds(), false, false, nil)
+		recordProbeResult(w.provider, w.model, 0, duration.Seconds(), false, false, nil)
 		w.logger.Warn("probe request failed",
 			slog.String("provider", w.provider),
 			slog.String("model", w.model),
 			slog.Duration("duration", duration),
 			slog.String("error", err.Error()))
-		return
+		return false
 	}
 	defer resp.Body.Close()
 
 	// Read response body (limited).
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		metrics.RecordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), false, false, nil)
+		recordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), false, false, nil)
 		w.logger.Warn("failed to read probe response body",
 			slog.String("provider", w.provider),
 			slog.String("model", w.model),
 			slog.Int("status", resp.StatusCode),
 			slog.Duration("duration", duration),
 			slog.String("error", err.Error()))
-		return
+		return false
 	}
 
 	// Parse the response to extract content and token usage.
@@ -138,19 +161,22 @@ func (w *probeWorker) runProbe() {
 
 	// Check content match if configured and response was successful.
 	// Content checking is only active when ExpectedResponse is non-nil AND non-empty.
+	// Trim whitespace from response content to handle thinking models that pad output.
 	contentMatch := false
 	hasExpectedResponse := w.probe.ExpectedResponse != nil && *w.probe.ExpectedResponse != ""
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && hasExpectedResponse {
 		contentMatch = strings.Contains(
-			strings.ToLower(parsed.content),
+			strings.ToLower(strings.TrimSpace(parsed.content)),
 			strings.ToLower(*w.probe.ExpectedResponse),
 		)
 	}
 
-	metrics.RecordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), contentMatch, hasExpectedResponse, parsed.usage)
+	recordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), contentMatch, hasExpectedResponse, parsed.usage)
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	success := resp.StatusCode >= 200 && resp.StatusCode < 300
+
+	if success {
 		if hasExpectedResponse && !contentMatch {
 			w.logger.Warn("probe succeeded but response content unexpected",
 				slog.String("provider", w.provider),
@@ -174,6 +200,8 @@ func (w *probeWorker) runProbe() {
 			slog.Duration("duration", duration),
 			slog.String("body", truncate(string(respBody), 200)))
 	}
+
+	return success
 }
 
 // chatCompletionResponse is a minimal representation of the OpenAI chat completion response.
@@ -192,7 +220,7 @@ type chatCompletionResponse struct {
 // parsedResponse holds the extracted fields from a chat completion response.
 type parsedResponse struct {
 	content string
-	usage   *metrics.ProbeTokenUsage
+	usage   *probeTokenUsage
 }
 
 // parseResponse extracts message content and token usage from a chat completion response body.
@@ -207,7 +235,7 @@ func parseResponse(body []byte) parsedResponse {
 		result.content = resp.Choices[0].Message.Content
 	}
 	if resp.Usage != nil {
-		result.usage = &metrics.ProbeTokenUsage{
+		result.usage = &probeTokenUsage{
 			PromptTokens:     resp.Usage.PromptTokens,
 			CompletionTokens: resp.Usage.CompletionTokens,
 		}
