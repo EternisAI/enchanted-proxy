@@ -76,6 +76,10 @@ func New(config Config) *Logger {
 						Value: slog.StringValue(a.Value.Time().Format(time.RFC3339)),
 					}
 				}
+				// Human-readable durations instead of nanoseconds.
+				if a.Value.Kind() == slog.KindDuration {
+					return slog.String(a.Key, a.Value.Duration().String())
+				}
 				return a
 			},
 		}

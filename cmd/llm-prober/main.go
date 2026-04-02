@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -103,10 +104,8 @@ func main() {
 	appLog.Info("received signal, shutting down", slog.String("signal", sig.String()))
 
 	probeService.Shutdown()
-	server.Close()
 
-	// Drain any in-flight HTTP connections.
-	ctx, cancel := context.WithTimeout(context.Background(), 5)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	server.Shutdown(ctx)
 

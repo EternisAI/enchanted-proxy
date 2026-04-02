@@ -50,6 +50,7 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 	// so the first canonical name encountered for each (base_url, effective_model) wins.
 	seen := make(map[string]*probeTarget)
 	var targets []*probeTarget
+	duplicatesSkipped := 0
 
 	for _, modelCfg := range models {
 		route, exists := routes[modelCfg.Name]
@@ -83,6 +84,7 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 					slog.String("effective_model", effectiveModel),
 					slog.String("provider", endpoint.Provider.Name),
 					slog.String("dedup_canonical", existing.canonicalModel))
+				duplicatesSkipped++
 				continue
 			}
 
@@ -118,7 +120,7 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 
 	logger.Info("probe service started",
 		slog.Int("workers", len(targets)),
-		slog.Int("deduplicated", len(seen)))
+		slog.Int("duplicates_skipped", duplicatesSkipped))
 
 	return s
 }
