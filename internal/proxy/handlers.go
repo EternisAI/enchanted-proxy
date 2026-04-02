@@ -737,12 +737,23 @@ func handleStreamingDirect(
 		// Log tokens
 		sessionUsage := session.GetTokenUsage()
 		if sessionUsage != nil && trackingService != nil {
+			planTokens := int(float64(sessionUsage.TotalTokens) * provider.TokenMultiplier)
+			slog.Info("[TOKEN] request logged",
+				slog.String("user_id", userID),
+				slog.String("model", model),
+				slog.String("provider", provider.Name),
+				slog.Int("prompt_tokens", sessionUsage.PromptTokens),
+				slog.Int("completion_tokens", sessionUsage.CompletionTokens),
+				slog.Int("total_tokens", sessionUsage.TotalTokens),
+				slog.Float64("multiplier", provider.TokenMultiplier),
+				slog.Int("plan_tokens", planTokens),
+			)
 			tokenData := &request_tracking.TokenUsageWithMultiplier{
 				PromptTokens:     sessionUsage.PromptTokens,
 				CompletionTokens: sessionUsage.CompletionTokens,
 				TotalTokens:      sessionUsage.TotalTokens,
 				Multiplier:       provider.TokenMultiplier,
-				PlanTokens:       int(float64(sessionUsage.TotalTokens) * provider.TokenMultiplier),
+				PlanTokens:       planTokens,
 			}
 			info := request_tracking.RequestInfo{
 				UserID:   userID,
@@ -751,6 +762,12 @@ func handleStreamingDirect(
 				Provider: provider.Name,
 			}
 			trackingService.LogRequestWithPlanTokensAsync(ctx, info, tokenData) //nolint:errcheck
+		} else if sessionUsage == nil {
+			slog.Warn("[TOKEN] request logged with NO token usage",
+				slog.String("user_id", userID),
+				slog.String("model", model),
+				slog.String("provider", provider.Name),
+			)
 		}
 
 		log.Info("direct streaming: completed",
@@ -1030,8 +1047,19 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 	// Always log the request, even without token usage
 	// This ensures errors, audio, images, and other endpoints are tracked
 	if tokenUsage != nil && multiplier > 0 {
-		// Best case: Log with plan tokens
 		planTokens := int(float64(tokenUsage.TotalTokens) * multiplier)
+
+		slog.Info("[TOKEN] request logged",
+			slog.String("user_id", userID),
+			slog.String("model", model),
+			slog.String("provider", provider),
+			slog.Int("prompt_tokens", tokenUsage.PromptTokens),
+			slog.Int("completion_tokens", tokenUsage.CompletionTokens),
+			slog.Int("total_tokens", tokenUsage.TotalTokens),
+			slog.Float64("multiplier", multiplier),
+			slog.Int("plan_tokens", planTokens),
+		)
+
 		tokenData := &request_tracking.TokenUsageWithMultiplier{
 			PromptTokens:     tokenUsage.PromptTokens,
 			CompletionTokens: tokenUsage.CompletionTokens,
@@ -1052,7 +1080,14 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 			}
 		}
 	} else if tokenUsage != nil {
-		// Fallback: Log with tokens but no multiplier
+		slog.Warn("[TOKEN] request logged WITHOUT multiplier",
+			slog.String("user_id", userID),
+			slog.String("model", model),
+			slog.String("provider", provider),
+			slog.Int("prompt_tokens", tokenUsage.PromptTokens),
+			slog.Int("completion_tokens", tokenUsage.CompletionTokens),
+			slog.Int("total_tokens", tokenUsage.TotalTokens),
+		)
 		tokenData := &request_tracking.TokenUsage{
 			PromptTokens:     tokenUsage.PromptTokens,
 			CompletionTokens: tokenUsage.CompletionTokens,
@@ -1069,8 +1104,12 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 			}
 		}
 	} else {
-		// Critical fix: Log request even without token usage
-		// This captures errors, audio, images, and requests where provider didn't return usage
+		slog.Warn("[TOKEN] request logged with NO token usage",
+			slog.String("user_id", userID),
+			slog.String("model", model),
+			slog.String("provider", provider),
+			slog.String("endpoint", endpoint),
+		)
 		if err := trackingService.LogRequestAsync(c.Request.Context(), info); err != nil {
 			if loggerValue := c.Value("logger"); loggerValue != nil {
 				if log, ok := loggerValue.(*logger.Logger); ok {
