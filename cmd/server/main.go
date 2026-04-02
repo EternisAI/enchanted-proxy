@@ -379,7 +379,7 @@ func main() {
 	if config.AppConfig.ActiveHealthChecksEnabled {
 		probeService = probe.NewProbeService(logger.WithComponent("probe"), modelRouter)
 	} else {
-		logger.Warn("active health checks are disabled via ACTIVE_HEALTH_CHECKS_ENABLED=false")
+		log.Warn("active health checks are disabled via ACTIVE_HEALTH_CHECKS_ENABLED=false")
 	}
 
 	// Initialize key sharing service
@@ -628,8 +628,8 @@ func main() {
 		}
 
 		if err := restServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error("rest server error", slog.String("error", err.Error()))
-			os.Exit(1)
+			log.Error("rest server error, initiating shutdown", slog.String("error", err.Error()))
+			quit <- syscall.SIGTERM
 		}
 	}()
 
