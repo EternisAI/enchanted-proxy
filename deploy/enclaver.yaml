@@ -23,7 +23,6 @@ egress:
   allow:
   # API client endpoints
   - api.telegram.org
-  - backend.composio.dev
   # App Store Server API (IAP verification)
   - api.storekit.itunes.apple.com
   - api.storekit-sandbox.itunes.apple.com
@@ -37,10 +36,6 @@ egress:
   - api.perplexity.ai
   - api.replicate.com
   - www.googleapis.com
-  # OAuth API client endpoints
-  - api.twitter.com
-  - oauth2.googleapis.com
-  - slack.com
   # Proxied API endpoints
   - api.kraken.com
   - api.openai.com
@@ -99,8 +94,6 @@ env:
 - APPSTORE_BUNDLE_ID
 - APPSTORE_ISSUER_ID
 - ATTESTATION_SERVER_LOG_LEVEL
-- COMPOSIO_API_KEY
-- COMPOSIO_TWITTER_CONFIG
 - CORS_ALLOWED_ORIGINS
 - DATABASE_URL
 - DB_CONN_MAX_IDLE_TIME_MINUTES
@@ -124,8 +117,6 @@ env:
 - FIREBASE_CRED_JSON
 - FIREBASE_PROJECT_ID
 - GIN_MODE
-- GOOGLE_CLIENT_ID
-- GOOGLE_CLIENT_SECRET
 - INTERNAL_API_KEY
 - JWT_JWKS_URL
 - LINEAR_API_KEY
@@ -170,7 +161,6 @@ env:
 - TEMPORAL_ENDPOINT
 - TEMPORAL_NAMESPACE
 - TINFOIL_API_KEY
-- TWITTER_CLIENT_ID
 - VALIDATOR_TYPE
 - ZCASH_BACKEND_API_KEY
 - ZCASH_BACKEND_SKIP_TLS_VERIFY
