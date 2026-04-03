@@ -45,6 +45,9 @@ type probeResult struct {
 	expected        string
 	got             string
 
+	// Token usage (nil if not available or non-2xx).
+	usage *probeTokenUsage
+
 	// Error response body (on non-2xx, truncated).
 	body string
 }
@@ -128,6 +131,11 @@ func (w *probeWorker) logStateChange(result probeResult) {
 			slog.String("model", w.model),
 			slog.Int("status", result.statusCode),
 			slog.Duration("duration", result.duration),
+		}
+		if result.usage != nil {
+			attrs = append(attrs,
+				slog.Int("prompt_tokens", result.usage.PromptTokens),
+				slog.Int("completion_tokens", result.usage.CompletionTokens))
 		}
 		if result.contentMismatch {
 			attrs = append(attrs,
@@ -248,6 +256,7 @@ func (w *probeWorker) runProbe() probeResult {
 		success:    success,
 		statusCode: resp.StatusCode,
 		duration:   duration,
+		usage:      parsed.usage,
 	}
 
 	if success && hasExpectedResponse && !contentMatch {
