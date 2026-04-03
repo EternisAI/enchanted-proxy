@@ -44,6 +44,102 @@ func TestIsOpenAIReasoningModel(t *testing.T) {
 	}
 }
 
+func TestBuildResponsesProbeRequestBody(t *testing.T) {
+	tests := []struct {
+		name            string
+		endpoint        *routing.ProviderConfig
+		probe           *routing.ProbeConfig
+		wantReasoning   string // expected reasoning.effort value, "" if key should be absent
+	}{
+		{
+			name:     "basic responses probe",
+			endpoint: &routing.ProviderConfig{Model: "gpt-5.4-pro"},
+			probe: &routing.ProbeConfig{
+				Prompt:    "Say OK",
+				MaxTokens: 100,
+				Thinking:  false,
+			},
+			wantReasoning: "low",
+		},
+		{
+			name:     "thinking enabled — no reasoning suppression",
+			endpoint: &routing.ProviderConfig{Model: "gpt-5.4-pro"},
+			probe: &routing.ProbeConfig{
+				Prompt:    "Say OK",
+				MaxTokens: 100,
+				Thinking:  true,
+			},
+			wantReasoning: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := buildResponsesProbeRequestBody(tt.endpoint, tt.probe)
+
+			// Verify model.
+			if body["model"] != tt.endpoint.Model {
+				t.Errorf("model = %v, want %v", body["model"], tt.endpoint.Model)
+			}
+
+			// Verify input (not messages).
+			if _, exists := body["messages"]; exists {
+				t.Error("responses probe should use 'input', not 'messages'")
+			}
+			input, ok := body["input"].([]map[string]string)
+			if !ok || len(input) != 1 {
+				t.Fatalf("input has unexpected shape: %v", body["input"])
+			}
+			if input[0]["content"] != tt.probe.Prompt {
+				t.Errorf("input content = %q, want %q", input[0]["content"], tt.probe.Prompt)
+			}
+
+			// Verify max_output_tokens (not max_tokens).
+			if _, exists := body["max_tokens"]; exists {
+				t.Error("responses probe should use 'max_output_tokens', not 'max_tokens'")
+			}
+			if body["max_output_tokens"] != tt.probe.MaxTokens {
+				t.Errorf("max_output_tokens = %v, want %v", body["max_output_tokens"], tt.probe.MaxTokens)
+			}
+
+			// Verify store=false.
+			if body["store"] != false {
+				t.Errorf("store = %v, want false", body["store"])
+			}
+
+			// Verify no stream or background.
+			if _, exists := body["stream"]; exists {
+				t.Error("responses probe should not set 'stream'")
+			}
+			if _, exists := body["background"]; exists {
+				t.Error("responses probe should not set 'background'")
+			}
+
+			// Verify no temperature.
+			if _, exists := body["temperature"]; exists {
+				t.Error("responses probe should not set 'temperature'")
+			}
+
+			// Verify reasoning.
+			reasoning, exists := body["reasoning"]
+			if tt.wantReasoning != "" {
+				if !exists {
+					t.Fatal("expected reasoning key to be present")
+				}
+				r, ok := reasoning.(map[string]any)
+				if !ok {
+					t.Fatalf("reasoning has unexpected type: %T", reasoning)
+				}
+				if r["effort"] != tt.wantReasoning {
+					t.Errorf("reasoning.effort = %v, want %v", r["effort"], tt.wantReasoning)
+				}
+			} else if exists {
+				t.Errorf("unexpected reasoning key: %v", reasoning)
+			}
+		})
+	}
+}
+
 func TestBuildProbeRequestBody(t *testing.T) {
 	expected := "pong"
 	tests := []struct {

@@ -67,14 +67,6 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 				continue
 			}
 
-			// Skip Responses API endpoints — they don't support /chat/completions.
-			if endpoint.Provider.APIType == config.APITypeResponses {
-				logger.Info("skipping probe for responses API endpoint",
-					slog.String("provider", endpoint.Provider.Name),
-					slog.String("model", modelCfg.Name))
-				continue
-			}
-
 			effectiveModel := endpoint.Provider.Model
 
 			// Dedupe by (base_url, effective_model). This is sufficient because each

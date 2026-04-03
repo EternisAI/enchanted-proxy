@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/routing"
 )
@@ -152,7 +153,12 @@ func (w *probeWorker) logStateChange(result probeResult) {
 // Only logs at Error level for programming errors (marshal/request creation failures).
 // State-transition logging is handled by the caller (run method).
 func (w *probeWorker) runProbe() probeResult {
-	reqBody := buildProbeRequestBody(w.endpoint, w.probe)
+	var reqBody map[string]any
+	if w.endpoint.APIType == config.APITypeResponses {
+		reqBody = buildResponsesProbeRequestBody(w.endpoint, w.probe)
+	} else {
+		reqBody = buildProbeRequestBody(w.endpoint, w.probe)
+	}
 
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
@@ -163,7 +169,12 @@ func (w *probeWorker) runProbe() probeResult {
 		return probeResult{err: err}
 	}
 
-	url := strings.TrimRight(w.endpoint.BaseURL, "/") + "/chat/completions"
+	var url string
+	if w.endpoint.APIType == config.APITypeResponses {
+		url = strings.TrimRight(w.endpoint.BaseURL, "/") + "/responses"
+	} else {
+		url = strings.TrimRight(w.endpoint.BaseURL, "/") + "/chat/completions"
+	}
 	req, err := http.NewRequestWithContext(w.ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		w.logger.Error("failed to create probe request",
@@ -204,7 +215,12 @@ func (w *probeWorker) runProbe() probeResult {
 	}
 
 	// Parse the response to extract content and token usage.
-	parsed := parseResponse(respBody)
+	var parsed parsedResponse
+	if w.endpoint.APIType == config.APITypeResponses {
+		parsed = parseResponsesAPIResponse(respBody)
+	} else {
+		parsed = parseResponse(respBody)
+	}
 
 	// Check content match if configured and response was successful.
 	// Content checking is only active when ExpectedResponse is non-nil AND non-empty.
@@ -255,7 +271,24 @@ type chatCompletionResponse struct {
 	} `json:"usage,omitempty"`
 }
 
-// parsedResponse holds the extracted fields from a chat completion response.
+// responsesAPIResponse is a minimal representation of an OpenAI Responses API response.
+// See: https://platform.openai.com/docs/api-reference/responses
+type responsesAPIResponse struct {
+	Status string `json:"status"`
+	Output []struct {
+		Type    string `json:"type"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	} `json:"output"`
+	Usage *struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage,omitempty"`
+}
+
+// parsedResponse holds the extracted fields from a probe response (any API type).
 type parsedResponse struct {
 	content string
 	usage   *probeTokenUsage
@@ -276,6 +309,38 @@ func parseResponse(body []byte) parsedResponse {
 		result.usage = &probeTokenUsage{
 			PromptTokens:     resp.Usage.PromptTokens,
 			CompletionTokens: resp.Usage.CompletionTokens,
+		}
+	}
+	return result
+}
+
+// parseResponsesAPIResponse extracts content and token usage from a Responses API response.
+// Content is extracted from the first output_text content block in the first message output.
+func parseResponsesAPIResponse(body []byte) parsedResponse {
+	var resp responsesAPIResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return parsedResponse{}
+	}
+
+	var result parsedResponse
+	for _, output := range resp.Output {
+		if output.Type != "message" {
+			continue
+		}
+		for _, content := range output.Content {
+			if content.Type == "output_text" {
+				result.content = content.Text
+				break
+			}
+		}
+		if result.content != "" {
+			break
+		}
+	}
+	if resp.Usage != nil {
+		result.usage = &probeTokenUsage{
+			PromptTokens:     resp.Usage.InputTokens,
+			CompletionTokens: resp.Usage.OutputTokens,
 		}
 	}
 	return result

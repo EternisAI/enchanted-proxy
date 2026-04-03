@@ -80,6 +80,138 @@ func TestParseResponse(t *testing.T) {
 	}
 }
 
+func TestParseResponsesAPIResponse(t *testing.T) {
+	tests := []struct {
+		name            string
+		body            string
+		wantContent     string
+		wantUsageNil    bool
+		wantPromptToks  int
+		wantCompleteTok int
+	}{
+		{
+			name: "full response with usage",
+			body: `{
+				"id": "resp_abc123",
+				"status": "completed",
+				"output": [
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "output_text", "text": "OK"}
+						]
+					}
+				],
+				"usage": {"input_tokens": 10, "output_tokens": 1}
+			}`,
+			wantContent:     "OK",
+			wantPromptToks:  10,
+			wantCompleteTok: 1,
+		},
+		{
+			name: "response without usage",
+			body: `{
+				"id": "resp_abc123",
+				"status": "completed",
+				"output": [
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "output_text", "text": "hello"}
+						]
+					}
+				]
+			}`,
+			wantContent:  "hello",
+			wantUsageNil: true,
+		},
+		{
+			name: "multiple output items — picks first message",
+			body: `{
+				"status": "completed",
+				"output": [
+					{
+						"type": "reasoning",
+						"content": [{"type": "reasoning_text", "text": "thinking..."}]
+					},
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "output_text", "text": "answer"}
+						]
+					}
+				]
+			}`,
+			wantContent:  "answer",
+			wantUsageNil: true,
+		},
+		{
+			name:         "empty output",
+			body:         `{"status": "completed", "output": []}`,
+			wantContent:  "",
+			wantUsageNil: true,
+		},
+		{
+			name:         "invalid JSON",
+			body:         `not json`,
+			wantContent:  "",
+			wantUsageNil: true,
+		},
+		{
+			name:         "empty body",
+			body:         ``,
+			wantContent:  "",
+			wantUsageNil: true,
+		},
+		{
+			name: "message with no output_text content",
+			body: `{
+				"status": "completed",
+				"output": [
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "refusal", "text": "I cannot help with that"}
+						]
+					}
+				]
+			}`,
+			wantContent:  "",
+			wantUsageNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseResponsesAPIResponse([]byte(tt.body))
+
+			if result.content != tt.wantContent {
+				t.Errorf("content = %q, want %q", result.content, tt.wantContent)
+			}
+
+			if tt.wantUsageNil {
+				if result.usage != nil {
+					t.Errorf("expected nil usage, got %+v", result.usage)
+				}
+			} else {
+				if result.usage == nil {
+					t.Fatal("expected non-nil usage")
+				}
+				if result.usage.PromptTokens != tt.wantPromptToks {
+					t.Errorf("prompt_tokens = %d, want %d", result.usage.PromptTokens, tt.wantPromptToks)
+				}
+				if result.usage.CompletionTokens != tt.wantCompleteTok {
+					t.Errorf("completion_tokens = %d, want %d", result.usage.CompletionTokens, tt.wantCompleteTok)
+				}
+			}
+		})
+	}
+}
+
 func TestParseResponse_RoundTrip(t *testing.T) {
 	// Verify parseResponse handles a realistically shaped response.
 	resp := map[string]any{

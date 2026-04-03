@@ -29,6 +29,27 @@ func buildProbeRequestBody(endpoint *routing.ProviderConfig, probe *routing.Prob
 	return req
 }
 
+// buildResponsesProbeRequestBody constructs the JSON body for a probe using the
+// OpenAI Responses API. Uses synchronous mode (no background/store) since we just
+// need a quick health check, not a persistent conversation.
+func buildResponsesProbeRequestBody(endpoint *routing.ProviderConfig, probe *routing.ProbeConfig) map[string]any {
+	req := map[string]any{
+		"model": endpoint.Model,
+		"input": []map[string]string{
+			{"role": "user", "content": probe.Prompt},
+		},
+		"max_output_tokens": probe.MaxTokens,
+		"store":             false,
+	}
+
+	// Suppress reasoning to save tokens during health checks.
+	if !probe.Thinking {
+		req["reasoning"] = map[string]any{"effort": "low"}
+	}
+
+	return req
+}
+
 // isOpenAIReasoningModel checks if the model name matches known OpenAI reasoning models
 // that support the reasoning_effort parameter. It requires a delimiter ("-") after
 // the series prefix to avoid false-positives on unrelated models (e.g. "ollama-xyz").
