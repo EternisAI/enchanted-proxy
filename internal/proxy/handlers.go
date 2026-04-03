@@ -188,9 +188,12 @@ func ProxyHandler(
 			if err := json.Unmarshal(requestBody, &reqBody); err == nil {
 				// Only add for streaming requests
 				if stream, ok := reqBody["stream"].(bool); ok && stream {
-					reqBody["stream_options"] = map[string]interface{}{
-						"include_usage": true,
+					streamOptions, _ := reqBody["stream_options"].(map[string]interface{})
+					if streamOptions == nil {
+						streamOptions = make(map[string]interface{})
 					}
+					streamOptions["include_usage"] = true
+					reqBody["stream_options"] = streamOptions
 					// Re-serialize request body
 					if modifiedBody, err := json.Marshal(reqBody); err == nil {
 						requestBody = modifiedBody

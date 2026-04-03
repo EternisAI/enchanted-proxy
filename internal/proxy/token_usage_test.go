@@ -164,12 +164,15 @@ func TestStreamOptionsInjection(t *testing.T) {
 			wantInjected: false,
 		},
 		{
-			name: "existing stream_options are overwritten",
+			name: "existing stream_options are merged and include_usage forced true",
 			requestBody: map[string]interface{}{
-				"model":          "gpt-4",
-				"stream":         true,
-				"messages":       []interface{}{},
-				"stream_options": map[string]interface{}{"include_usage": false},
+				"model":    "gpt-4",
+				"stream":   true,
+				"messages": []interface{}{},
+				"stream_options": map[string]interface{}{
+					"include_usage": false,
+					"other_flag":    "keep-me",
+				},
 			},
 			wantInjected: true,
 		},
@@ -189,9 +192,12 @@ func TestStreamOptionsInjection(t *testing.T) {
 			}
 
 			if stream, ok := reqBody["stream"].(bool); ok && stream {
-				reqBody["stream_options"] = map[string]interface{}{
-					"include_usage": true,
+				streamOptions, _ := reqBody["stream_options"].(map[string]interface{})
+				if streamOptions == nil {
+					streamOptions = make(map[string]interface{})
 				}
+				streamOptions["include_usage"] = true
+				reqBody["stream_options"] = streamOptions
 				requestBody, _ = json.Marshal(reqBody)
 			}
 
@@ -207,6 +213,13 @@ func TestStreamOptionsInjection(t *testing.T) {
 				opts := streamOpts.(map[string]interface{})
 				if opts["include_usage"] != true {
 					t.Errorf("expected include_usage=true, got %v", opts["include_usage"])
+				}
+				if originalOpts, ok := tt.requestBody["stream_options"].(map[string]interface{}); ok {
+					if originalOther, hadOther := originalOpts["other_flag"]; hadOther {
+						if opts["other_flag"] != originalOther {
+							t.Errorf("expected other_flag to be preserved, got %v", opts["other_flag"])
+						}
+					}
 				}
 			} else {
 				if exists {
