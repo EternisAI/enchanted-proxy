@@ -32,6 +32,22 @@ type probeWorker struct {
 	logger   *logger.Logger
 }
 
+// probeResult holds the outcome of a single probe execution.
+type probeResult struct {
+	success    bool
+	statusCode int
+	duration   time.Duration
+	err        error // set on connection/read errors
+
+	// Content match info (only meaningful on 2xx with expected response configured).
+	contentMismatch bool
+	expected        string
+	got             string
+
+	// Error response body (on non-2xx, truncated).
+	body string
+}
+
 // maxJitterFraction is the maximum jitter as a fraction of the probe interval,
 // applied to the initial delay to spread out probe workers.
 const maxJitterFraction = 0.25
@@ -51,15 +67,20 @@ func (w *probeWorker) run() {
 		slog.Duration("initial_jitter", jitter))
 
 	// Wait for jitter before the first probe, respecting shutdown.
-	var success bool
+	var result probeResult
 	select {
 	case <-time.After(jitter):
-		success = w.runProbe()
+		result = w.runProbe()
 	case <-w.service.shutdown:
 		return
 	}
 
-	healthy := success
+	healthy := result.success
+	// Log initial state unless we're shutting down.
+	if w.ctx.Err() == nil {
+		w.logStateChange(result)
+	}
+
 	currentInterval := w.probe.Interval
 	if !healthy {
 		currentInterval = w.probe.RetryInterval
@@ -71,21 +92,18 @@ func (w *probeWorker) run() {
 	for {
 		select {
 		case <-ticker.C:
-			success = w.runProbe()
-			if success && !healthy {
+			result = w.runProbe()
+			if result.success && !healthy {
 				healthy = true
 				ticker.Reset(w.probe.Interval)
-				w.logger.Info("probe recovered, switching to normal interval",
-					slog.String("provider", w.provider),
-					slog.String("model", w.model),
-					slog.Duration("interval", w.probe.Interval))
-			} else if !success && healthy {
+				w.logStateChange(result)
+			} else if !result.success && healthy {
 				healthy = false
 				ticker.Reset(w.probe.RetryInterval)
-				w.logger.Warn("probe failed, switching to retry interval",
-					slog.String("provider", w.provider),
-					slog.String("model", w.model),
-					slog.Duration("retry_interval", w.probe.RetryInterval))
+				// Don't log shutdown-induced failures as state changes.
+				if w.ctx.Err() == nil {
+					w.logStateChange(result)
+				}
 			}
 		case <-w.service.shutdown:
 			w.logger.Debug("stopped probe worker",
@@ -96,8 +114,44 @@ func (w *probeWorker) run() {
 	}
 }
 
-// runProbe executes a single probe request. Returns true if the probe succeeded (2xx status).
-func (w *probeWorker) runProbe() bool {
+// logStateChange logs a probe state transition (initial state, recovery, or new failure).
+func (w *probeWorker) logStateChange(result probeResult) {
+	if result.success {
+		attrs := []any{
+			slog.String("provider", w.provider),
+			slog.String("model", w.model),
+			slog.Int("status", result.statusCode),
+			slog.Duration("duration", result.duration),
+		}
+		if result.contentMismatch {
+			attrs = append(attrs,
+				slog.String("expected_content", result.expected),
+				slog.String("actual_content", result.got))
+		}
+		w.logger.Info("probe succeeded", attrs...)
+	} else {
+		attrs := []any{
+			slog.String("provider", w.provider),
+			slog.String("model", w.model),
+		}
+		if result.err != nil {
+			attrs = append(attrs,
+				slog.Duration("duration", result.duration),
+				slog.String("error", result.err.Error()))
+		} else {
+			attrs = append(attrs,
+				slog.Int("status", result.statusCode),
+				slog.Duration("duration", result.duration),
+				slog.String("body", result.body))
+		}
+		w.logger.Warn("probe failed", attrs...)
+	}
+}
+
+// runProbe executes a single probe request and returns the result.
+// Only logs at Error level for programming errors (marshal/request creation failures).
+// State-transition logging is handled by the caller (run method).
+func (w *probeWorker) runProbe() probeResult {
 	reqBody := buildProbeRequestBody(w.endpoint, w.probe)
 
 	bodyBytes, err := json.Marshal(reqBody)
@@ -106,7 +160,7 @@ func (w *probeWorker) runProbe() bool {
 			slog.String("provider", w.provider),
 			slog.String("model", w.model),
 			slog.String("error", err.Error()))
-		return false
+		return probeResult{err: err}
 	}
 
 	url := strings.TrimRight(w.endpoint.BaseURL, "/") + "/chat/completions"
@@ -116,7 +170,7 @@ func (w *probeWorker) runProbe() bool {
 			slog.String("provider", w.provider),
 			slog.String("model", w.model),
 			slog.String("error", err.Error()))
-		return false
+		return probeResult{err: err}
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -129,17 +183,12 @@ func (w *probeWorker) runProbe() bool {
 	duration := time.Since(start)
 
 	if err != nil {
-		// Don't record metrics or log warnings for shutdown-induced cancellations.
+		// Don't record metrics for shutdown-induced cancellations.
 		if w.ctx.Err() != nil {
-			return false
+			return probeResult{err: err}
 		}
 		recordProbeResult(w.provider, w.model, 0, duration.Seconds(), false, false, nil)
-		w.logger.Warn("probe request failed",
-			slog.String("provider", w.provider),
-			slog.String("model", w.model),
-			slog.Duration("duration", duration),
-			slog.String("error", err.Error()))
-		return false
+		return probeResult{duration: duration, err: err}
 	}
 	defer resp.Body.Close()
 
@@ -147,13 +196,11 @@ func (w *probeWorker) runProbe() bool {
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		recordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), false, false, nil)
-		w.logger.Warn("failed to read probe response body",
-			slog.String("provider", w.provider),
-			slog.String("model", w.model),
-			slog.Int("status", resp.StatusCode),
-			slog.Duration("duration", duration),
-			slog.String("error", err.Error()))
-		return false
+		return probeResult{
+			statusCode: resp.StatusCode,
+			duration:   duration,
+			err:        fmt.Errorf("reading response body: %w", err),
+		}
 	}
 
 	// Parse the response to extract content and token usage.
@@ -176,32 +223,23 @@ func (w *probeWorker) runProbe() bool {
 
 	success := resp.StatusCode >= 200 && resp.StatusCode < 300
 
-	if success {
-		if hasExpectedResponse && !contentMatch {
-			w.logger.Warn("probe succeeded but response content unexpected",
-				slog.String("provider", w.provider),
-				slog.String("model", w.model),
-				slog.Int("status", resp.StatusCode),
-				slog.Duration("duration", duration),
-				slog.String("expected", *w.probe.ExpectedResponse),
-				slog.String("got", truncate(parsed.content, 100)))
-		} else {
-			w.logger.Debug("probe succeeded",
-				slog.String("provider", w.provider),
-				slog.String("model", w.model),
-				slog.Int("status", resp.StatusCode),
-				slog.Duration("duration", duration))
-		}
-	} else {
-		w.logger.Warn("probe returned non-2xx status",
-			slog.String("provider", w.provider),
-			slog.String("model", w.model),
-			slog.Int("status", resp.StatusCode),
-			slog.Duration("duration", duration),
-			slog.String("body", truncate(string(respBody), 200)))
+	result := probeResult{
+		success:    success,
+		statusCode: resp.StatusCode,
+		duration:   duration,
 	}
 
-	return success
+	if success && hasExpectedResponse && !contentMatch {
+		result.contentMismatch = true
+		result.expected = *w.probe.ExpectedResponse
+		result.got = truncate(parsed.content, 100)
+	}
+
+	if !success {
+		result.body = truncate(string(respBody), 200)
+	}
+
+	return result
 }
 
 // chatCompletionResponse is a minimal representation of the OpenAI chat completion response.
