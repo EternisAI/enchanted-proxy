@@ -303,6 +303,17 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 				// Build the probe configuration: use explicit config if specified,
 				// otherwise use defaults.
 				var probe *ProbeConfig
+				// Warn before Validate() trims whitespace so operators
+				// know their YAML had extraneous whitespace.
+				if endpointProvider.Probe != nil &&
+					endpointProvider.Probe.ExpectedResponse != nil &&
+					*endpointProvider.Probe.ExpectedResponse != strings.TrimSpace(*endpointProvider.Probe.ExpectedResponse) {
+					mr.logger.Warn("probe expected_response has leading/trailing whitespace, will be trimmed",
+						slog.String("model", model.Name),
+						slog.String("original", *endpointProvider.Probe.ExpectedResponse),
+						slog.String("trimmed", strings.TrimSpace(*endpointProvider.Probe.ExpectedResponse)))
+				}
+
 				if endpointProvider.Probe != nil {
 					probe = probeConfigFromConfig(endpointProvider.Probe)
 				} else {

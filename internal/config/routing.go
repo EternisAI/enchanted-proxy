@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"strings"
@@ -465,7 +464,6 @@ func (cfg *ProbeConfig) Validate() error {
 	if cfg.ExpectedResponse != nil && *cfg.ExpectedResponse != "" {
 		trimmed := strings.TrimSpace(*cfg.ExpectedResponse)
 		if trimmed != *cfg.ExpectedResponse {
-			log.Printf("Warning: probe expected_response has leading/trailing whitespace, trimming %q to %q", *cfg.ExpectedResponse, trimmed)
 			cfg.ExpectedResponse = &trimmed
 		}
 	}
