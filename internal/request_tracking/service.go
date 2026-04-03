@@ -204,53 +204,6 @@ type RequestInfo struct {
 	Multiplier       *float64 // NEW: Cost multiplier
 }
 
-func (s *Service) CheckRateLimit(ctx context.Context, userID string, maxTokensPerDay int64) (bool, error) {
-	count, err := s.queries.GetUserTokenUsageInLastDay(ctx, userID)
-	if err != nil {
-		return false, fmt.Errorf("failed to check rate limit: %w", err)
-	}
-
-	return count < maxTokensPerDay, nil
-}
-
-// GetUserLifetimeTokenUsage returns the total tokens a user has ever consumed.
-func (s *Service) GetUserLifetimeTokenUsage(ctx context.Context, userID string) (int64, error) {
-	return s.queries.GetUserLifetimeTokenUsage(ctx, userID)
-}
-
-// GetUserTokenUsageToday returns tokens used today.
-func (s *Service) GetUserTokenUsageToday(ctx context.Context, userID string) (int64, error) {
-	return s.queries.GetUserTokenUsageToday(ctx, userID)
-}
-
-func (s *Service) GetUserRequestCountSince(ctx context.Context, userID string, since time.Time) (int64, error) {
-	sinceUTC := since.UTC()
-	sinceDay := time.Date(
-		sinceUTC.Year(), sinceUTC.Month(), sinceUTC.Day(),
-		0, 0, 0, 0, time.UTC,
-	)
-
-	params := pgdb.GetUserRequestCountInTimeWindowParams{
-		UserID:    userID,
-		DayBucket: sinceDay,
-	}
-	return s.queries.GetUserRequestCountInTimeWindow(ctx, params)
-}
-
-func (s *Service) GetUserTokenUsageSince(ctx context.Context, userID string, since time.Time) (int64, error) {
-	sinceUTC := since.UTC()
-	sinceDay := time.Date(
-		sinceUTC.Year(), sinceUTC.Month(), sinceUTC.Day(),
-		0, 0, 0, 0, time.UTC,
-	)
-
-	params := pgdb.GetUserTokenUsageInTimeWindowParams{
-		UserID:    userID,
-		DayBucket: sinceDay,
-	}
-	return s.queries.GetUserTokenUsageInTimeWindow(ctx, params)
-}
-
 // HasActivePro checks if user has an active Pro entitlement and returns expiry when available.
 func (s *Service) HasActivePro(ctx context.Context, userID string) (bool, *time.Time, error) {
 	ent, err := s.queries.GetEntitlement(ctx, userID)

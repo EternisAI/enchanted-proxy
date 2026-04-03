@@ -79,6 +79,8 @@ egress:
   - fcm.googleapis.com
   # Linear API (problem reports)
   - api.linear.app
+  # Slack webhooks (problem report notifications)
+  - hooks.slack.com
   # NATS
   - 172.17.14.64
   - 172.18.4.136

@@ -238,30 +238,40 @@ func handleStreamingWithBroadcast(
 		}
 	}
 
-	// Log request to database with token usage
-	// Retrieve token usage from completed session
-	var tokenUsage *Usage
-	if sessionUsage := session.GetTokenUsage(); sessionUsage != nil {
-		tokenUsage = &Usage{
-			PromptTokens:     sessionUsage.PromptTokens,
-			CompletionTokens: sessionUsage.CompletionTokens,
-			TotalTokens:      sessionUsage.TotalTokens,
+	// Only log tokens for the original subscriber to avoid double-counting
+	// when clients reconnect (late joiners) to the same stream session.
+	// Also require session completion — if the client disconnected early,
+	// the upstream reader may not have populated token usage yet.
+	if isNew && session.IsCompleted() {
+		var tokenUsage *Usage
+		if sessionUsage := session.GetTokenUsage(); sessionUsage != nil {
+			tokenUsage = &Usage{
+				PromptTokens:     sessionUsage.PromptTokens,
+				CompletionTokens: sessionUsage.CompletionTokens,
+				TotalTokens:      sessionUsage.TotalTokens,
+			}
+			log.Debug("logging request with token usage from session",
+				slog.Int("prompt_tokens", tokenUsage.PromptTokens),
+				slog.Int("completion_tokens", tokenUsage.CompletionTokens),
+				slog.Int("total_tokens", tokenUsage.TotalTokens))
+		} else if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			providerName := ""
+			if provider != nil {
+				providerName = provider.Name
+			}
+			log.Error("MISSING TOKEN USAGE in streaming response — quota tracking is broken for this request",
+				slog.String("model", model),
+				slog.String("provider", providerName),
+				slog.Int("status_code", resp.StatusCode),
+				slog.String("chat_id", chatID),
+				slog.String("message_id", messageID))
 		}
-		log.Debug("logging request with token usage from session",
-			slog.Int("prompt_tokens", tokenUsage.PromptTokens),
-			slog.Int("completion_tokens", tokenUsage.CompletionTokens),
-			slog.Int("total_tokens", tokenUsage.TotalTokens))
-	} else {
-		log.Warn("no token usage available from session",
-			slog.String("chat_id", chatID),
-			slog.String("message_id", messageID))
-	}
 
-	// Log with multiplier if provider is available
-	if provider != nil {
-		logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
-	} else {
-		logRequestToDatabase(c, trackingService, model, tokenUsage)
+		if provider != nil {
+			logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
+		} else {
+			logRequestToDatabase(c, trackingService, model, tokenUsage)
+		}
 	}
 
 	return nil

@@ -80,7 +80,6 @@ All model and provider definitions live in `config/config.yaml` (loaded via `CON
 
 **Resolution order**: exact match → alias match → prefix match → wildcard fallback (OpenRouter).
 
-Dev config: `config/config.dev.yaml` (redirects to local Ollama). Run with `make run-dev`.
 
 ## Crypto Payment Systems
 

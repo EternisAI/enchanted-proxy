@@ -348,7 +348,13 @@ func TestRouteModelEmptyModel(t *testing.T) {
 
 func TestRouteModelNoProviderConfigured(t *testing.T) {
 	router := newModelRouter(t, map[string]string{
-		ConfigFileEnvVar: ConfigFile,
+		ConfigFileEnvVar:              ConfigFile,
+		EternisAPIKeyEnvVar:           "",
+		NearAIAPIKeyEnvVar:            "",
+		OpenAIAPIKeyEnvVar:            "",
+		OpenRouterMobileAPIKeyEnvVar:  "",
+		OpenRouterDesktopAPIKeyEnvVar: "",
+		TinfoilAPIKeyEnvVar:           "",
 	})
 
 	provider, err := router.RouteModel("gpt-4", "mobile")
