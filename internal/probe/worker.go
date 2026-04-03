@@ -237,14 +237,19 @@ func (w *probeWorker) runProbe() probeResult {
 
 	// Check content match if configured and response was successful.
 	// Content checking is only active when ExpectedResponse is non-nil AND non-empty.
-	// Trim whitespace from response content to handle thinking models that pad output.
+	// Strip thinking tags (e.g. DeepSeek R1 wraps reasoning in <think>...</think>),
+	// trim whitespace, then do a case-insensitive exact match.
 	contentMatch := false
 	hasExpectedResponse := w.probe.ExpectedResponse != nil && *w.probe.ExpectedResponse != ""
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && hasExpectedResponse {
-		contentMatch = strings.Contains(
-			strings.ToLower(strings.TrimSpace(parsed.content)),
-			strings.ToLower(*w.probe.ExpectedResponse),
+		content := parsed.content
+		if idx := strings.LastIndex(content, "</think>"); idx != -1 {
+			content = content[idx+len("</think>"):]
+		}
+		contentMatch = strings.EqualFold(
+			strings.TrimSpace(content),
+			strings.TrimSpace(*w.probe.ExpectedResponse),
 		)
 	}
 
