@@ -47,7 +47,7 @@ run:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ -n "{{ logs }}" ]]; then
-        go run cmd/server/main.go 2>&1 | grep --line-buffered -i '\[{{ logs }}\]'
+        go run cmd/server/main.go 2>&1 | grep --line-buffered -F -i '[{{ logs }}]'
     else
         go run cmd/server/main.go
     fi

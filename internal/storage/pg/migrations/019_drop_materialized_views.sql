@@ -18,7 +18,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_request_counts_daily_unique
 ON user_request_counts_daily (user_id, day_bucket);
 
 -- Recreate user_token_usage_daily
-CREATE MATERIALIZED VIEW user_token_usage_daily AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS user_token_usage_daily AS
 SELECT
     user_id,
     DATE_TRUNC('day', created_at AT TIME ZONE 'UTC') as day_bucket,

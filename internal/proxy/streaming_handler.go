@@ -253,9 +253,13 @@ func handleStreamingWithBroadcast(
 				slog.Int("completion_tokens", tokenUsage.CompletionTokens),
 				slog.Int("total_tokens", tokenUsage.TotalTokens))
 		} else if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			providerName := ""
+			if provider != nil {
+				providerName = provider.Name
+			}
 			log.Error("MISSING TOKEN USAGE in streaming response — quota tracking is broken for this request",
 				slog.String("model", model),
-				slog.String("provider", provider.Name),
+				slog.String("provider", providerName),
 				slog.Int("status_code", resp.StatusCode),
 				slog.String("chat_id", chatID),
 				slog.String("message_id", messageID))

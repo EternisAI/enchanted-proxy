@@ -185,23 +185,9 @@ func TestStreamOptionsInjection(t *testing.T) {
 				t.Fatalf("failed to marshal request body: %v", err)
 			}
 
-			// Replicate the injection logic from ProxyHandler
-			var reqBody map[string]interface{}
-			if err := json.Unmarshal(requestBody, &reqBody); err != nil {
-				t.Fatalf("failed to unmarshal: %v", err)
-			}
+			// Use the same helper that ProxyHandler uses
+			requestBody = injectStreamIncludeUsage(requestBody)
 
-			if stream, ok := reqBody["stream"].(bool); ok && stream {
-				streamOptions, _ := reqBody["stream_options"].(map[string]interface{})
-				if streamOptions == nil {
-					streamOptions = make(map[string]interface{})
-				}
-				streamOptions["include_usage"] = true
-				reqBody["stream_options"] = streamOptions
-				requestBody, _ = json.Marshal(reqBody)
-			}
-
-			// Parse result and check
 			var result map[string]interface{}
 			json.Unmarshal(requestBody, &result)
 

@@ -183,28 +183,13 @@ func ProxyHandler(
 		// Add stream_options to enable usage reporting in streaming responses.
 		// Many OpenAI-compatible providers (vLLM, Tinfoil, etc.) only include token
 		// usage in SSE chunks when explicitly requested.
-		if len(requestBody) > 0 {
-			var reqBody map[string]interface{}
-			if err := json.Unmarshal(requestBody, &reqBody); err == nil {
-				// Only add for streaming requests
-				if stream, ok := reqBody["stream"].(bool); ok && stream {
-					streamOptions, _ := reqBody["stream_options"].(map[string]interface{})
-					if streamOptions == nil {
-						streamOptions = make(map[string]interface{})
-					}
-					streamOptions["include_usage"] = true
-					reqBody["stream_options"] = streamOptions
-					// Re-serialize request body
-					if modifiedBody, err := json.Marshal(reqBody); err == nil {
-						requestBody = modifiedBody
-						c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
-						c.Request.ContentLength = int64(len(requestBody))
-						log.Debug("added stream_options for usage reporting",
-							slog.String("provider", provider.Name),
-							slog.String("model", model))
-					}
-				}
-			}
+		if modified := injectStreamIncludeUsage(requestBody); len(modified) != len(requestBody) || !bytes.Equal(modified, requestBody) {
+			requestBody = modified
+			c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
+			c.Request.ContentLength = int64(len(requestBody))
+			log.Debug("added stream_options for usage reporting",
+				slog.String("provider", provider.Name),
+				slog.String("model", model))
 		}
 
 		// Route based on API type
@@ -882,10 +867,15 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 		// CRITICAL FIX: Use defer to ALWAYS log, even if client disconnects early
 		// Without this, streaming requests were not logged when client disconnected before [DONE]
 		defer func() {
+			providerName := ""
+			if provider != nil {
+				providerName = provider.Name
+			}
+
 			if tokenUsage == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				log.Error("MISSING TOKEN USAGE in streaming response — quota tracking is broken for this request",
 					slog.String("model", model),
-					slog.String("provider", provider.Name),
+					slog.String("provider", providerName),
 					slog.Int("status_code", resp.StatusCode),
 					slog.Int("content_length", fullContent.Len()))
 			}
@@ -965,9 +955,13 @@ func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model s
 		content = extractContentFromResponse(responseBody)
 
 		if tokenUsage == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			providerName := ""
+			if provider != nil {
+				providerName = provider.Name
+			}
 			log.Error("MISSING TOKEN USAGE in non-streaming response — quota tracking is broken for this request",
 				slog.String("model", model),
-				slog.String("provider", provider.Name),
+				slog.String("provider", providerName),
 				slog.Int("status_code", resp.StatusCode),
 				slog.Int("response_size", len(responseBody)),
 				slog.String("content_type", resp.Header.Get("Content-Type")),
