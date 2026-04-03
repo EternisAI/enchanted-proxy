@@ -157,6 +157,9 @@ type Config struct {
 	LinearProjectID string
 	LinearLabelID   string
 
+	// Slack (problem report notifications)
+	SlackProblemReportWebhookURL string
+
 	// Anonymizer CVM
 	AnonymizerBaseURL string // Base URL for anonymizer CVM (default: http://127.0.0.1:20120)
 	AnonymizerAPIKey  string // API key (defaults to ETERNIS_INFERENCE_API_KEY)
@@ -335,6 +338,9 @@ func LoadConfig() {
 		LinearLabelID:   getEnvOrDefault("LINEAR_LABEL_ID", ""),
 		LinearProjectID: getEnvOrDefault("LINEAR_PROJECT_ID", ""),
 		LinearTeamID:    getEnvOrDefault("LINEAR_TEAM_ID", ""),
+
+		// Slack (problem report notifications)
+		SlackProblemReportWebhookURL: getEnvOrDefault("SLACK_PROBLEM_REPORT_WEBHOOK_URL", ""),
 
 		// Anonymizer CVM
 		AnonymizerBaseURL: getEnvOrDefault("ANONYMIZER_BASE_URL", "http://127.0.0.1:20120"),

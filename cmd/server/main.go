@@ -430,6 +430,7 @@ func main() {
 		config.AppConfig.LinearTeamID,
 		config.AppConfig.LinearProjectID,
 		config.AppConfig.LinearLabelID,
+		config.AppConfig.SlackProblemReportWebhookURL,
 		logger.WithComponent("problem-reports"),
 	)
 	problemReportsHandler := problem_reports.NewHandler(problemReportsService, logger.WithComponent("problem-reports"))

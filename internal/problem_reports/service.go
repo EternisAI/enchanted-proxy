@@ -15,16 +15,18 @@ import (
 var ErrMaxReportsReached = errors.New("maximum number of problem reports reached")
 
 type Service struct {
-	queries      *pgdb.Queries
-	linearClient *LinearClient
-	logger       *logger.Logger
+	queries       *pgdb.Queries
+	linearClient  *LinearClient
+	slackNotifier *SlackNotifier
+	logger        *logger.Logger
 }
 
-func NewService(queries *pgdb.Queries, linearAPIKey, linearTeamID, linearProjectID, linearLabelID string, logger *logger.Logger) *Service {
+func NewService(queries *pgdb.Queries, linearAPIKey, linearTeamID, linearProjectID, linearLabelID, slackWebhookURL string, logger *logger.Logger) *Service {
 	return &Service{
-		queries:      queries,
-		linearClient: NewLinearClient(linearAPIKey, linearTeamID, linearProjectID, linearLabelID),
-		logger:       logger,
+		queries:       queries,
+		linearClient:  NewLinearClient(linearAPIKey, linearTeamID, linearProjectID, linearLabelID),
+		slackNotifier: NewSlackNotifier(slackWebhookURL),
+		logger:        logger,
 	}
 }
 
@@ -86,6 +88,16 @@ func (s *Service) CreateReport(ctx context.Context, userID string, req *CreatePr
 	}
 
 	log.Info("problem report created", slog.String("report_id", reportID))
+
+	if s.slackNotifier.Enabled() {
+		linearID := ""
+		if ticketID != nil {
+			linearID = *ticketID
+		}
+		if err := s.slackNotifier.SendReport(ctx, req, reportID, userID, linearID); err != nil {
+			log.Error("failed to send Slack notification", slog.String("error", err.Error()))
+		}
+	}
 
 	resp := &CreateProblemReportResponse{
 		ID: reportID,
