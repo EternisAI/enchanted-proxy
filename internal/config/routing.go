@@ -266,6 +266,11 @@ type ModelEndpointProvider struct {
 	// FallbackConfig contains optional settings configuring traffic fallback behavior
 	// for this provider endpoint if it becomes unhealthy or overloaded.
 	Fallback *FallbackConfig `yaml:"fallback,omitempty"`
+
+	// Probe contains optional settings for active health probing of this endpoint.
+	// When omitted, probing is enabled with default settings.
+	// Set enabled: false to explicitly disable probing.
+	Probe *ProbeConfig `yaml:"probe,omitempty"`
 }
 
 // Validate performs validation of a ModelEndpointProvider value:
@@ -287,6 +292,12 @@ func (p *ModelEndpointProvider) Validate() error {
 
 	if p.Fallback != nil {
 		if err := p.Fallback.Validate(); err != nil {
+			return err
+		}
+	}
+
+	if p.Probe != nil {
+		if err := p.Probe.Validate(); err != nil {
 			return err
 		}
 	}
@@ -369,6 +380,99 @@ type FallbackStateConfig struct {
 	Query string `yaml:"query"`
 }
 
+// ProbeConfig contains settings for active health probing of a model endpoint.
+// All fields are optional — defaults are applied during validation.
+type ProbeConfig struct {
+	// Enabled controls whether probing is active for this endpoint.
+	// Defaults to true when the probe section is omitted or enabled is not specified.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// Interval is the time between probe requests. Minimum 30s, default 60s.
+	Interval time.Duration `yaml:"interval,omitempty"`
+
+	// Prompt is the user message sent in the probe request. Default: "Say OK"
+	Prompt string `yaml:"prompt,omitempty"`
+
+	// ExpectedResponse is the expected substring in the model's response (case-insensitive).
+	// Default: pointer to "OK". Set to explicit empty string ("") in YAML to disable content checking.
+	// When nil (field omitted), the default "OK" is used.
+	ExpectedResponse *string `yaml:"expected_response,omitempty"`
+
+	// MaxTokens limits the response length. Default: 3.
+	MaxTokens int `yaml:"max_tokens,omitempty"`
+
+	// Temperature controls response randomness. Default: 0 (deterministic).
+	// Stored as pointer to distinguish "not set" (nil → 0) from "explicitly set to 0".
+	Temperature *float64 `yaml:"temperature,omitempty"`
+
+	// Thinking controls whether thinking/reasoning is suppressed in probe requests.
+	// When false (default), the probe service checks the model name against known reasoning
+	// models and applies thinking suppression parameters (e.g., reasoning_effort: "low" for
+	// OpenAI o-series). When true, no suppression is applied.
+	Thinking bool `yaml:"thinking,omitempty"`
+}
+
+const (
+	DefaultProbeInterval         = 60 * time.Second
+	MinProbeInterval             = 30 * time.Second
+	DefaultProbePrompt           = "Say OK"
+	DefaultProbeExpectedResponse = "OK"
+	DefaultProbeMaxTokens        = 3
+	DefaultProbeTemperature      = 0.0
+)
+
+// Validate applies defaults and validates a ProbeConfig.
+func (cfg *ProbeConfig) Validate() error {
+	if cfg.Enabled == nil {
+		enabled := true
+		cfg.Enabled = &enabled
+	}
+
+	if cfg.Interval <= 0 {
+		cfg.Interval = DefaultProbeInterval
+	} else if cfg.Interval < MinProbeInterval {
+		cfg.Interval = MinProbeInterval
+	}
+
+	if cfg.Prompt == "" {
+		cfg.Prompt = DefaultProbePrompt
+	}
+
+	if cfg.ExpectedResponse == nil {
+		defaultResp := DefaultProbeExpectedResponse
+		cfg.ExpectedResponse = &defaultResp
+	}
+
+	if cfg.MaxTokens <= 0 {
+		cfg.MaxTokens = DefaultProbeMaxTokens
+	}
+
+	if cfg.Temperature == nil {
+		defaultTemp := DefaultProbeTemperature
+		cfg.Temperature = &defaultTemp
+	}
+
+	return nil
+}
+
+// unmarshalProbeConfig implements a custom YAML unmarshaler for ProbeConfig.
+func unmarshalProbeConfig(value *ProbeConfig, data []byte) error {
+	type Aux ProbeConfig
+	var aux Aux
+
+	if err := yaml.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	*value = ProbeConfig(aux)
+
+	if err := value.Validate(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func init() {
 	// Register unmarshalers of custom types with the YAML library
 	yaml.RegisterCustomUnmarshaler[APIType](unmarshalAPITypeYAML)
@@ -377,6 +481,7 @@ func init() {
 	yaml.RegisterCustomUnmarshaler[ModelConfig](unmarshalModelConfig)
 	yaml.RegisterCustomUnmarshaler[ModelEndpointProvider](unmarshalModelEndpointProvider)
 	yaml.RegisterCustomUnmarshaler[FallbackConfig](unmarshalFallbackConfig)
+	yaml.RegisterCustomUnmarshaler[ProbeConfig](unmarshalProbeConfig)
 }
 
 // validateURLString performs basic sanity checks of a string that should contain a valid URL.

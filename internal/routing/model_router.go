@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -102,6 +103,7 @@ type ModelRoute struct {
 type ModelEndpoint struct {
 	Provider *ProviderConfig
 	Fallback *FallbackConfig
+	Probe    *ProbeConfig
 }
 
 // ProviderConfig contains aggregated routing information for an AI provider.
@@ -130,6 +132,55 @@ type ProviderConfig struct {
 type FallbackConfig struct {
 	Trigger *config.FallbackStateConfig
 	Recover *config.FallbackStateConfig
+}
+
+// ProbeConfig contains resolved health probe settings for a model endpoint.
+// All defaults have been applied — this is ready to use by the probe service.
+type ProbeConfig struct {
+	Enabled          bool
+	Interval         time.Duration
+	Prompt           string
+	ExpectedResponse *string // nil = no content check, non-nil = check substring
+	MaxTokens        int
+	Temperature      float64
+	Thinking         bool
+}
+
+// defaultProbeConfig returns a ProbeConfig with all defaults applied.
+func defaultProbeConfig() *ProbeConfig {
+	defaultResp := config.DefaultProbeExpectedResponse
+	return &ProbeConfig{
+		Enabled:          true,
+		Interval:         config.DefaultProbeInterval,
+		Prompt:           config.DefaultProbePrompt,
+		ExpectedResponse: &defaultResp,
+		MaxTokens:        config.DefaultProbeMaxTokens,
+		Temperature:      config.DefaultProbeTemperature,
+		Thinking:         false,
+	}
+}
+
+// probeConfigFromConfig converts a validated config.ProbeConfig to a routing.ProbeConfig.
+func probeConfigFromConfig(cfg *config.ProbeConfig) *ProbeConfig {
+	p := &ProbeConfig{
+		Enabled:     *cfg.Enabled,
+		Interval:    cfg.Interval,
+		Prompt:      cfg.Prompt,
+		MaxTokens:   cfg.MaxTokens,
+		Temperature: *cfg.Temperature,
+		Thinking:    cfg.Thinking,
+	}
+
+	// Distinguish "explicitly set to empty" from "default OK".
+	// config.Validate() sets ExpectedResponse to &"OK" when nil (omitted in YAML).
+	// If YAML has `expected_response: ""`, it will be a pointer to "".
+	if cfg.ExpectedResponse != nil && *cfg.ExpectedResponse == "" {
+		p.ExpectedResponse = nil
+	} else {
+		p.ExpectedResponse = cfg.ExpectedResponse
+	}
+
+	return p
 }
 
 // NewModelRouter creates a new model router from configuration.
@@ -246,7 +297,16 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 					}
 				}
 
-				endpoint := ModelEndpoint{provider, fallback}
+				// Build the probe configuration: use explicit config if specified,
+				// otherwise use defaults.
+				var probe *ProbeConfig
+				if endpointProvider.Probe != nil {
+					probe = probeConfigFromConfig(endpointProvider.Probe)
+				} else {
+					probe = defaultProbeConfig()
+				}
+
+				endpoint := ModelEndpoint{provider, fallback, probe}
 
 				// Endpoints with specified fallback configuration are treated as "primary"
 				// and start as active endpoints.

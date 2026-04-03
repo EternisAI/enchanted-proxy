@@ -40,17 +40,26 @@ static_resources:
               domains:
               - '*'
               routes:
-              - name: healthz
+              - name: liveness
+                match:
+                  path: /healthz/live
+                route:
+                  cluster: enchanted_status
+              - name: readiness
                 match:
                   path: /healthz/ready
-                direct_response:
-                  status: 200
-              - name: metricss
+                route:
+                  cluster: enchanted_status
+              - name: metrics
+                match:
+                  path: /metrics
+                route:
+                  cluster: enchanted_status
+              - name: metrics-envoy
                 match:
                   path: /stats/prometheus
                 route:
                   cluster: admin
-                  timeout: 0s
   # transparent proxy egress listeners
   - name: egress_https
     address:
@@ -542,3 +551,16 @@ static_resources:
               socket_address:
                 address: 127.0.0.1
                 port_value: 8081
+  - name: enchanted_status
+    connect_timeout: 0.5s
+    circuit_breakers: *circuit_breakers
+    typed_extension_protocol_options: *typed_extension_protocol_options
+    load_assignment:
+      cluster_name: enchanted_status
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 127.0.0.1
+                port_value: 9090
