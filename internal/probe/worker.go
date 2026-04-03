@@ -53,12 +53,17 @@ type probeResult struct {
 // applied to the initial delay to spread out probe workers.
 const maxJitterFraction = 0.25
 
+// maxJitterDelay caps the absolute jitter so long intervals (e.g. 15m) don't
+// cause workers to sit idle for minutes before the first probe.
+const maxJitterDelay = 1 * time.Minute
+
 func (w *probeWorker) run() {
 	defer w.service.wg.Done()
 
-	// Apply random initial jitter (up to 25% of interval) to spread out workers
-	// that share the same interval and avoid synchronized bursts.
-	jitter := time.Duration(rand.Int64N(int64(float64(w.probe.Interval) * maxJitterFraction)))
+	// Apply random initial jitter (up to 25% of interval, capped at 1 minute)
+	// to spread out workers and avoid synchronized bursts.
+	jitterBase := min(time.Duration(float64(w.probe.Interval)*maxJitterFraction), maxJitterDelay)
+	jitter := time.Duration(rand.Int64N(int64(jitterBase)))
 
 	w.logger.Debug("started probe worker",
 		slog.String("provider", w.provider),
