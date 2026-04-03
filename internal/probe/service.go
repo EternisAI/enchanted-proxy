@@ -53,6 +53,10 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 	duplicatesSkipped := 0
 
 	for _, modelCfg := range models {
+		if modelCfg.Name == "*" {
+			continue
+		}
+
 		route, exists := routes[modelCfg.Name]
 		if !exists {
 			continue
