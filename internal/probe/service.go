@@ -138,6 +138,16 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 	return s
 }
 
+// Ready reports whether the probe service is initialized and not shutting down.
+func (s *ProbeService) Ready() bool {
+	select {
+	case <-s.shutdown:
+		return false
+	default:
+		return true
+	}
+}
+
 // Shutdown stops all probe workers and waits for them to finish.
 func (s *ProbeService) Shutdown() {
 	if s == nil {

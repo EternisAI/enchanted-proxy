@@ -85,7 +85,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("/healthz/ready", func(w http.ResponseWriter, r *http.Request) {
-		if probeService == nil {
+		if !probeService.Ready() {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
