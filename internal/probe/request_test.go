@@ -59,7 +59,7 @@ func TestBuildResponsesProbeRequestBody(t *testing.T) {
 				MaxTokens: 100,
 				Thinking:  false,
 			},
-			wantReasoning: "low",
+			wantReasoning: "medium",
 		},
 		{
 			name:     "thinking enabled — no reasoning suppression",
@@ -148,6 +148,7 @@ func TestBuildProbeRequestBody(t *testing.T) {
 		probe            *routing.ProbeConfig
 		wantReasoning    bool   // expect reasoning_effort key
 		wantReasoningVal string // expected value
+		wantMaxCompTok   bool   // expect max_completion_tokens instead of max_tokens
 	}{
 		{
 			name:     "standard model, thinking disabled",
@@ -162,7 +163,7 @@ func TestBuildProbeRequestBody(t *testing.T) {
 			wantReasoning: false,
 		},
 		{
-			name:     "reasoning model, thinking disabled — sets reasoning_effort",
+			name:     "reasoning model, thinking disabled — sets reasoning_effort and max_completion_tokens",
 			endpoint: &routing.ProviderConfig{Model: "o3-mini"},
 			probe: &routing.ProbeConfig{
 				Prompt:           "say ping",
@@ -173,9 +174,10 @@ func TestBuildProbeRequestBody(t *testing.T) {
 			},
 			wantReasoning:    true,
 			wantReasoningVal: "low",
+			wantMaxCompTok:   true,
 		},
 		{
-			name:     "reasoning model, thinking enabled — no reasoning_effort",
+			name:     "reasoning model, thinking enabled — no reasoning_effort, still uses max_completion_tokens",
 			endpoint: &routing.ProviderConfig{Model: "o3-mini"},
 			probe: &routing.ProbeConfig{
 				Prompt:           "say ping",
@@ -184,7 +186,8 @@ func TestBuildProbeRequestBody(t *testing.T) {
 				Temperature:      0,
 				Thinking:         true,
 			},
-			wantReasoning: false,
+			wantReasoning:  false,
+			wantMaxCompTok: true,
 		},
 	}
 
@@ -199,8 +202,25 @@ func TestBuildProbeRequestBody(t *testing.T) {
 			if body["stream"] != false {
 				t.Errorf("stream = %v, want false", body["stream"])
 			}
-			if body["max_tokens"] != tt.probe.MaxTokens {
-				t.Errorf("max_tokens = %v, want %v", body["max_tokens"], tt.probe.MaxTokens)
+
+			// Verify token limit and temperature fields based on model type.
+			if tt.wantMaxCompTok {
+				if body["max_completion_tokens"] != tt.probe.MaxTokens {
+					t.Errorf("max_completion_tokens = %v, want %v", body["max_completion_tokens"], tt.probe.MaxTokens)
+				}
+				if _, exists := body["max_tokens"]; exists {
+					t.Error("reasoning model should use max_completion_tokens, not max_tokens")
+				}
+				if _, exists := body["temperature"]; exists {
+					t.Error("reasoning model should not set temperature")
+				}
+			} else {
+				if body["max_tokens"] != tt.probe.MaxTokens {
+					t.Errorf("max_tokens = %v, want %v", body["max_tokens"], tt.probe.MaxTokens)
+				}
+				if _, exists := body["max_completion_tokens"]; exists {
+					t.Error("standard model should use max_tokens, not max_completion_tokens")
+				}
 			}
 
 			// Verify messages.

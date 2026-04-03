@@ -213,6 +213,8 @@ model_router:
     providers:
     - name: OpenAI
       model: o1-preview
+      probe:
+        enabled: false
 
   - name: openai/o1-mini
     aliases:
@@ -220,6 +222,8 @@ model_router:
     providers:
     - name: OpenAI
       model: o1-mini
+      probe:
+        enabled: false
 
   - name: openai/o3-mini
     aliases:
