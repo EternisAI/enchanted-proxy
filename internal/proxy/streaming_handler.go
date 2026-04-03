@@ -239,8 +239,10 @@ func handleStreamingWithBroadcast(
 	}
 
 	// Only log tokens for the original subscriber to avoid double-counting
-	// when clients reconnect (late joiners) to the same stream session
-	if isNew {
+	// when clients reconnect (late joiners) to the same stream session.
+	// Also require session completion — if the client disconnected early,
+	// the upstream reader may not have populated token usage yet.
+	if isNew && session.IsCompleted() {
 		var tokenUsage *Usage
 		if sessionUsage := session.GetTokenUsage(); sessionUsage != nil {
 			tokenUsage = &Usage{

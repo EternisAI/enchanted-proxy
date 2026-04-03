@@ -726,31 +726,48 @@ func handleStreamingDirect(
 		// Log tokens
 		sessionUsage := session.GetTokenUsage()
 		if sessionUsage != nil && trackingService != nil {
-			planTokens := int(float64(sessionUsage.TotalTokens) * provider.TokenMultiplier)
-			slog.Info("[TOKEN] request logged",
-				slog.String("user_id", userID),
-				slog.String("model", model),
-				slog.String("provider", provider.Name),
-				slog.Int("prompt_tokens", sessionUsage.PromptTokens),
-				slog.Int("completion_tokens", sessionUsage.CompletionTokens),
-				slog.Int("total_tokens", sessionUsage.TotalTokens),
-				slog.Float64("multiplier", provider.TokenMultiplier),
-				slog.Int("plan_tokens", planTokens),
-			)
-			tokenData := &request_tracking.TokenUsageWithMultiplier{
-				PromptTokens:     sessionUsage.PromptTokens,
-				CompletionTokens: sessionUsage.CompletionTokens,
-				TotalTokens:      sessionUsage.TotalTokens,
-				Multiplier:       provider.TokenMultiplier,
-				PlanTokens:       planTokens,
-			}
 			info := request_tracking.RequestInfo{
 				UserID:   userID,
 				Endpoint: requestPath,
 				Model:    model,
 				Provider: provider.Name,
 			}
-			trackingService.LogRequestWithPlanTokensAsync(ctx, info, tokenData) //nolint:errcheck
+			if provider.TokenMultiplier > 0 {
+				planTokens := int(float64(sessionUsage.TotalTokens) * provider.TokenMultiplier)
+				slog.Info("[TOKEN] request logged",
+					slog.String("user_id", userID),
+					slog.String("model", model),
+					slog.String("provider", provider.Name),
+					slog.Int("prompt_tokens", sessionUsage.PromptTokens),
+					slog.Int("completion_tokens", sessionUsage.CompletionTokens),
+					slog.Int("total_tokens", sessionUsage.TotalTokens),
+					slog.Float64("multiplier", provider.TokenMultiplier),
+					slog.Int("plan_tokens", planTokens),
+				)
+				tokenData := &request_tracking.TokenUsageWithMultiplier{
+					PromptTokens:     sessionUsage.PromptTokens,
+					CompletionTokens: sessionUsage.CompletionTokens,
+					TotalTokens:      sessionUsage.TotalTokens,
+					Multiplier:       provider.TokenMultiplier,
+					PlanTokens:       planTokens,
+				}
+				trackingService.LogRequestWithPlanTokensAsync(ctx, info, tokenData) //nolint:errcheck
+			} else {
+				slog.Warn("[TOKEN] request logged WITHOUT multiplier",
+					slog.String("user_id", userID),
+					slog.String("model", model),
+					slog.String("provider", provider.Name),
+					slog.Int("prompt_tokens", sessionUsage.PromptTokens),
+					slog.Int("completion_tokens", sessionUsage.CompletionTokens),
+					slog.Int("total_tokens", sessionUsage.TotalTokens),
+				)
+				tokenData := &request_tracking.TokenUsage{
+					PromptTokens:     sessionUsage.PromptTokens,
+					CompletionTokens: sessionUsage.CompletionTokens,
+					TotalTokens:      sessionUsage.TotalTokens,
+				}
+				trackingService.LogRequestWithTokensAsync(ctx, info, tokenData) //nolint:errcheck
+			}
 		} else if sessionUsage == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			slog.Error("[TOKEN] MISSING TOKEN USAGE in streaming response — quota tracking is broken for this request",
 				slog.String("user_id", userID),
