@@ -41,13 +41,18 @@ test:
 build:
     go build ./...
 
-# Run the server
+# Run the server (optionally filter logs, e.g. just run logs=token)
+logs := ""
 run:
-    go run cmd/server/main.go
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -n "{{ logs }}" ]]; then
+        go run cmd/server/main.go 2>&1 | grep --line-buffered -F -i '[{{ logs }}]'
+    else
+        go run cmd/server/main.go
+    fi
 
-# Run the server with dev config (local Ollama)
-run-dev:
-    CONFIG_FILE=config/config.dev.yaml go run cmd/server/main.go
+
 
 # Lint and fix
 lint:

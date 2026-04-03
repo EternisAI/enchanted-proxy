@@ -122,6 +122,34 @@ func extractTokenUsageFromSSELine(line string) *Usage {
 	}
 }
 
+// injectStreamIncludeUsage ensures stream_options.include_usage is set to true
+// for streaming requests. It merges into any existing stream_options rather than
+// overwriting them. Returns the (possibly modified) body. Non-streaming or
+// unparseable requests are returned unchanged.
+func injectStreamIncludeUsage(body []byte) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	var reqBody map[string]interface{}
+	if err := json.Unmarshal(body, &reqBody); err != nil {
+		return body
+	}
+	stream, ok := reqBody["stream"].(bool)
+	if !ok || !stream {
+		return body
+	}
+	streamOptions, _ := reqBody["stream_options"].(map[string]interface{})
+	if streamOptions == nil {
+		streamOptions = make(map[string]interface{})
+	}
+	streamOptions["include_usage"] = true
+	reqBody["stream_options"] = streamOptions
+	if modified, err := json.Marshal(reqBody); err == nil {
+		return modified
+	}
+	return body
+}
+
 func getOpenRouterAPIKey(platform string, config *config.Config) string {
 	switch platform {
 	case "mobile":

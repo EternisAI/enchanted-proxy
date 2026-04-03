@@ -57,7 +57,6 @@ type Querier interface {
 	// Returns plan tokens used today on the fallback model.
 	// Used for tracking fallback quota when normal quota is exceeded.
 	GetUserFallbackPlanTokensToday(ctx context.Context, arg GetUserFallbackPlanTokensTodayParams) (int64, error)
-	GetUserLifetimeTokenUsage(ctx context.Context, userID string) (int64, error)
 	// Note: Queries request_logs directly (not materialized view) because monthly buckets aren't pre-aggregated.
 	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
 	// Month starts on 1st at 00:00 UTC per PostgreSQL DATE_TRUNC('month') behavior.
@@ -66,13 +65,10 @@ type Querier interface {
 	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
 	// Week starts Monday at 00:00 UTC per PostgreSQL DATE_TRUNC('week') behavior.
 	GetUserPlanTokensThisWeek(ctx context.Context, userID string) (int64, error)
+	// Queries request_logs directly for real-time data (not materialized view).
+	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast.
 	GetUserPlanTokensToday(ctx context.Context, userID string) (int64, error)
-	GetUserRequestCountInLastDay(ctx context.Context, userID string) (int64, error)
-	GetUserRequestCountInTimeWindow(ctx context.Context, arg GetUserRequestCountInTimeWindowParams) (int64, error)
 	GetUserTier(ctx context.Context, userID string) (GetUserTierRow, error)
-	GetUserTokenUsageInLastDay(ctx context.Context, userID string) (int64, error)
-	GetUserTokenUsageInTimeWindow(ctx context.Context, arg GetUserTokenUsageInTimeWindowParams) (int64, error)
-	GetUserTokenUsageToday(ctx context.Context, userID string) (int64, error)
 	GetZcashInvoice(ctx context.Context, id uuid.UUID) (ZcashInvoice, error)
 	GetZcashInvoiceForUser(ctx context.Context, arg GetZcashInvoiceForUserParams) (ZcashInvoice, error)
 	GetZcashInvoicesByUserAndStatus(ctx context.Context, arg GetZcashInvoicesByUserAndStatusParams) ([]ZcashInvoice, error)
@@ -80,8 +76,6 @@ type Querier interface {
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
 	MarkAllMessagesAsSent(ctx context.Context, sessionID string) error
 	MarkMessageAsSent(ctx context.Context, id string) error
-	RefreshUserRequestCountsView(ctx context.Context) error
-	RefreshUserTokenUsageView(ctx context.Context) error
 	ResetInviteCode(ctx context.Context, codeHash string) error
 	SoftDeleteInviteCode(ctx context.Context, id int64) error
 	UpdateDeepResearchRunTokens(ctx context.Context, arg UpdateDeepResearchRunTokensParams) error

@@ -180,27 +180,16 @@ func ProxyHandler(
 			}
 		}
 
-		// For Eternis models (GLM, Dolphin): Add stream_options to enable usage reporting
-		// vLLM and similar servers need explicit flag to include usage in streaming responses
-		if provider.Name == "Eternis" && len(requestBody) > 0 {
-			var reqBody map[string]interface{}
-			if err := json.Unmarshal(requestBody, &reqBody); err == nil {
-				// Only add for streaming requests
-				if stream, ok := reqBody["stream"].(bool); ok && stream {
-					reqBody["stream_options"] = map[string]interface{}{
-						"include_usage": true,
-					}
-					// Re-serialize request body
-					if modifiedBody, err := json.Marshal(reqBody); err == nil {
-						requestBody = modifiedBody
-						c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
-						c.Request.ContentLength = int64(len(requestBody))
-						log.Debug("added stream_options for usage reporting",
-							slog.String("provider", provider.Name),
-							slog.String("model", model))
-					}
-				}
-			}
+		// Add stream_options to enable usage reporting in streaming responses.
+		// Many OpenAI-compatible providers (vLLM, Tinfoil, etc.) only include token
+		// usage in SSE chunks when explicitly requested.
+		if modified := injectStreamIncludeUsage(requestBody); len(modified) != len(requestBody) || !bytes.Equal(modified, requestBody) {
+			requestBody = modified
+			c.Request.Body = io.NopCloser(bytes.NewReader(requestBody))
+			c.Request.ContentLength = int64(len(requestBody))
+			log.Debug("added stream_options for usage reporting",
+				slog.String("provider", provider.Name),
+				slog.String("model", model))
 		}
 
 		// Route based on API type
@@ -737,20 +726,55 @@ func handleStreamingDirect(
 		// Log tokens
 		sessionUsage := session.GetTokenUsage()
 		if sessionUsage != nil && trackingService != nil {
-			tokenData := &request_tracking.TokenUsageWithMultiplier{
-				PromptTokens:     sessionUsage.PromptTokens,
-				CompletionTokens: sessionUsage.CompletionTokens,
-				TotalTokens:      sessionUsage.TotalTokens,
-				Multiplier:       provider.TokenMultiplier,
-				PlanTokens:       int(float64(sessionUsage.TotalTokens) * provider.TokenMultiplier),
-			}
 			info := request_tracking.RequestInfo{
 				UserID:   userID,
 				Endpoint: requestPath,
 				Model:    model,
 				Provider: provider.Name,
 			}
-			trackingService.LogRequestWithPlanTokensAsync(ctx, info, tokenData) //nolint:errcheck
+			if provider.TokenMultiplier > 0 {
+				planTokens := int(float64(sessionUsage.TotalTokens) * provider.TokenMultiplier)
+				slog.Info("[TOKEN] request logged",
+					slog.String("user_id", userID),
+					slog.String("model", model),
+					slog.String("provider", provider.Name),
+					slog.Int("prompt_tokens", sessionUsage.PromptTokens),
+					slog.Int("completion_tokens", sessionUsage.CompletionTokens),
+					slog.Int("total_tokens", sessionUsage.TotalTokens),
+					slog.Float64("multiplier", provider.TokenMultiplier),
+					slog.Int("plan_tokens", planTokens),
+				)
+				tokenData := &request_tracking.TokenUsageWithMultiplier{
+					PromptTokens:     sessionUsage.PromptTokens,
+					CompletionTokens: sessionUsage.CompletionTokens,
+					TotalTokens:      sessionUsage.TotalTokens,
+					Multiplier:       provider.TokenMultiplier,
+					PlanTokens:       planTokens,
+				}
+				trackingService.LogRequestWithPlanTokensAsync(ctx, info, tokenData) //nolint:errcheck
+			} else {
+				slog.Warn("[TOKEN] request logged WITHOUT multiplier",
+					slog.String("user_id", userID),
+					slog.String("model", model),
+					slog.String("provider", provider.Name),
+					slog.Int("prompt_tokens", sessionUsage.PromptTokens),
+					slog.Int("completion_tokens", sessionUsage.CompletionTokens),
+					slog.Int("total_tokens", sessionUsage.TotalTokens),
+				)
+				tokenData := &request_tracking.TokenUsage{
+					PromptTokens:     sessionUsage.PromptTokens,
+					CompletionTokens: sessionUsage.CompletionTokens,
+					TotalTokens:      sessionUsage.TotalTokens,
+				}
+				trackingService.LogRequestWithTokensAsync(ctx, info, tokenData) //nolint:errcheck
+			}
+		} else if sessionUsage == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			slog.Error("[TOKEN] MISSING TOKEN USAGE in streaming response — quota tracking is broken for this request",
+				slog.String("user_id", userID),
+				slog.String("model", model),
+				slog.String("provider", provider.Name),
+				slog.Int("status_code", resp.StatusCode),
+			)
 		}
 
 		log.Info("direct streaming: completed",
@@ -860,13 +884,17 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 		// CRITICAL FIX: Use defer to ALWAYS log, even if client disconnects early
 		// Without this, streaming requests were not logged when client disconnected before [DONE]
 		defer func() {
-			// Debug: Log why we might have NULL tokens
-			if tokenUsage == nil {
-				log.Warn("no token usage captured from streaming response",
+			providerName := ""
+			if provider != nil {
+				providerName = provider.Name
+			}
+
+			if tokenUsage == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				log.Error("MISSING TOKEN USAGE in streaming response — quota tracking is broken for this request",
 					slog.String("model", model),
-					slog.String("provider", provider.Name),
-					slog.Int("content_length", fullContent.Len()),
-					slog.String("reason", "client_disconnect_or_missing_usage_chunk"))
+					slog.String("provider", providerName),
+					slog.Int("status_code", resp.StatusCode),
+					slog.Int("content_length", fullContent.Len()))
 			}
 
 			logProxyResponse(log, resp, true, upstreamLatency, model, tokenUsage, nil, clientCtx)
@@ -943,9 +971,15 @@ func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model s
 		tokenUsage = extractTokenUsage(responseBody)
 		content = extractContentFromResponse(responseBody)
 
-		if tokenUsage == nil {
-			log.Debug("No token usage found in response",
-				slog.Bool("is_streaming", false),
+		if tokenUsage == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			providerName := ""
+			if provider != nil {
+				providerName = provider.Name
+			}
+			log.Error("MISSING TOKEN USAGE in non-streaming response — quota tracking is broken for this request",
+				slog.String("model", model),
+				slog.String("provider", providerName),
+				slog.Int("status_code", resp.StatusCode),
 				slog.Int("response_size", len(responseBody)),
 				slog.String("content_type", resp.Header.Get("Content-Type")),
 			)
@@ -1027,11 +1061,20 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 		Provider: provider,
 	}
 
-	// Always log the request, even without token usage
-	// This ensures errors, audio, images, and other endpoints are tracked
 	if tokenUsage != nil && multiplier > 0 {
-		// Best case: Log with plan tokens
 		planTokens := int(float64(tokenUsage.TotalTokens) * multiplier)
+
+		slog.Info("[TOKEN] request logged",
+			slog.String("user_id", userID),
+			slog.String("model", model),
+			slog.String("provider", provider),
+			slog.Int("prompt_tokens", tokenUsage.PromptTokens),
+			slog.Int("completion_tokens", tokenUsage.CompletionTokens),
+			slog.Int("total_tokens", tokenUsage.TotalTokens),
+			slog.Float64("multiplier", multiplier),
+			slog.Int("plan_tokens", planTokens),
+		)
+
 		tokenData := &request_tracking.TokenUsageWithMultiplier{
 			PromptTokens:     tokenUsage.PromptTokens,
 			CompletionTokens: tokenUsage.CompletionTokens,
@@ -1052,7 +1095,14 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 			}
 		}
 	} else if tokenUsage != nil {
-		// Fallback: Log with tokens but no multiplier
+		slog.Warn("[TOKEN] request logged WITHOUT multiplier",
+			slog.String("user_id", userID),
+			slog.String("model", model),
+			slog.String("provider", provider),
+			slog.Int("prompt_tokens", tokenUsage.PromptTokens),
+			slog.Int("completion_tokens", tokenUsage.CompletionTokens),
+			slog.Int("total_tokens", tokenUsage.TotalTokens),
+		)
 		tokenData := &request_tracking.TokenUsage{
 			PromptTokens:     tokenUsage.PromptTokens,
 			CompletionTokens: tokenUsage.CompletionTokens,
@@ -1062,19 +1112,6 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 			if loggerValue := c.Value("logger"); loggerValue != nil {
 				if log, ok := loggerValue.(*logger.Logger); ok {
 					log.Error("failed to log request to database",
-						slog.String("user_id", userID),
-						slog.String("endpoint", endpoint),
-						slog.String("error", err.Error()))
-				}
-			}
-		}
-	} else {
-		// Critical fix: Log request even without token usage
-		// This captures errors, audio, images, and requests where provider didn't return usage
-		if err := trackingService.LogRequestAsync(c.Request.Context(), info); err != nil {
-			if loggerValue := c.Value("logger"); loggerValue != nil {
-				if log, ok := loggerValue.(*logger.Logger); ok {
-					log.Error("failed to log request to database (no token data)",
 						slog.String("user_id", userID),
 						slog.String("endpoint", endpoint),
 						slog.String("error", err.Error()))
