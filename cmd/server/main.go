@@ -22,7 +22,6 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/anonymizer"
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/background"
-	"github.com/eternisai/enchanted-proxy/internal/composio"
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/deepr"
 	"github.com/eternisai/enchanted-proxy/internal/fai"
@@ -35,7 +34,6 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/mcp"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/notifications"
-	"github.com/eternisai/enchanted-proxy/internal/oauth"
 	"github.com/eternisai/enchanted-proxy/internal/probe"
 	"github.com/eternisai/enchanted-proxy/internal/problem_reports"
 	"github.com/eternisai/enchanted-proxy/internal/proxy"
@@ -146,8 +144,6 @@ func main() {
 	}
 
 	// Initialize services
-	oauthService := oauth.NewService(logger.WithComponent("oauth"))
-	composioService := composio.NewService(logger.WithComponent("composio"))
 	inviteCodeService := invitecode.NewService(db.Queries)
 	requestTrackingService := request_tracking.NewService(db.Queries, logger.WithComponent("request_tracking"))
 	iapService := iap.NewService(db.Queries)
@@ -411,8 +407,6 @@ func main() {
 	}
 
 	// Initialize handlers
-	oauthHandler := oauth.NewHandler(oauthService, logger.WithComponent("oauth"))
-	composioHandler := composio.NewHandler(composioService, logger.WithComponent("composio"))
 	inviteCodeHandler := invitecode.NewHandler(inviteCodeService)
 	iapHandler := iap.NewHandler(iapService, logger.WithComponent("iap"))
 	stripeHandler := stripe.NewHandler(stripeService, logger.WithComponent("stripe"))
@@ -530,8 +524,6 @@ func main() {
 		modelRouter:            modelRouter,
 		toolRegistry:           toolRegistry,
 		anonymizerService:      anonymizerSvc,
-		oauthHandler:           oauthHandler,
-		composioHandler:        composioHandler,
 		inviteCodeHandler:      inviteCodeHandler,
 		iapHandler:             iapHandler,
 		stripeHandler:          stripeHandler,
@@ -701,8 +693,6 @@ type restServerInput struct {
 	modelRouter            *routing.ModelRouter
 	toolRegistry           *tools.Registry
 	anonymizerService      *anonymizer.Service
-	oauthHandler           *oauth.Handler
-	composioHandler        *composio.Handler
 	inviteCodeHandler      *invitecode.Handler
 	iapHandler             *iap.Handler
 	stripeHandler          *stripe.Handler
@@ -760,21 +750,6 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 	router.Use(input.firebaseAuth.RequireAuth())
 
 	router.Any("/mcp", input.mcpHandler.HandleMCPAny)
-
-	// OAuth API routes
-	auth := router.Group("/auth")
-	{
-		auth.POST("/exchange", input.oauthHandler.ExchangeToken)
-		auth.POST("/refresh", input.oauthHandler.RefreshToken)
-	}
-
-	// Composio API routes (protected)
-	compose := router.Group("/composio")
-	{
-		compose.POST("/auth", input.composioHandler.CreateConnectedAccount)
-		compose.GET("/account", input.composioHandler.GetConnectedAccount)
-		compose.GET("/refresh", input.composioHandler.RefreshToken)
-	}
 
 	// Invite code API routes (protected)
 	api := router.Group("/api/v1")
