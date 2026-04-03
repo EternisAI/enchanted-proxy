@@ -109,7 +109,9 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	server.Shutdown(ctx)
+	if err := server.Shutdown(ctx); err != nil {
+		appLog.Error("metrics server shutdown error", slog.String("error", err.Error()))
+	}
 
 	appLog.Info("llm-prober stopped")
 }

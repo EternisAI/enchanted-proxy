@@ -34,8 +34,8 @@ type probeTarget struct {
 // NewProbeService creates a new probe service and starts a probe worker goroutine
 // for every unique (base_url, effective_model) combination. Models are iterated in
 // config declaration order so the first canonical name encountered wins for metrics.
-// Endpoints using the Responses API are skipped as they don't support standard
-// chat completions.
+// Responses API endpoints are routed to /responses with dedicated request/response
+// handling (buildResponsesProbeRequestBody / parseResponsesAPIResponse).
 func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models []config.ModelConfig) *ProbeService {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &ProbeService{
