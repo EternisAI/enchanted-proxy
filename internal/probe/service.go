@@ -3,9 +3,11 @@ package probe
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -132,6 +134,14 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 			probe:    target.probe,
 			client: &http.Client{
 				Timeout: probeHTTPTimeout,
+				Transport: &http.Transport{
+					DialContext: (&net.Dialer{
+						Timeout: 10 * time.Second,
+					}).DialContext,
+					TLSHandshakeTimeout:   10 * time.Second,
+					ResponseHeaderTimeout: 15 * time.Second,
+					DisableKeepAlives:     true,
+				},
 			},
 			logger: logger,
 			slack:  s.slack,
