@@ -81,60 +81,88 @@ func (w *probeWorker) run() {
 		slog.Int("failure_threshold", w.probe.FailureThreshold),
 		slog.Duration("initial_jitter", jitter))
 
-	// Wait for jitter before the first probe, respecting shutdown.
-	var result probeResult
+	// --- Stage 1: Initial ---
+	// Use retry interval and accumulate consecutive results until one of the
+	// thresholds is crossed. Only send a Slack notification if consecutive
+	// failures reach the failure threshold; initial successes are silent.
+	healthy := false
+	consecutiveCount := 0
+
+	ticker := time.NewTicker(w.probe.RetryInterval)
+	defer ticker.Stop()
+
+	// Run the first probe after the jitter delay.
 	select {
 	case <-time.After(jitter):
-		result = w.runProbe()
 	case <-w.service.shutdown:
 		return
 	}
 
-	// Probes start in failure state. Track consecutive same-outcome count to
-	// implement threshold-based state transitions.
-	healthy := false
-	consecutiveCount := 0
+	lastSuccess := false // tracks the previous result to detect outcome flips
+	initial := true
+	for initial {
+		result := w.runProbe()
+		if w.ctx.Err() != nil {
+			break
+		}
 
-	if w.ctx.Err() == nil {
+		// Reset counter on outcome flip.
+		if result.success != lastSuccess {
+			consecutiveCount = 0
+			lastSuccess = result.success
+		}
+		consecutiveCount++
+		w.logProbeResult(result)
+
 		if result.success {
-			consecutiveCount = 1
 			if consecutiveCount >= w.probe.SuccessThreshold {
-				// Initial probe succeeds and meets threshold — transition to healthy.
 				healthy = true
 				consecutiveCount = 0
-				w.logStateChange(result)
-				// Suppress Slack on initial success (too noisy at startup).
-			} else {
-				w.logProbeResult(result)
+				initial = false
 			}
 		} else {
-			// Initial failure — already in failure state, just log it.
-			consecutiveCount = 0
-			w.logStateChange(result)
-			w.sendSlackNotification(result)
+			if consecutiveCount >= w.probe.FailureThreshold {
+				healthy = false
+				consecutiveCount = 0
+				w.sendSlackNotification(result)
+				initial = false
+			}
+		}
+
+		if initial {
+			select {
+			case <-ticker.C:
+			case <-w.service.shutdown:
+				return
+			}
 		}
 	}
 
-	currentInterval := w.probe.Interval
-	if !healthy {
-		currentInterval = w.probe.RetryInterval
+	// --- Stage 2: Normal operation ---
+	// Switch between healthy/failing states when the respective consecutive
+	// threshold is met. Log every result, send Slack on state changes.
+	if healthy {
+		ticker.Reset(w.probe.Interval)
+	} else {
+		ticker.Reset(w.probe.RetryInterval)
 	}
-
-	ticker := time.NewTicker(currentInterval)
-	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			result = w.runProbe()
+			result := w.runProbe()
 			if w.ctx.Err() != nil {
 				continue
 			}
 
 			if healthy {
 				if result.success {
-					// Still healthy, reset failure counter.
-					consecutiveCount = 0
+					if consecutiveCount > 0 {
+						// Had some failures before — restore normal interval.
+						consecutiveCount = 0
+						ticker.Reset(w.probe.Interval)
+					}
+					w.logProbeResult(result)
 				} else {
 					consecutiveCount++
 					if consecutiveCount == 1 {
@@ -143,14 +171,11 @@ func (w *probeWorker) run() {
 						ticker.Reset(w.probe.RetryInterval)
 					}
 					if consecutiveCount >= w.probe.FailureThreshold {
-						// Threshold crossed — transition to failure state.
 						healthy = false
 						consecutiveCount = 0
 						w.logStateChange(result)
 						w.sendSlackNotification(result)
-						// Already on retry interval, no need to reset ticker.
 					} else {
-						// Below threshold — log the failure but don't notify.
 						w.logProbeResult(result)
 					}
 				}
@@ -158,19 +183,17 @@ func (w *probeWorker) run() {
 				if result.success {
 					consecutiveCount++
 					if consecutiveCount >= w.probe.SuccessThreshold {
-						// Threshold crossed — transition to success state.
 						healthy = true
 						consecutiveCount = 0
 						ticker.Reset(w.probe.Interval)
 						w.logStateChange(result)
 						w.sendSlackNotification(result)
 					} else {
-						// Below threshold — log the success but don't notify.
 						w.logProbeResult(result)
 					}
 				} else {
-					// Still failing, reset success counter.
 					consecutiveCount = 0
+					w.logProbeResult(result)
 				}
 			}
 		case <-w.service.shutdown:
