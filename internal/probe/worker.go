@@ -31,6 +31,7 @@ type probeWorker struct {
 	probe    *routing.ProbeConfig
 	client   *http.Client
 	logger   *logger.Logger
+	slack    *slackNotifier
 }
 
 // probeResult holds the outcome of a single probe execution.
@@ -88,6 +89,10 @@ func (w *probeWorker) run() {
 	// Log initial state unless we're shutting down.
 	if w.ctx.Err() == nil {
 		w.logStateChange(result)
+		// Only notify Slack on initial failure, not initial success (too noisy at startup).
+		if !result.success {
+			w.sendSlackNotification(result)
+		}
 	}
 
 	currentInterval := w.probe.Interval
@@ -106,12 +111,14 @@ func (w *probeWorker) run() {
 				healthy = true
 				ticker.Reset(w.probe.Interval)
 				w.logStateChange(result)
+				w.sendSlackNotification(result)
 			} else if !result.success && healthy {
 				healthy = false
 				ticker.Reset(w.probe.RetryInterval)
 				// Don't log shutdown-induced failures as state changes.
 				if w.ctx.Err() == nil {
 					w.logStateChange(result)
+					w.sendSlackNotification(result)
 				}
 			}
 		case <-w.service.shutdown:
@@ -159,6 +166,21 @@ func (w *probeWorker) logStateChange(result probeResult) {
 				slog.String("body", result.body))
 		}
 		w.logger.Warn("probe failed", attrs...)
+	}
+}
+
+// sendSlackNotification sends a Slack notification for a probe state change, if configured.
+func (w *probeWorker) sendSlackNotification(result probeResult) {
+	if w.slack == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := w.slack.sendProbeNotification(ctx, w.provider, w.model, result); err != nil {
+		w.logger.Warn("failed to send slack notification",
+			slog.String("provider", w.provider),
+			slog.String("model", w.model),
+			slog.String("error", err.Error()))
 	}
 }
 

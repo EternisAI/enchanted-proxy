@@ -17,6 +17,7 @@ import (
 // chat completion request and records the result as Prometheus metrics.
 type ProbeService struct {
 	logger   *logger.Logger
+	slack    *slackNotifier
 	wg       sync.WaitGroup
 	shutdown chan struct{}
 	cancel   context.CancelFunc
@@ -36,12 +37,16 @@ type probeTarget struct {
 // config declaration order so the first canonical name encountered wins for metrics.
 // Responses API endpoints are routed to /responses with dedicated request/response
 // handling (buildResponsesProbeRequestBody / parseResponsesAPIResponse).
-func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models []config.ModelConfig) *ProbeService {
+func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models []config.ModelConfig, slackWebhookURL string) *ProbeService {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &ProbeService{
 		logger:   logger,
 		shutdown: make(chan struct{}),
 		cancel:   cancel,
+	}
+	if slackWebhookURL != "" {
+		s.slack = newSlackNotifier(slackWebhookURL)
+		logger.Info("slack notifications enabled")
 	}
 
 	routes := router.GetRoutes()
@@ -129,6 +134,7 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 				Timeout: probeHTTPTimeout,
 			},
 			logger: logger,
+			slack:  s.slack,
 		}
 
 		s.wg.Add(1)

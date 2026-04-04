@@ -76,6 +76,7 @@ func main() {
 		appLogger.WithComponent("probe"),
 		router,
 		cfg.ModelRouterConfig.Models,
+		os.Getenv("LLM_PROBER_SLACK_WEBHOOK_URL"),
 	)
 
 	// Start metrics HTTP server.
