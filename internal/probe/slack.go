@@ -57,11 +57,6 @@ func (n *slackNotifier) sendProbeNotification(ctx context.Context, provider, mod
 				fmt.Sprintf("*Tokens:* prompt=%d, completion=%d", result.usage.PromptTokens, result.usage.CompletionTokens),
 			)
 		}
-		if result.contentMismatch {
-			detailLines = append(detailLines,
-				fmt.Sprintf("*Content mismatch:* expected `%s`, got `%s`", result.expected, result.got),
-			)
-		}
 	} else {
 		emoji = "\u274c" // red X
 		status = "Probe Failed"
@@ -81,9 +76,15 @@ func (n *slackNotifier) sendProbeNotification(ctx context.Context, provider, mod
 				fmt.Sprintf("*Status:* `%d`", result.statusCode),
 				fmt.Sprintf("*Duration:* `%s`", result.duration.Round(time.Millisecond)),
 			)
-			if result.body != "" {
+			if result.contentMismatch {
 				detailLines = append(detailLines,
-					fmt.Sprintf("*Response:*\n```%s```", result.body),
+					fmt.Sprintf("*Content mismatch:* expected `%s`, got `%s`", result.expected, result.got),
+				)
+			} else if result.body != "" {
+				sanitized := strings.ReplaceAll(result.body, "`", "'")
+				sanitized = strings.ReplaceAll(sanitized, "\n", " ")
+				detailLines = append(detailLines,
+					fmt.Sprintf("*Response:* `%s`", sanitized),
 				)
 			}
 		}

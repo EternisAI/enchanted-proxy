@@ -236,6 +236,11 @@ func (w *probeWorker) runProbe() probeResult {
 		if w.ctx.Err() != nil {
 			return probeResult{err: err}
 		}
+		w.logger.Debug("probe request failed",
+			slog.String("provider", w.provider),
+			slog.String("model", w.model),
+			slog.Duration("duration", duration),
+			slog.String("error", err.Error()))
 		recordProbeResult(w.provider, w.model, 0, duration.Seconds(), false, false, nil)
 		return probeResult{duration: duration, err: err}
 	}
