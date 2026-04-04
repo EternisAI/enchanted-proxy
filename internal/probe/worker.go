@@ -113,8 +113,10 @@ func (w *probeWorker) run() {
 			if result.success && !healthy {
 				healthy = true
 				ticker.Reset(w.probe.Interval)
-				w.logStateChange(result)
-				w.sendSlackNotification(result)
+				if w.ctx.Err() == nil {
+					w.logStateChange(result)
+					w.sendSlackNotification(result)
+				}
 			} else if !result.success && healthy {
 				healthy = false
 				ticker.Reset(w.probe.RetryInterval)
@@ -177,7 +179,7 @@ func (w *probeWorker) sendSlackNotification(result probeResult) {
 	if w.slack == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(w.ctx, 10*time.Second)
 	defer cancel()
 	if err := w.slack.sendProbeNotification(ctx, w.provider, w.model, result); err != nil {
 		w.logger.Warn("failed to send slack notification",
