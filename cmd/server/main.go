@@ -34,7 +34,6 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/mcp"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/notifications"
-	"github.com/eternisai/enchanted-proxy/internal/probe"
 	"github.com/eternisai/enchanted-proxy/internal/problem_reports"
 	"github.com/eternisai/enchanted-proxy/internal/proxy"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
