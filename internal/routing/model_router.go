@@ -145,6 +145,8 @@ type ProbeConfig struct {
 	MaxTokens        int
 	Temperature      float64
 	Thinking         bool
+	SuccessThreshold int // consecutive successes required to transition from failure to success state
+	FailureThreshold int // consecutive failures required to transition from success to failure state
 }
 
 // defaultProbeConfig returns a ProbeConfig with all defaults applied.
@@ -159,19 +161,23 @@ func defaultProbeConfig() *ProbeConfig {
 		MaxTokens:        config.DefaultProbeMaxTokens,
 		Temperature:      config.DefaultProbeTemperature,
 		Thinking:         false,
+		SuccessThreshold: config.DefaultProbeSuccessThreshold,
+		FailureThreshold: config.DefaultProbeFailureThreshold,
 	}
 }
 
 // probeConfigFromConfig converts a validated config.ProbeConfig to a routing.ProbeConfig.
 func probeConfigFromConfig(cfg *config.ProbeConfig) *ProbeConfig {
 	p := &ProbeConfig{
-		Enabled:       *cfg.Enabled,
-		Interval:      cfg.Interval,
-		RetryInterval: cfg.RetryInterval,
-		Prompt:        cfg.Prompt,
-		MaxTokens:     cfg.MaxTokens,
-		Temperature:   *cfg.Temperature,
-		Thinking:      cfg.Thinking,
+		Enabled:          *cfg.Enabled,
+		Interval:         cfg.Interval,
+		RetryInterval:    cfg.RetryInterval,
+		Prompt:           cfg.Prompt,
+		MaxTokens:        cfg.MaxTokens,
+		Temperature:      *cfg.Temperature,
+		Thinking:         cfg.Thinking,
+		SuccessThreshold: cfg.SuccessThreshold,
+		FailureThreshold: cfg.FailureThreshold,
 	}
 
 	// Distinguish "explicitly set to empty" from "default OK".

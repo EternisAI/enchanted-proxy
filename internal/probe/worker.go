@@ -77,6 +77,8 @@ func (w *probeWorker) run() {
 		slog.String("model", w.model),
 		slog.Duration("interval", w.probe.Interval),
 		slog.Duration("retry_interval", w.probe.RetryInterval),
+		slog.Int("success_threshold", w.probe.SuccessThreshold),
+		slog.Int("failure_threshold", w.probe.FailureThreshold),
 		slog.Duration("initial_jitter", jitter))
 
 	// Wait for jitter before the first probe, respecting shutdown.
@@ -88,12 +90,27 @@ func (w *probeWorker) run() {
 		return
 	}
 
-	healthy := result.success
-	// Log initial state unless we're shutting down.
+	// Probes start in failure state. Track consecutive same-outcome count to
+	// implement threshold-based state transitions.
+	healthy := false
+	consecutiveCount := 0
+
 	if w.ctx.Err() == nil {
-		w.logStateChange(result)
-		// Only notify Slack on initial failure, not initial success (too noisy at startup).
-		if !result.success {
+		if result.success {
+			consecutiveCount = 1
+			if consecutiveCount >= w.probe.SuccessThreshold {
+				// Initial probe succeeds and meets threshold — transition to healthy.
+				healthy = true
+				consecutiveCount = 0
+				w.logStateChange(result)
+				// Suppress Slack on initial success (too noisy at startup).
+			} else {
+				w.logProbeResult(result)
+			}
+		} else {
+			// Initial failure — already in failure state, just log it.
+			consecutiveCount = 0
+			w.logStateChange(result)
 			w.sendSlackNotification(result)
 		}
 	}
@@ -110,20 +127,50 @@ func (w *probeWorker) run() {
 		select {
 		case <-ticker.C:
 			result = w.runProbe()
-			if result.success && !healthy {
-				healthy = true
-				ticker.Reset(w.probe.Interval)
-				if w.ctx.Err() == nil {
-					w.logStateChange(result)
-					w.sendSlackNotification(result)
+			if w.ctx.Err() != nil {
+				continue
+			}
+
+			if healthy {
+				if result.success {
+					// Still healthy, reset failure counter.
+					consecutiveCount = 0
+				} else {
+					consecutiveCount++
+					if consecutiveCount == 1 {
+						// First failure — switch to retry interval immediately
+						// so we can quickly determine if this is a real outage.
+						ticker.Reset(w.probe.RetryInterval)
+					}
+					if consecutiveCount >= w.probe.FailureThreshold {
+						// Threshold crossed — transition to failure state.
+						healthy = false
+						consecutiveCount = 0
+						w.logStateChange(result)
+						w.sendSlackNotification(result)
+						// Already on retry interval, no need to reset ticker.
+					} else {
+						// Below threshold — log the failure but don't notify.
+						w.logProbeResult(result)
+					}
 				}
-			} else if !result.success && healthy {
-				healthy = false
-				ticker.Reset(w.probe.RetryInterval)
-				// Don't log shutdown-induced failures as state changes.
-				if w.ctx.Err() == nil {
-					w.logStateChange(result)
-					w.sendSlackNotification(result)
+			} else {
+				if result.success {
+					consecutiveCount++
+					if consecutiveCount >= w.probe.SuccessThreshold {
+						// Threshold crossed — transition to success state.
+						healthy = true
+						consecutiveCount = 0
+						ticker.Reset(w.probe.Interval)
+						w.logStateChange(result)
+						w.sendSlackNotification(result)
+					} else {
+						// Below threshold — log the success but don't notify.
+						w.logProbeResult(result)
+					}
+				} else {
+					// Still failing, reset success counter.
+					consecutiveCount = 0
 				}
 			}
 		case <-w.service.shutdown:
@@ -132,6 +179,46 @@ func (w *probeWorker) run() {
 				slog.String("model", w.model))
 			return
 		}
+	}
+}
+
+// logProbeResult logs an individual probe result that did not cause a state transition
+// (i.e. the consecutive count is still below the threshold).
+func (w *probeWorker) logProbeResult(result probeResult) {
+	if result.success {
+		attrs := []any{
+			slog.String("provider", w.provider),
+			slog.String("model", w.model),
+			slog.Int("status", result.statusCode),
+			slog.Duration("duration", result.duration),
+		}
+		if result.usage != nil {
+			attrs = append(attrs,
+				slog.Int("prompt_tokens", result.usage.PromptTokens),
+				slog.Int("completion_tokens", result.usage.CompletionTokens))
+		}
+		w.logger.Info("probe succeeded (below threshold)", attrs...)
+	} else {
+		attrs := []any{
+			slog.String("provider", w.provider),
+			slog.String("model", w.model),
+		}
+		if result.err != nil {
+			attrs = append(attrs,
+				slog.Duration("duration", result.duration),
+				slog.String("error", result.err.Error()))
+		} else {
+			attrs = append(attrs,
+				slog.Int("status", result.statusCode),
+				slog.Duration("duration", result.duration),
+				slog.String("body", result.body))
+			if result.contentMismatch {
+				attrs = append(attrs,
+					slog.String("expected_content", result.expected),
+					slog.String("actual_content", result.got))
+			}
+		}
+		w.logger.Warn("probe failed (below threshold)", attrs...)
 	}
 }
 

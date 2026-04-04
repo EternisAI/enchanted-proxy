@@ -415,6 +415,14 @@ type ProbeConfig struct {
 	// models and applies thinking suppression parameters (e.g., reasoning_effort: "low" for
 	// OpenAI o-series). When true, no suppression is applied.
 	Thinking bool `yaml:"thinking,omitempty"`
+
+	// SuccessThreshold is the number of consecutive successful probes required before
+	// a probe in failure state transitions to success state. Minimum 1, default 1.
+	SuccessThreshold int `yaml:"success_threshold,omitempty"`
+
+	// FailureThreshold is the number of consecutive failed probes required before
+	// a probe in success state transitions to failure state. Minimum 1, default 3.
+	FailureThreshold int `yaml:"failure_threshold,omitempty"`
 }
 
 const (
@@ -423,8 +431,11 @@ const (
 	DefaultProbeRetryInterval    = 1 * time.Minute
 	DefaultProbePrompt           = "Say OK"
 	DefaultProbeExpectedResponse = "OK"
-	DefaultProbeMaxTokens        = 100
-	DefaultProbeTemperature      = 0.0
+	DefaultProbeMaxTokens          = 100
+	DefaultProbeTemperature        = 0.0
+	DefaultProbeSuccessThreshold   = 1
+	DefaultProbeFailureThreshold   = 3
+	MinProbeThreshold              = 1
 )
 
 // Validate applies defaults and validates a ProbeConfig.
@@ -475,6 +486,13 @@ func (cfg *ProbeConfig) Validate() error {
 	if cfg.Temperature == nil {
 		defaultTemp := DefaultProbeTemperature
 		cfg.Temperature = &defaultTemp
+	}
+
+	if cfg.SuccessThreshold <= 0 {
+		cfg.SuccessThreshold = DefaultProbeSuccessThreshold
+	}
+	if cfg.FailureThreshold <= 0 {
+		cfg.FailureThreshold = DefaultProbeFailureThreshold
 	}
 
 	return nil
