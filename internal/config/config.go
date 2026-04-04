@@ -25,14 +25,6 @@ type Config struct {
 	GinMode                 string
 	FirebaseProjectID       string
 	DatabaseURL             string
-	GoogleClientID          string
-	GoogleClientSecret      string
-	SlackClientID           string
-	SlackClientSecret       string
-	TwitterClientID         string
-	TwitterClientSecret     string
-	ComposioAPIKey          string
-	ComposioTwitterConfig   string
 	OpenAIAPIKey            string
 	OpenRouterMobileAPIKey  string
 	OpenRouterDesktopAPIKey string
@@ -132,9 +124,6 @@ type Config struct {
 	BackgroundPollingTimeout     int  // Minutes before giving up on polling (default: 30)
 	BackgroundMaxConcurrentPolls int  // Maximum number of concurrent polling workers (default: 100)
 
-	// Active Health Checks
-	ActiveHealthChecksEnabled bool // Enable/disable active health check probes for model endpoints (default: true)
-
 	// Push Notifications
 	PushNotificationsEnabled bool // Enable/disable FCM push notifications for task completions (default: true)
 
@@ -190,21 +179,6 @@ func LoadConfig() {
 
 		// Database
 		DatabaseURL: getEnvOrDefault("DATABASE_URL", "postgres://localhost/tee_api?sslmode=disable"),
-
-		// Google
-		GoogleClientID:     getEnvOrDefault("GOOGLE_CLIENT_ID", ""),
-		GoogleClientSecret: getEnvOrDefault("GOOGLE_CLIENT_SECRET", ""),
-
-		// Slack
-		SlackClientID:     getEnvOrDefault("SLACK_CLIENT_ID", ""),
-		SlackClientSecret: getEnvOrDefault("SLACK_CLIENT_SECRET", ""),
-
-		// Twitter
-		TwitterClientID: getEnvOrDefault("TWITTER_CLIENT_ID", ""),
-
-		// Composio
-		ComposioAPIKey:        getEnvOrDefault("COMPOSIO_API_KEY", ""),
-		ComposioTwitterConfig: getEnvOrDefault("COMPOSIO_TWITTER_CONFIG", ""),
 
 		// OpenAI
 		OpenAIAPIKey: getEnvOrDefault("OPENAI_API_KEY", ""),
@@ -314,9 +288,6 @@ func LoadConfig() {
 		BackgroundPollingTimeout:     getEnvAsInt("BACKGROUND_POLLING_TIMEOUT", 30),
 		BackgroundMaxConcurrentPolls: getEnvAsInt("BACKGROUND_MAX_CONCURRENT_POLLS", 100),
 
-		// Active Health Checks
-		ActiveHealthChecksEnabled: getEnvOrDefault("ACTIVE_HEALTH_CHECKS_ENABLED", "true") == "true",
-
 		// Push Notifications
 		PushNotificationsEnabled: getEnvOrDefault("PUSH_NOTIFICATIONS_ENABLED", "true") == "true",
 
@@ -384,16 +355,8 @@ func LoadConfig() {
 		log.Fatal("Title Generation configuration is empty")
 	}
 
-	if AppConfig.GoogleClientID == "" || AppConfig.SlackClientID == "" || AppConfig.TwitterClientID == "" {
-		log.Println("Warning: Some OAuth client IDs are missing. Please check your environment variables.")
-	}
-
 	if AppConfig.FirebaseProjectID == "" {
 		log.Println("Warning: Firebase project ID is missing. Please set FIREBASE_PROJECT_ID environment variable.")
-	}
-
-	if AppConfig.ComposioAPIKey == "" {
-		log.Println("Warning: Composio API key is missing. Please set COMPOSIO_API_KEY environment variable.")
 	}
 
 	if AppConfig.PerplexityAPIKey == "" {

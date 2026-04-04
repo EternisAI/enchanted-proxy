@@ -139,6 +139,7 @@ type FallbackConfig struct {
 type ProbeConfig struct {
 	Enabled          bool
 	Interval         time.Duration
+	RetryInterval    time.Duration
 	Prompt           string
 	ExpectedResponse *string // nil = no content check, non-nil = check substring
 	MaxTokens        int
@@ -152,6 +153,7 @@ func defaultProbeConfig() *ProbeConfig {
 	return &ProbeConfig{
 		Enabled:          true,
 		Interval:         config.DefaultProbeInterval,
+		RetryInterval:    config.DefaultProbeRetryInterval,
 		Prompt:           config.DefaultProbePrompt,
 		ExpectedResponse: &defaultResp,
 		MaxTokens:        config.DefaultProbeMaxTokens,
@@ -163,12 +165,13 @@ func defaultProbeConfig() *ProbeConfig {
 // probeConfigFromConfig converts a validated config.ProbeConfig to a routing.ProbeConfig.
 func probeConfigFromConfig(cfg *config.ProbeConfig) *ProbeConfig {
 	p := &ProbeConfig{
-		Enabled:     *cfg.Enabled,
-		Interval:    cfg.Interval,
-		Prompt:      cfg.Prompt,
-		MaxTokens:   cfg.MaxTokens,
-		Temperature: *cfg.Temperature,
-		Thinking:    cfg.Thinking,
+		Enabled:       *cfg.Enabled,
+		Interval:      cfg.Interval,
+		RetryInterval: cfg.RetryInterval,
+		Prompt:        cfg.Prompt,
+		MaxTokens:     cfg.MaxTokens,
+		Temperature:   *cfg.Temperature,
+		Thinking:      cfg.Thinking,
 	}
 
 	// Distinguish "explicitly set to empty" from "default OK".
@@ -473,7 +476,7 @@ func (mr *ModelRouter) getModelEndpointProvider(model string, platform string) *
 	// the selected provider endpoint configuration.
 	// This list of endpoints contains values and we are updating and returning a copy.
 	if provider.Name == "OpenRouter" {
-		apiKey := mr.getOpenRouterAPIKey(platform)
+		apiKey := mr.GetOpenRouterAPIKey(platform)
 
 		if apiKey == "" {
 			mr.logger.Warn("no API key configured for OpenRouter")
@@ -489,9 +492,9 @@ func (mr *ModelRouter) getModelEndpointProvider(model string, platform string) *
 	return provider
 }
 
-// getOpenRouterAPIKey returns the appropriate OpenRouter API key for the platform.
+// GetOpenRouterAPIKey returns the appropriate OpenRouter API key for the platform.
 // Falls back to the other platform's key if the requested platform key is not configured.
-func (mr *ModelRouter) getOpenRouterAPIKey(platform string) string {
+func (mr *ModelRouter) GetOpenRouterAPIKey(platform string) string {
 	if apiKeys, providerExists := mr.apiKeys["OpenRouter"]; providerExists {
 		// Try resolving the key for the target platform
 		if key := apiKeys[platform]; key != "" {
