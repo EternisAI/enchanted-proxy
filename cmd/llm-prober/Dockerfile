@@ -18,7 +18,7 @@ COPY cmd ./cmd
 COPY internal ./internal
 
 # Build the llm-prober binary
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o llm-prober cmd/llm-prober/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o llm-prober cmd/llm-prober/main.go
 
 # Runtime stage
 FROM alpine:3.23.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659

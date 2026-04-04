@@ -149,11 +149,6 @@ func (w *probeWorker) logStateChange(result probeResult) {
 				slog.Int("prompt_tokens", result.usage.PromptTokens),
 				slog.Int("completion_tokens", result.usage.CompletionTokens))
 		}
-		if result.contentMismatch {
-			attrs = append(attrs,
-				slog.String("expected_content", result.expected),
-				slog.String("actual_content", result.got))
-		}
 		w.logger.Info("probe succeeded", attrs...)
 	} else {
 		attrs := []any{
@@ -169,6 +164,11 @@ func (w *probeWorker) logStateChange(result probeResult) {
 				slog.Int("status", result.statusCode),
 				slog.Duration("duration", result.duration),
 				slog.String("body", result.body))
+			if result.contentMismatch {
+				attrs = append(attrs,
+					slog.String("expected_content", result.expected),
+					slog.String("actual_content", result.got))
+			}
 		}
 		w.logger.Warn("probe failed", attrs...)
 	}
