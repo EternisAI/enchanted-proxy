@@ -22,10 +22,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o llm-prober cmd/ll
 
 # Runtime stage
 FROM alpine:3.23.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates && \
+    addgroup -S prober && adduser -S -G prober prober && \
+    sed -i "s/^\(prober:x:[0-9]*\):.*$/\1:/" /etc/group
 
-COPY config/config.yaml /etc/enchanted-proxy/config.yaml
+COPY --chown=prober:prober config/config.yaml /etc/enchanted-proxy/config.yaml
 ENV CONFIG_FILE=/etc/enchanted-proxy/config.yaml
 
-COPY --from=builder /app/llm-prober /usr/local/bin/llm-prober
+COPY --chown=prober:prober --from=builder /app/llm-prober /usr/local/bin/llm-prober
+USER prober
 CMD ["/usr/local/bin/llm-prober"]
