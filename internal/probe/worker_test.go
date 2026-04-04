@@ -10,6 +10,7 @@ func TestParseResponse(t *testing.T) {
 	tests := []struct {
 		name            string
 		body            string
+		wantErr         bool
 		wantContent     string
 		wantUsageNil    bool
 		wantPromptToks  int
@@ -40,25 +41,213 @@ func TestParseResponse(t *testing.T) {
 			wantUsageNil: true,
 		},
 		{
-			name:         "invalid JSON",
-			body:         `not json`,
-			wantContent:  "",
+			name:    "invalid JSON",
+			body:    `not json`,
+			wantErr: true,
+		},
+		{
+			name:    "empty body",
+			body:    ``,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseResponse([]byte(tt.body))
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.content != tt.wantContent {
+				t.Errorf("content = %q, want %q", result.content, tt.wantContent)
+			}
+
+			if tt.wantUsageNil {
+				if result.usage != nil {
+					t.Errorf("expected nil usage, got %+v", result.usage)
+				}
+			} else {
+				if result.usage == nil {
+					t.Fatal("expected non-nil usage")
+				}
+				if result.usage.PromptTokens != tt.wantPromptToks {
+					t.Errorf("prompt_tokens = %d, want %d", result.usage.PromptTokens, tt.wantPromptToks)
+				}
+				if result.usage.CompletionTokens != tt.wantCompleteTok {
+					t.Errorf("completion_tokens = %d, want %d", result.usage.CompletionTokens, tt.wantCompleteTok)
+				}
+			}
+		})
+	}
+}
+
+func TestParseResponsesAPIResponse(t *testing.T) {
+	tests := []struct {
+		name            string
+		body            string
+		wantErr         bool
+		wantContent     string
+		wantStatus      string
+		wantUsageNil    bool
+		wantPromptToks  int
+		wantCompleteTok int
+	}{
+		{
+			name: "full response with usage",
+			body: `{
+				"id": "resp_abc123",
+				"status": "completed",
+				"output": [
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "output_text", "text": "OK"}
+						]
+					}
+				],
+				"usage": {"input_tokens": 10, "output_tokens": 1}
+			}`,
+			wantContent:     "OK",
+			wantStatus:      "completed",
+			wantPromptToks:  10,
+			wantCompleteTok: 1,
+		},
+		{
+			name: "response without usage",
+			body: `{
+				"id": "resp_abc123",
+				"status": "completed",
+				"output": [
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "output_text", "text": "hello"}
+						]
+					}
+				]
+			}`,
+			wantContent:  "hello",
+			wantStatus:   "completed",
 			wantUsageNil: true,
 		},
 		{
-			name:         "empty body",
-			body:         ``,
+			name: "multiple output items — skips reasoning, picks message",
+			body: `{
+				"status": "completed",
+				"output": [
+					{
+						"type": "reasoning",
+						"content": [{"type": "reasoning_text", "text": "thinking..."}]
+					},
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "output_text", "text": "answer"}
+						]
+					}
+				]
+			}`,
+			wantContent:  "answer",
+			wantStatus:   "completed",
+			wantUsageNil: true,
+		},
+		{
+			name: "multiple content blocks concatenated",
+			body: `{
+				"status": "completed",
+				"output": [
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "output_text", "text": "hello "},
+							{"type": "output_text", "text": "world"}
+						]
+					}
+				]
+			}`,
+			wantContent:  "hello world",
+			wantStatus:   "completed",
+			wantUsageNil: true,
+		},
+		{
+			name:         "empty output",
+			body:         `{"status": "completed", "output": []}`,
 			wantContent:  "",
+			wantStatus:   "completed",
+			wantUsageNil: true,
+		},
+		{
+			name:    "invalid JSON",
+			body:    `not json`,
+			wantErr: true,
+		},
+		{
+			name:    "empty body",
+			body:    ``,
+			wantErr: true,
+		},
+		{
+			name: "message with no output_text content",
+			body: `{
+				"status": "completed",
+				"output": [
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "refusal", "text": "I cannot help with that"}
+						]
+					}
+				]
+			}`,
+			wantContent:  "",
+			wantStatus:   "completed",
+			wantUsageNil: true,
+		},
+		{
+			name: "failed status",
+			body: `{
+				"status": "failed",
+				"output": []
+			}`,
+			wantContent:  "",
+			wantStatus:   "failed",
 			wantUsageNil: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseResponse([]byte(tt.body))
+			result, err := parseResponsesAPIResponse([]byte(tt.body))
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
 			if result.content != tt.wantContent {
 				t.Errorf("content = %q, want %q", result.content, tt.wantContent)
+			}
+
+			if result.status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", result.status, tt.wantStatus)
 			}
 
 			if tt.wantUsageNil {
@@ -105,7 +294,10 @@ func TestParseResponse_RoundTrip(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	result := parseResponse(body)
+	result, err := parseResponse(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if result.content != "pong" {
 		t.Errorf("content = %q, want %q", result.content, "pong")
 	}

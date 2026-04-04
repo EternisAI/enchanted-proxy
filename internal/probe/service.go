@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
@@ -16,73 +17,145 @@ import (
 // chat completion request and records the result as Prometheus metrics.
 type ProbeService struct {
 	logger   *logger.Logger
+	slack    *slackNotifier
 	wg       sync.WaitGroup
 	shutdown chan struct{}
 	cancel   context.CancelFunc
 }
 
+// probeTarget holds deduplicated probe configuration, pairing the resolved
+// endpoint data (for HTTP requests) with canonical names (for metric labels).
+type probeTarget struct {
+	provider       *routing.ProviderConfig
+	probe          *routing.ProbeConfig
+	providerName   string // for metrics labels
+	canonicalModel string // for metrics labels (from config entry name)
+}
+
 // NewProbeService creates a new probe service and starts a probe worker goroutine
-// for every enabled model endpoint. Endpoints using the Responses API are skipped
-// as they don't support standard chat completions.
-func NewProbeService(logger *logger.Logger, router *routing.ModelRouter) *ProbeService {
+// for every unique (base_url, effective_model) combination. Models are iterated in
+// config declaration order so the first canonical name encountered wins for metrics.
+// Responses API endpoints are routed to /responses with dedicated request/response
+// handling (buildResponsesProbeRequestBody / parseResponsesAPIResponse).
+func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models []config.ModelConfig, slackWebhookURL string) *ProbeService {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &ProbeService{
 		logger:   logger,
 		shutdown: make(chan struct{}),
 		cancel:   cancel,
 	}
+	if slackWebhookURL != "" {
+		s.slack = newSlackNotifier(slackWebhookURL)
+		logger.Info("slack notifications enabled")
+	}
 
 	routes := router.GetRoutes()
-	workerCount := 0
 
-	for model, route := range routes {
-		// Skip wildcard route — no specific model to probe.
-		if model == "*" {
+	// Collect unique probe targets, iterating models in config declaration order
+	// so the first canonical name encountered for each (base_url, effective_model) wins.
+	seen := make(map[string]*probeTarget)
+	var targets []*probeTarget
+	duplicatesSkipped := 0
+
+	for _, modelCfg := range models {
+		if modelCfg.Name == "*" {
 			continue
 		}
 
-		// Probe all endpoints (active and inactive).
+		route, exists := routes[modelCfg.Name]
+		if !exists {
+			continue
+		}
+
 		allEndpoints := make([]routing.ModelEndpoint, 0, len(route.ActiveEndpoints)+len(route.InactiveEndpoints))
 		allEndpoints = append(allEndpoints, route.ActiveEndpoints...)
 		allEndpoints = append(allEndpoints, route.InactiveEndpoints...)
 
 		for _, endpoint := range allEndpoints {
-			// Skip endpoints without probe config (shouldn't happen with defaults, but be safe).
 			if endpoint.Probe == nil || !endpoint.Probe.Enabled {
 				continue
 			}
 
-			// Skip Responses API endpoints — they don't support /chat/completions.
-			if endpoint.Provider.APIType == config.APITypeResponses {
-				logger.Info("skipping probe for responses API endpoint",
+			effectiveModel := endpoint.Provider.Model
+
+			// Dedupe by (base_url, effective_model). This is sufficient because each
+			// provider has a single API key (base URL uniquely identifies credentials),
+			// and when the same effective model appears under multiple canonical names
+			// the first-encountered entry wins by design (config declaration order).
+			key := strings.TrimRight(endpoint.Provider.BaseURL, "/") + "|" + effectiveModel
+
+			if existing, exists := seen[key]; exists {
+				logger.Debug("skipping duplicate probe target",
+					slog.String("canonical_model", modelCfg.Name),
+					slog.String("effective_model", effectiveModel),
 					slog.String("provider", endpoint.Provider.Name),
-					slog.String("model", model))
+					slog.String("dedup_canonical", existing.canonicalModel))
+				duplicatesSkipped++
 				continue
 			}
 
-			w := &probeWorker{
-				service:  s,
-				ctx:      ctx,
-				provider: endpoint.Provider.Name,
-				model:    model,
-				endpoint: endpoint.Provider,
-				probe:    endpoint.Probe,
-				client: &http.Client{
-					Timeout: probeHTTPTimeout,
-				},
-				logger: logger,
+			// OpenRouter endpoints have empty API keys in the route table because
+			// the key is normally resolved per-request based on platform. For probes
+			// we resolve it once here (defaulting to mobile).
+			provider := endpoint.Provider
+			if provider.Name == "OpenRouter" {
+				apiKey := router.GetOpenRouterAPIKey("mobile")
+				if apiKey == "" {
+					logger.Warn("skipping OpenRouter probe: no API key configured",
+						slog.String("model", modelCfg.Name))
+					continue
+				}
+				provCopy := *provider
+				provCopy.APIKey = apiKey
+				provider = &provCopy
 			}
 
-			s.wg.Add(1)
-			go w.run()
-			workerCount++
+			target := &probeTarget{
+				provider:       provider,
+				probe:          endpoint.Probe,
+				providerName:   endpoint.Provider.Name,
+				canonicalModel: modelCfg.Name,
+			}
+			seen[key] = target
+			targets = append(targets, target)
 		}
 	}
 
+	// Create workers from deduplicated, ordered targets.
+	for _, target := range targets {
+		w := &probeWorker{
+			service:  s,
+			ctx:      ctx,
+			provider: target.providerName,
+			model:    target.canonicalModel,
+			endpoint: target.provider,
+			probe:    target.probe,
+			client: &http.Client{
+				Timeout: probeHTTPTimeout,
+			},
+			logger: logger,
+			slack:  s.slack,
+		}
+
+		s.wg.Add(1)
+		go w.run()
+	}
+
 	logger.Info("probe service started",
-		slog.Int("workers", workerCount))
+		slog.Int("workers", len(targets)),
+		slog.Int("duplicates_skipped", duplicatesSkipped))
 
 	return s
+}
+
+// Ready reports whether the probe service is initialized and not shutting down.
+func (s *ProbeService) Ready() bool {
+	select {
+	case <-s.shutdown:
+		return false
+	default:
+		return true
+	}
 }
 
 // Shutdown stops all probe workers and waits for them to finish.

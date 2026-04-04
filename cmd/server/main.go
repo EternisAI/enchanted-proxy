@@ -370,14 +370,6 @@ func main() {
 	// Initialize model routing fallback service
 	fallbackService := fallback.NewFallbackService(config.AppConfig, logger.WithComponent("fallback"), modelRouter)
 
-	// Initialize model endpoint health probe service
-	var probeService *probe.ProbeService
-	if config.AppConfig.ActiveHealthChecksEnabled {
-		probeService = probe.NewProbeService(logger.WithComponent("probe"), modelRouter)
-	} else {
-		log.Warn("active health checks are disabled via ACTIVE_HEALTH_CHECKS_ENABLED=false")
-	}
-
 	// Initialize key sharing service
 	var keyshareHandler *keyshare.Handler
 	if firebaseClient != nil {
@@ -634,9 +626,6 @@ func main() {
 
 	// Stop the readiness probe background check
 	readinessProbe.Stop()
-
-	// Shutdown the model endpoint health probe service
-	probeService.Shutdown()
 
 	// Shutdown the model routing fallback service
 	fallbackService.Shutdown()
