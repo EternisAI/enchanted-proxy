@@ -297,7 +297,7 @@ func (w *probeWorker) runProbe() probeResult {
 		usage:      parsed.usage,
 	}
 
-	if hasExpectedResponse && !contentMatch {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && hasExpectedResponse && !contentMatch {
 		result.contentMismatch = true
 		result.expected = *w.probe.ExpectedResponse
 		result.got = truncate(parsed.content, 100)
