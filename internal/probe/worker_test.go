@@ -10,6 +10,7 @@ func TestParseResponse(t *testing.T) {
 	tests := []struct {
 		name            string
 		body            string
+		wantErr         bool
 		wantContent     string
 		wantUsageNil    bool
 		wantPromptToks  int
@@ -40,22 +41,30 @@ func TestParseResponse(t *testing.T) {
 			wantUsageNil: true,
 		},
 		{
-			name:         "invalid JSON",
-			body:         `not json`,
-			wantContent:  "",
-			wantUsageNil: true,
+			name:    "invalid JSON",
+			body:    `not json`,
+			wantErr: true,
 		},
 		{
-			name:         "empty body",
-			body:         ``,
-			wantContent:  "",
-			wantUsageNil: true,
+			name:    "empty body",
+			body:    ``,
+			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseResponse([]byte(tt.body))
+			result, err := parseResponse([]byte(tt.body))
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
 			if result.content != tt.wantContent {
 				t.Errorf("content = %q, want %q", result.content, tt.wantContent)
@@ -84,7 +93,9 @@ func TestParseResponsesAPIResponse(t *testing.T) {
 	tests := []struct {
 		name            string
 		body            string
+		wantErr         bool
 		wantContent     string
+		wantStatus      string
 		wantUsageNil    bool
 		wantPromptToks  int
 		wantCompleteTok int
@@ -106,6 +117,7 @@ func TestParseResponsesAPIResponse(t *testing.T) {
 				"usage": {"input_tokens": 10, "output_tokens": 1}
 			}`,
 			wantContent:     "OK",
+			wantStatus:      "completed",
 			wantPromptToks:  10,
 			wantCompleteTok: 1,
 		},
@@ -125,10 +137,11 @@ func TestParseResponsesAPIResponse(t *testing.T) {
 				]
 			}`,
 			wantContent:  "hello",
+			wantStatus:   "completed",
 			wantUsageNil: true,
 		},
 		{
-			name: "multiple output items — picks first message",
+			name: "multiple output items — skips reasoning, picks message",
 			body: `{
 				"status": "completed",
 				"output": [
@@ -146,25 +159,44 @@ func TestParseResponsesAPIResponse(t *testing.T) {
 				]
 			}`,
 			wantContent:  "answer",
+			wantStatus:   "completed",
+			wantUsageNil: true,
+		},
+		{
+			name: "multiple content blocks concatenated",
+			body: `{
+				"status": "completed",
+				"output": [
+					{
+						"type": "message",
+						"role": "assistant",
+						"content": [
+							{"type": "output_text", "text": "hello "},
+							{"type": "output_text", "text": "world"}
+						]
+					}
+				]
+			}`,
+			wantContent:  "hello world",
+			wantStatus:   "completed",
 			wantUsageNil: true,
 		},
 		{
 			name:         "empty output",
 			body:         `{"status": "completed", "output": []}`,
 			wantContent:  "",
+			wantStatus:   "completed",
 			wantUsageNil: true,
 		},
 		{
-			name:         "invalid JSON",
-			body:         `not json`,
-			wantContent:  "",
-			wantUsageNil: true,
+			name:    "invalid JSON",
+			body:    `not json`,
+			wantErr: true,
 		},
 		{
-			name:         "empty body",
-			body:         ``,
-			wantContent:  "",
-			wantUsageNil: true,
+			name:    "empty body",
+			body:    ``,
+			wantErr: true,
 		},
 		{
 			name: "message with no output_text content",
@@ -181,16 +213,41 @@ func TestParseResponsesAPIResponse(t *testing.T) {
 				]
 			}`,
 			wantContent:  "",
+			wantStatus:   "completed",
+			wantUsageNil: true,
+		},
+		{
+			name: "failed status",
+			body: `{
+				"status": "failed",
+				"output": []
+			}`,
+			wantContent:  "",
+			wantStatus:   "failed",
 			wantUsageNil: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseResponsesAPIResponse([]byte(tt.body))
+			result, err := parseResponsesAPIResponse([]byte(tt.body))
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
 			if result.content != tt.wantContent {
 				t.Errorf("content = %q, want %q", result.content, tt.wantContent)
+			}
+
+			if result.status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", result.status, tt.wantStatus)
 			}
 
 			if tt.wantUsageNil {
@@ -237,7 +294,10 @@ func TestParseResponse_RoundTrip(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	result := parseResponse(body)
+	result, err := parseResponse(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if result.content != "pong" {
 		t.Errorf("content = %q, want %q", result.content, "pong")
 	}

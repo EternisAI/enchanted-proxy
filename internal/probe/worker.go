@@ -261,10 +261,19 @@ func (w *probeWorker) runProbe() probeResult {
 
 	// Parse the response to extract content and token usage.
 	var parsed parsedResponse
+	var parseErr error
 	if w.endpoint.APIType == config.APITypeResponses {
-		parsed = parseResponsesAPIResponse(respBody)
+		parsed, parseErr = parseResponsesAPIResponse(respBody)
 	} else {
-		parsed = parseResponse(respBody)
+		parsed, parseErr = parseResponse(respBody)
+	}
+	if parseErr != nil {
+		recordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), false, false, nil)
+		return probeResult{
+			statusCode: resp.StatusCode,
+			duration:   duration,
+			err:        fmt.Errorf("parsing response body: %w", parseErr),
+		}
 	}
 
 	// Check content match if configured and response was successful.
@@ -288,6 +297,9 @@ func (w *probeWorker) runProbe() probeResult {
 	recordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), contentMatch, hasExpectedResponse, parsed.usage)
 
 	success := resp.StatusCode >= 200 && resp.StatusCode < 300
+	if success && parsed.status != "" && parsed.status != "completed" {
+		success = false
+	}
 	if success && hasExpectedResponse && !contentMatch {
 		success = false
 	}
@@ -345,14 +357,15 @@ type responsesAPIResponse struct {
 // parsedResponse holds the extracted fields from a probe response (any API type).
 type parsedResponse struct {
 	content string
+	status  string // Responses API status (e.g., "completed", "failed"); empty for chat completions.
 	usage   *probeTokenUsage
 }
 
 // parseResponse extracts message content and token usage from a chat completion response body.
-func parseResponse(body []byte) parsedResponse {
+func parseResponse(body []byte) (parsedResponse, error) {
 	var resp chatCompletionResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return parsedResponse{}
+		return parsedResponse{}, err
 	}
 
 	var result parsedResponse
@@ -365,39 +378,38 @@ func parseResponse(body []byte) parsedResponse {
 			CompletionTokens: resp.Usage.CompletionTokens,
 		}
 	}
-	return result
+	return result, nil
 }
 
-// parseResponsesAPIResponse extracts content and token usage from a Responses API response.
-// Content is extracted from the first output_text content block in the first message output.
-func parseResponsesAPIResponse(body []byte) parsedResponse {
+// parseResponsesAPIResponse extracts content, status, and token usage from a Responses API response.
+// Content is concatenated from all output_text content blocks across all message outputs.
+func parseResponsesAPIResponse(body []byte) (parsedResponse, error) {
 	var resp responsesAPIResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return parsedResponse{}
+		return parsedResponse{}, err
 	}
 
 	var result parsedResponse
+	result.status = resp.Status
+	var contentParts []string
 	for _, output := range resp.Output {
 		if output.Type != "message" {
 			continue
 		}
 		for _, content := range output.Content {
 			if content.Type == "output_text" {
-				result.content = content.Text
-				break
+				contentParts = append(contentParts, content.Text)
 			}
 		}
-		if result.content != "" {
-			break
-		}
 	}
+	result.content = strings.Join(contentParts, "")
 	if resp.Usage != nil {
 		result.usage = &probeTokenUsage{
 			PromptTokens:     resp.Usage.InputTokens,
 			CompletionTokens: resp.Usage.OutputTokens,
 		}
 	}
-	return result
+	return result, nil
 }
 
 // truncate shortens a string to maxLen runes, appending "..." if truncated.
