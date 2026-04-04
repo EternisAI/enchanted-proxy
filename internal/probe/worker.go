@@ -67,7 +67,10 @@ func (w *probeWorker) run() {
 	// Apply random initial jitter (up to 25% of interval, capped at 1 minute)
 	// to spread out workers and avoid synchronized bursts.
 	jitterBase := min(time.Duration(float64(w.probe.Interval)*maxJitterFraction), maxJitterDelay)
-	jitter := time.Duration(rand.Int64N(int64(jitterBase)))
+	var jitter time.Duration
+	if jitterBase > 0 {
+		jitter = time.Duration(rand.Int64N(int64(jitterBase)))
+	}
 
 	w.logger.Debug("started probe worker",
 		slog.String("provider", w.provider),
@@ -278,6 +281,9 @@ func (w *probeWorker) runProbe() probeResult {
 	recordProbeResult(w.provider, w.model, resp.StatusCode, duration.Seconds(), contentMatch, hasExpectedResponse, parsed.usage)
 
 	success := resp.StatusCode >= 200 && resp.StatusCode < 300
+	if success && hasExpectedResponse && !contentMatch {
+		success = false
+	}
 
 	result := probeResult{
 		success:    success,
@@ -286,7 +292,7 @@ func (w *probeWorker) runProbe() probeResult {
 		usage:      parsed.usage,
 	}
 
-	if success && hasExpectedResponse && !contentMatch {
+	if hasExpectedResponse && !contentMatch {
 		result.contentMismatch = true
 		result.expected = *w.probe.ExpectedResponse
 		result.got = truncate(parsed.content, 100)
