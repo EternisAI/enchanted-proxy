@@ -233,6 +233,8 @@ model_router:
     providers:
     - name: OpenAI
       model: o3-mini
+      probe:
+        max_tokens: 200
 
   # Fallback: OpenRouter handles unknown models (including Claude via OpenRouter)
   - name: '*'
