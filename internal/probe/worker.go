@@ -112,20 +112,25 @@ func (w *probeWorker) run() {
 			lastSuccess = result.success
 		}
 		consecutiveCount++
-		w.logProbeResult(result)
 
 		if result.success {
 			if consecutiveCount >= w.probe.SuccessThreshold {
 				healthy = true
 				consecutiveCount = 0
+				w.logStateChange(result)
 				initial = false
+			} else {
+				w.logProbeResult(result, consecutiveCount, w.probe.SuccessThreshold)
 			}
 		} else {
 			if consecutiveCount >= w.probe.FailureThreshold {
 				healthy = false
 				consecutiveCount = 0
+				w.logStateChange(result)
 				w.sendSlackNotification(result)
 				initial = false
+			} else {
+				w.logProbeResult(result, consecutiveCount, w.probe.FailureThreshold)
 			}
 		}
 
@@ -162,7 +167,7 @@ func (w *probeWorker) run() {
 						consecutiveCount = 0
 						ticker.Reset(w.probe.Interval)
 					}
-					w.logProbeResult(result)
+					w.logProbeResult(result, consecutiveCount, w.probe.FailureThreshold)
 				} else {
 					consecutiveCount++
 					if consecutiveCount == 1 {
@@ -176,7 +181,7 @@ func (w *probeWorker) run() {
 						w.logStateChange(result)
 						w.sendSlackNotification(result)
 					} else {
-						w.logProbeResult(result)
+						w.logProbeResult(result, consecutiveCount, w.probe.FailureThreshold)
 					}
 				}
 			} else {
@@ -189,11 +194,11 @@ func (w *probeWorker) run() {
 						w.logStateChange(result)
 						w.sendSlackNotification(result)
 					} else {
-						w.logProbeResult(result)
+						w.logProbeResult(result, consecutiveCount, w.probe.SuccessThreshold)
 					}
 				} else {
 					consecutiveCount = 0
-					w.logProbeResult(result)
+					w.logProbeResult(result, consecutiveCount, w.probe.SuccessThreshold)
 				}
 			}
 		case <-w.service.shutdown:
@@ -207,50 +212,13 @@ func (w *probeWorker) run() {
 
 // logProbeResult logs an individual probe result that did not cause a state transition
 // (i.e. the consecutive count is still below the threshold).
-func (w *probeWorker) logProbeResult(result probeResult) {
+func (w *probeWorker) logProbeResult(result probeResult, consecutiveCount, threshold int) {
 	if result.success {
 		attrs := []any{
 			slog.String("provider", w.provider),
 			slog.String("model", w.model),
-			slog.Int("status", result.statusCode),
-			slog.Duration("duration", result.duration),
-		}
-		if result.usage != nil {
-			attrs = append(attrs,
-				slog.Int("prompt_tokens", result.usage.PromptTokens),
-				slog.Int("completion_tokens", result.usage.CompletionTokens))
-		}
-		w.logger.Info("probe succeeded (below threshold)", attrs...)
-	} else {
-		attrs := []any{
-			slog.String("provider", w.provider),
-			slog.String("model", w.model),
-		}
-		if result.err != nil {
-			attrs = append(attrs,
-				slog.Duration("duration", result.duration),
-				slog.String("error", result.err.Error()))
-		} else {
-			attrs = append(attrs,
-				slog.Int("status", result.statusCode),
-				slog.Duration("duration", result.duration),
-				slog.String("body", result.body))
-			if result.contentMismatch {
-				attrs = append(attrs,
-					slog.String("expected_content", result.expected),
-					slog.String("actual_content", result.got))
-			}
-		}
-		w.logger.Warn("probe failed (below threshold)", attrs...)
-	}
-}
-
-// logStateChange logs a probe state transition (initial state, recovery, or new failure).
-func (w *probeWorker) logStateChange(result probeResult) {
-	if result.success {
-		attrs := []any{
-			slog.String("provider", w.provider),
-			slog.String("model", w.model),
+			slog.Int("count", consecutiveCount),
+			slog.Int("threshold", threshold),
 			slog.Int("status", result.statusCode),
 			slog.Duration("duration", result.duration),
 		}
@@ -264,6 +232,8 @@ func (w *probeWorker) logStateChange(result probeResult) {
 		attrs := []any{
 			slog.String("provider", w.provider),
 			slog.String("model", w.model),
+			slog.Int("count", consecutiveCount),
+			slog.Int("threshold", threshold),
 		}
 		if result.err != nil {
 			attrs = append(attrs,
@@ -281,6 +251,45 @@ func (w *probeWorker) logStateChange(result probeResult) {
 			}
 		}
 		w.logger.Warn("probe failed", attrs...)
+	}
+}
+
+// logStateChange logs a probe state transition (initial state, recovery, or new failure).
+func (w *probeWorker) logStateChange(result probeResult) {
+	if result.success {
+		attrs := []any{
+			slog.String("provider", w.provider),
+			slog.String("model", w.model),
+			slog.Int("status", result.statusCode),
+			slog.Duration("duration", result.duration),
+		}
+		if result.usage != nil {
+			attrs = append(attrs,
+				slog.Int("prompt_tokens", result.usage.PromptTokens),
+				slog.Int("completion_tokens", result.usage.CompletionTokens))
+		}
+		w.logger.Info("probe state changed to healthy", attrs...)
+	} else {
+		attrs := []any{
+			slog.String("provider", w.provider),
+			slog.String("model", w.model),
+		}
+		if result.err != nil {
+			attrs = append(attrs,
+				slog.Duration("duration", result.duration),
+				slog.String("error", result.err.Error()))
+		} else {
+			attrs = append(attrs,
+				slog.Int("status", result.statusCode),
+				slog.Duration("duration", result.duration),
+				slog.String("body", result.body))
+			if result.contentMismatch {
+				attrs = append(attrs,
+					slog.String("expected_content", result.expected),
+					slog.String("actual_content", result.got))
+			}
+		}
+		w.logger.Warn("probe state changed to failing", attrs...)
 	}
 }
 
