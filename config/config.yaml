@@ -84,7 +84,7 @@ model_router:
     - name: Tinfoil
       model: deepseek-r1-0528
       probe:
-        max_tokens: 200
+        max_tokens: 300
 
   # Llama 3.3 70B - Free & Pro - via Tinfoil (0.75× multiplier)
   - name: meta-llama/Llama-3.3-70B
