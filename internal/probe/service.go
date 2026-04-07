@@ -139,7 +139,7 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 						Timeout: 10 * time.Second,
 					}).DialContext,
 					TLSHandshakeTimeout:   10 * time.Second,
-					ResponseHeaderTimeout: 15 * time.Second,
+					ResponseHeaderTimeout: 30 * time.Second,
 					DisableKeepAlives:     true,
 				},
 			},

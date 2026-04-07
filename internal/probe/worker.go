@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	probeHTTPTimeout = 30 * time.Second
+	probeHTTPTimeout = 45 * time.Second
 	maxResponseBytes = 4096 // limit response body read to avoid unbounded memory
 )
 
@@ -437,7 +437,7 @@ func (w *probeWorker) runProbe() probeResult {
 	}
 
 	if !success {
-		result.body = truncate(string(respBody), 200)
+		result.body = truncate(string(respBody), 2048)
 	}
 
 	return result
