@@ -81,8 +81,9 @@ model_router:
     - deepseek-r1
     token_multiplier: 0.75
     providers:
-    - name: Tinfoil
-      model: deepseek-r1-0528
+    # Temporarily reroute due to upstream issues
+    - name: NEAR AI
+      model: Qwen/Qwen3.5-122B-A10B
       probe:
         max_tokens: 400
 
