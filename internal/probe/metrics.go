@@ -8,6 +8,16 @@ import (
 )
 
 var (
+	// probeHealthy indicates the current health state of each probe (1 = healthy, 0 = failing).
+	// The gauge is set once the initial state is established and updated on every state transition.
+	probeHealthy = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "model_router_probe_healthy",
+			Help: "Current health state of the probe: 1 = healthy, 0 = failing.",
+		},
+		[]string{"provider", "model"},
+	)
+
 	// probeRequestsTotal counts all probe attempts.
 	probeRequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

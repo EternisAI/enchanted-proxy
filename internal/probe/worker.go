@@ -254,8 +254,15 @@ func (w *probeWorker) logProbeResult(result probeResult, consecutiveCount, thres
 	}
 }
 
-// logStateChange logs a probe state transition (initial state, recovery, or new failure).
+// logStateChange logs a probe state transition (initial state, recovery, or new failure)
+// and updates the health gauge metric.
 func (w *probeWorker) logStateChange(result probeResult) {
+	if result.success {
+		probeHealthy.WithLabelValues(w.provider, w.model).Set(1)
+	} else {
+		probeHealthy.WithLabelValues(w.provider, w.model).Set(0)
+	}
+
 	if result.success {
 		attrs := []any{
 			slog.String("provider", w.provider),
