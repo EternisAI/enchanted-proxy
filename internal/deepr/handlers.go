@@ -134,7 +134,7 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 				// First run for this chat - generate title with GLM 4.6
 				titleConfig, err := modelRouter.GetTitleGenerationConfig()
 				if err != nil {
-					log.Warn("Kimi 2.5 not configured for deep research title generation",
+					log.Warn("Kimi K2 not configured for deep research title generation",
 						slog.String("error", err.Error()))
 				} else {
 					platform := c.GetHeader("X-Client-Platform")

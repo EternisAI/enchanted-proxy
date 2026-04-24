@@ -154,7 +154,7 @@ func TestRouteModelTokenMultiplier(t *testing.T) {
 	router := newModelRouter(t, newEnv(nil))
 
 	tests := map[string]float64{
-		"gpt-4": 1.0,
+		"gpt-4":   1.0,
 		"gpt-5.2": 6.0,
 	}
 
@@ -192,14 +192,22 @@ func TestRouteModelBaseURLOverride(t *testing.T) {
 func TestRouteModelNameOverride(t *testing.T) {
 	router := newModelRouter(t, newEnv(nil))
 
-	provider, err := router.RouteModel("deepseek-ai/DeepSeek-R1-0528", "")
-	if err != nil {
-		t.Fatalf("RouteModel failed: %v", err)
+	tests := map[string]string{
+		"moonshot/kimi-k2":             "kimi-k2-6",
+		"deepseek-ai/DeepSeek-R1-0528": "deepseek-r1-0528",
 	}
 
-	expectedModel := "deepseek-r1-0528"
-	if provider.Model != expectedModel {
-		t.Errorf("expected model name %s, got %s", expectedModel, provider.BaseURL)
+	for model, expectedModel := range tests {
+		t.Run(model, func(t *testing.T) {
+			provider, err := router.RouteModel(model, "")
+			if err != nil {
+				t.Fatalf("RouteModel failed: %v", err)
+			}
+
+			if provider.Model != expectedModel {
+				t.Errorf("expected model name %s, got %s", expectedModel, provider.Model)
+			}
+		})
 	}
 }
 
@@ -207,7 +215,7 @@ func TestRouteModelAPITypeOverride(t *testing.T) {
 	router := newModelRouter(t, newEnv(nil))
 
 	tests := map[string]config.APIType{
-		"gpt-4":     config.APITypeChatCompletions,
+		"gpt-4":       config.APITypeChatCompletions,
 		"gpt-5.2-pro": config.APITypeResponses,
 	}
 
@@ -230,6 +238,9 @@ func TestRouteModelAliasMatch(t *testing.T) {
 
 	// Map from supported aliases to the names expected by the configured provider
 	tests := map[string]string{
+		"kimi-k2":                   "kimi-k2-6",
+		"kimi-2.5":                  "kimi-k2-6",
+		"kimi":                      "kimi-k2-6",
 		"deepseek/deepseek-r1-0528": "deepseek-r1-0528",
 		"llama-3.3-70b":             "llama3-3-70b",
 		"z-ai/glm-4.6":              "zai-org/GLM-4.6",
@@ -403,6 +414,7 @@ func TestGetSupportedModels(t *testing.T) {
 
 	// Should be a sorted list of canonical names of configured models
 	expectedModels := []string{
+		"moonshot/kimi-k2",
 		"deepseek-ai/DeepSeek-R1-0528",
 		"meta-llama/Llama-3.3-70B",
 		"zai-org/GLM-4.6",

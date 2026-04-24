@@ -62,7 +62,7 @@ model_router:
     base_url: https://openrouter.ai/api/v1
 
   models:
-  # Kimi 2.5 - Free & Pro - via Tinfoil (0.75× multiplier) - NEW DEFAULT
+  # Kimi K2.6 - Free & Pro - via Tinfoil (0.75× multiplier) - NEW DEFAULT
   - name: moonshot/kimi-k2
     aliases:
     - kimi-k2
@@ -71,7 +71,7 @@ model_router:
     token_multiplier: 0.75
     providers:
     - name: Tinfoil
-      model: kimi-k2-5
+      model: kimi-k2-6
 
   # DeepSeek R1 - Free & Pro - via Tinfoil (0.75× multiplier)
   - name: deepseek-ai/DeepSeek-R1-0528

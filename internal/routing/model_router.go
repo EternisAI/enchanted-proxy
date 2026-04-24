@@ -580,21 +580,21 @@ func (mr *ModelRouter) GetProviders() []string {
 }
 
 // GetTitleGenerationConfig returns the provider configuration for title generation.
-// Uses Kimi 2.5 as the default model for cost-effective title generation.
+// Uses Kimi K2 as the default model for cost-effective title generation.
 //
 // Returns:
-//   - *ProviderConfig: Kimi 2.5 provider config (model, baseURL, API key)
-//   - error: If Kimi 2.5 is not configured
+//   - *ProviderConfig: Kimi K2 provider config (model, baseURL, API key)
+//   - error: If Kimi K2 is not configured
 //
 // Used by:
 //   - GPT-5 Pro responses (instead of expensive GPT-5 Pro for titles)
 //   - Deep Research sessions (for initial chat title)
 func (mr *ModelRouter) GetTitleGenerationConfig() (*ProviderConfig, error) {
-	// Use Kimi 2.5 for title generation (cost-effective, fast)
+	// Use Kimi K2 for title generation (cost-effective, fast).
 	// IMPORTANT: Use canonical name "moonshot/kimi-k2" as that's the "canonical" name.
 	if provider := mr.getModelEndpointProvider("moonshot/kimi-k2", ""); provider != nil {
 		return provider, nil
 	} else {
-		return nil, errors.New("could not find a suitable endpoint for Kimi 2.5 for title generation")
+		return nil, errors.New("could not find a suitable endpoint for Kimi K2 for title generation")
 	}
 }

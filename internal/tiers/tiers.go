@@ -78,12 +78,12 @@ var Configs = map[Tier]Config{
 		// AllowedModels uses canonical model names only (from config.yaml).
 		// Aliases are resolved to canonical names by the middleware before this check.
 		AllowedModels: []string{
-			"moonshot/kimi-k2",                       // Kimi 2.5 (0.75×)
-			"deepseek-ai/DeepSeek-R1-0528",          // DeepSeek R1 (1×)
-			"meta-llama/Llama-3.3-70B",              // Llama 3.3 70B (1×)
-			"zai-org/GLM-5-FP8",                     // GLM 5 (0.6×)
+			"moonshot/kimi-k2",                        // Kimi K2 (0.75×)
+			"deepseek-ai/DeepSeek-R1-0528",            // DeepSeek R1 (1×)
+			"meta-llama/Llama-3.3-70B",                // Llama 3.3 70B (1×)
+			"zai-org/GLM-5-FP8",                       // GLM 5 (0.6×)
 			"dphn/Dolphin-Mistral-24B-Venice-Edition", // Dolphin Mistral (0.5×, uncensored)
-			"Qwen/Qwen3-30B-A3B-Instruct-2507",     // Qwen3 30B (0.04×)
+			"Qwen/Qwen3-30B-A3B-Instruct-2507",        // Qwen3 30B (0.04×)
 		},
 		DeepResearchDailyRuns:         0, // Not available daily
 		DeepResearchLifetimeRuns:      1, // 1 lifetime run
@@ -93,16 +93,16 @@ var Configs = map[Tier]Config{
 		AllowedFeatures: []Feature{}, // No special features
 	},
 	TierPlus: {
-		Name:                    "plus",
-		DisplayName:             "Plus",
-		MonthlyPlanTokens:       0,
-		WeeklyPlanTokens:        0,
-		DailyPlanTokens:         40_000,
-		FallbackDailyPlanTokens: 40_000,
-		FallbackModel:           "Qwen/Qwen3-30B-A3B-Instruct-2507",
-		AllowedModels: []string{}, // All models allowed (same as Pro)
-		DeepResearchDailyRuns:         -1, // Unlimited daily runs
-		DeepResearchLifetimeRuns:      0,  // Check daily only
+		Name:                          "plus",
+		DisplayName:                   "Plus",
+		MonthlyPlanTokens:             0,
+		WeeklyPlanTokens:              0,
+		DailyPlanTokens:               40_000,
+		FallbackDailyPlanTokens:       40_000,
+		FallbackModel:                 "Qwen/Qwen3-30B-A3B-Instruct-2507",
+		AllowedModels:                 []string{}, // All models allowed (same as Pro)
+		DeepResearchDailyRuns:         -1,         // Unlimited daily runs
+		DeepResearchLifetimeRuns:      0,          // Check daily only
 		DeepResearchTokenCap:          10_000,
 		DeepResearchMaxActiveSessions: 0, // Unlimited concurrent
 		AllowedFeatures:               []Feature{},
