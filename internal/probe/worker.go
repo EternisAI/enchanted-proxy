@@ -415,8 +415,8 @@ func (w *probeWorker) runProbe() probeResult {
 			content = content[idx+len("</think>"):]
 		}
 		contentMatch = strings.EqualFold(
-			strings.TrimSpace(content),
-			strings.TrimSpace(*w.probe.ExpectedResponse),
+			normalizeProbeContent(content),
+			normalizeProbeContent(*w.probe.ExpectedResponse),
 		)
 	}
 
@@ -536,6 +536,14 @@ func parseResponsesAPIResponse(body []byte) (parsedResponse, error) {
 		}
 	}
 	return result, nil
+}
+
+// normalizeProbeContent prepares model output for case-insensitive comparison
+// against ExpectedResponse. Some models reply with a trailing period (e.g. "OK."
+// instead of "OK"), which is semantically correct but would otherwise fail an
+// exact match — strip surrounding whitespace first, then any trailing dots.
+func normalizeProbeContent(s string) string {
+	return strings.TrimRight(strings.TrimSpace(s), ".")
 }
 
 // truncate shortens a string to maxLen runes, appending "..." if truncated.
