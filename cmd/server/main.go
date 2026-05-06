@@ -629,8 +629,13 @@ func main() {
 	// Shutdown the model routing fallback service
 	fallbackService.Shutdown()
 
-	// Shutdown the request tracking service worker pool
-	requestTrackingService.Shutdown()
+	// Shutdown the request tracking service worker pool. Bounded by the
+	// same deadline as HTTP shutdown so a stuck DB cannot hang process exit.
+	rtCtx, rtCancel := context.WithTimeout(context.Background(), time.Duration(config.AppConfig.ServerShutdownTimeoutSeconds)*time.Second)
+	if err := requestTrackingService.Shutdown(rtCtx); err != nil {
+		log.Warn("request tracking service shutdown timed out", slog.String("error", err.Error()))
+	}
+	rtCancel()
 	log.Info("request tracking service shutdown complete")
 
 	// Shutdown the task service (close Temporal client)

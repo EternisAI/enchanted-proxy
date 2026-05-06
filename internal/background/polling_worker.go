@@ -328,13 +328,19 @@ func (w *PollingWorker) fetchAndSaveResponse(ctx context.Context) error {
 			slog.String("user_id", w.job.UserID))
 		// Note: Consider failing the request or alerting in production
 	} else {
-		// Calculate plan tokens using multiplier (e.g., 50× for GPT-5 Pro)
-		planTokens := int(float64(content.Usage.TotalTokens) * w.tokenMultiplier)
+		// Responses API returns input_tokens/output_tokens; Chat Completions
+		// returns prompt_tokens/completion_tokens. UsageInfo accepts both.
+		promptTokens := content.Usage.Prompt()
+		completionTokens := content.Usage.Completion()
+		totalTokens := content.Usage.TotalTokens
+
+		// Calculate plan tokens using multiplier (e.g., 54× for GPT-5 Pro)
+		planTokens := int(float64(totalTokens) * w.tokenMultiplier)
 
 		tokenData := &request_tracking.TokenUsageWithMultiplier{
-			PromptTokens:     content.Usage.PromptTokens,
-			CompletionTokens: content.Usage.CompletionTokens,
-			TotalTokens:      content.Usage.TotalTokens,
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      totalTokens,
 			Multiplier:       w.tokenMultiplier,
 			PlanTokens:       planTokens,
 		}
@@ -344,30 +350,36 @@ func (w *PollingWorker) fetchAndSaveResponse(ctx context.Context) error {
 			Endpoint:         "/v1/responses",
 			Model:            w.job.Model,
 			Provider:         "GPT 5 Pro",
-			PromptTokens:     &content.Usage.PromptTokens,
-			CompletionTokens: &content.Usage.CompletionTokens,
-			TotalTokens:      &content.Usage.TotalTokens,
+			PromptTokens:     &promptTokens,
+			CompletionTokens: &completionTokens,
+			TotalTokens:      &totalTokens,
 			PlanTokens:       &planTokens,
 			Multiplier:       &w.tokenMultiplier,
 		}
 
-		// Use background context to ensure log completes even if request context cancelled
-		logCtx, logCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer logCancel()
-
-		if err := w.trackingService.LogRequestWithPlanTokensAsync(logCtx, requestInfo, tokenData); err != nil {
+		// Pass context.Background(): LogRequestWithPlanTokensAsync only uses
+		// the caller context to bound the queue-insertion attempt, and the
+		// queue uses non-blocking send. A short-lived context with a defer
+		// cancel here previously caused every queued write to fail with
+		// `context canceled` once the worker dequeued.
+		if err := w.trackingService.LogRequestWithPlanTokensAsync(context.Background(), requestInfo, tokenData); err != nil {
 			w.logger.Error("failed to log token usage for GPT-5 Pro response",
 				slog.String("response_id", w.job.ResponseID),
-				slog.Int("total_tokens", content.Usage.TotalTokens),
+				slog.Int("total_tokens", totalTokens),
 				slog.Int("plan_tokens", planTokens),
 				slog.Float64("multiplier", w.tokenMultiplier),
 				slog.String("error", err.Error()))
 		} else {
-			w.logger.Info("logged token usage for GPT-5 Pro response",
+			// "queued" — actual DB commit happens asynchronously in the
+			// request_tracking worker pool. Failures land at
+			// request_tracking/service.go:109 ("failed to insert request log
+			// with plan tokens"); look there if rows go missing despite this
+			// log appearing.
+			w.logger.Info("queued token usage log for GPT-5 Pro response",
 				slog.String("response_id", w.job.ResponseID),
-				slog.Int("prompt_tokens", content.Usage.PromptTokens),
-				slog.Int("completion_tokens", content.Usage.CompletionTokens),
-				slog.Int("total_tokens", content.Usage.TotalTokens),
+				slog.Int("prompt_tokens", promptTokens),
+				slog.Int("completion_tokens", completionTokens),
+				slog.Int("total_tokens", totalTokens),
 				slog.Int("plan_tokens", planTokens),
 				slog.Float64("multiplier", w.tokenMultiplier))
 		}

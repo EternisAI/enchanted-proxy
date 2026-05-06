@@ -23,20 +23,28 @@ type Service struct {
 	shutdown             chan struct{}
 	closed               atomic.Bool
 	logger               *logger.Logger
-	droppedRequestsTotal atomic.Int64 // NEW: Track dropped requests due to queue overflow
+	droppedRequestsTotal atomic.Int64 // Track dropped requests due to queue overflow.
+
+	// workerCtx is the parent context for every DB write. Cancelled by
+	// Shutdown when the bounded drain deadline is exceeded, which forces
+	// in-flight pgx calls to abort instead of holding shutdown open.
+	workerCtx    context.Context
+	workerCancel context.CancelFunc
 }
 
 type logRequest struct {
-	ctx  context.Context
 	info RequestInfo
 }
 
 func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
+	workerCtx, workerCancel := context.WithCancel(context.Background())
 	s := &Service{
-		queries:  queries,
-		logChan:  make(chan logRequest, config.AppConfig.RequestTrackingBufferSize),
-		shutdown: make(chan struct{}),
-		logger:   logger,
+		queries:      queries,
+		logChan:      make(chan logRequest, config.AppConfig.RequestTrackingBufferSize),
+		shutdown:     make(chan struct{}),
+		logger:       logger,
+		workerCtx:    workerCtx,
+		workerCancel: workerCancel,
 	}
 
 	// Worker pool with configurable number of workers.
@@ -143,8 +151,15 @@ func (s *Service) LogRequestAsync(ctx context.Context, info RequestInfo) error {
 		return fmt.Errorf("service shutting down")
 	}
 
+	// The caller's context governs ONLY the queue-insertion attempt. Once the
+	// request is queued, it must complete on its own clock — the caller's
+	// context is often cancelled long before a worker dequeues (e.g. the
+	// background polling worker uses a short-lived `context.WithTimeout` plus
+	// `defer cancel` purely to bound this call). Storing the caller's context
+	// on the queued request caused every GPT-5 Pro DB write to fail with
+	// `context canceled`, silently dropping the row and letting users bypass
+	// per-tier plan-token quotas. The worker creates its own fresh context.
 	logReq := logRequest{
-		ctx:  ctx,
 		info: info,
 	}
 
@@ -168,28 +183,51 @@ func (s *Service) LogRequestAsync(ctx context.Context, info RequestInfo) error {
 }
 
 // Shutdown gracefully shuts down the worker pool.
-func (s *Service) Shutdown() {
+//
+// Workers drain the queue under their normal per-write timeout. If the
+// supplied context expires before the drain completes, in-flight DB writes
+// are cancelled via workerCancel so this method always returns. Bounding
+// shutdown latency matters because each pgx call can otherwise consume the
+// full RequestTrackingTimeoutSeconds, and `worker_count × queue_depth × timeout`
+// can run into hours under DB trouble.
+//
+// logChan is intentionally NOT closed: LogRequestAsync checks `closed` and
+// then sends — closing the channel would create a send-on-closed-channel
+// panic race against any caller that has already passed the closed check.
+// The channel is unreferenced after Shutdown returns and is collected.
+func (s *Service) Shutdown(ctx context.Context) error {
 	s.closed.Store(true)
-
 	close(s.shutdown)
-	s.workerPool.Wait()
-	close(s.logChan)
+
+	done := make(chan struct{})
+	go func() {
+		s.workerPool.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		s.workerCancel()
+		return nil
+	case <-ctx.Done():
+		// Force in-flight DB writes to abort.
+		s.workerCancel()
+		<-done
+		return ctx.Err()
+	}
 }
 
-// handleLogRequest ensures each request has a reasonable timeout and then processes it.
+// handleLogRequest builds a fresh timeout context for the DB write derived
+// from workerCtx. The caller's context is deliberately not propagated — see
+// LogRequestAsync.
 func (s *Service) handleLogRequest(lr logRequest) {
-	ctx := lr.ctx
-
-	var cancel context.CancelFunc
-	if dl, ok := ctx.Deadline(); !ok || time.Until(dl) < time.Second {
-		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(config.AppConfig.RequestTrackingTimeoutSeconds)*time.Second)
-	}
+	ctx, cancel := context.WithTimeout(
+		s.workerCtx,
+		time.Duration(config.AppConfig.RequestTrackingTimeoutSeconds)*time.Second,
+	)
+	defer cancel()
 
 	s.processLogRequest(ctx, lr.info)
-
-	if cancel != nil {
-		cancel()
-	}
 }
 
 type RequestInfo struct {
