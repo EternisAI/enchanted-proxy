@@ -65,10 +65,42 @@ type ResponseContent struct {
 }
 
 // UsageInfo represents token usage information.
+//
+// The OpenAI Responses API uses `input_tokens` / `output_tokens`; Chat
+// Completions uses `prompt_tokens` / `completion_tokens`. Pointer fields
+// distinguish "not present in payload" from "present and zero" — needed
+// because a `> 0` discriminator would silently fall through to the other
+// field name on a legitimate zero. Callers should use Prompt() / Completion().
 type UsageInfo struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens     *int `json:"prompt_tokens,omitempty"`
+	CompletionTokens *int `json:"completion_tokens,omitempty"`
+	TotalTokens      int  `json:"total_tokens"`
+	InputTokens      *int `json:"input_tokens,omitempty"`
+	OutputTokens     *int `json:"output_tokens,omitempty"`
+}
+
+// Prompt returns the prompt/input token count from whichever field the
+// upstream API populated.
+func (u *UsageInfo) Prompt() int {
+	if u.PromptTokens != nil {
+		return *u.PromptTokens
+	}
+	if u.InputTokens != nil {
+		return *u.InputTokens
+	}
+	return 0
+}
+
+// Completion returns the completion/output token count from whichever field
+// the upstream API populated.
+func (u *UsageInfo) Completion() int {
+	if u.CompletionTokens != nil {
+		return *u.CompletionTokens
+	}
+	if u.OutputTokens != nil {
+		return *u.OutputTokens
+	}
+	return 0
 }
 
 // PollingJob represents a background polling job.
