@@ -79,7 +79,7 @@ var Configs = map[Tier]Config{
 		// Aliases are resolved to canonical names by the middleware before this check.
 		AllowedModels: []string{
 			"moonshot/kimi-k2",                        // Kimi K2 (0.75×)
-			"deepseek-ai/DeepSeek-R1-0528",            // DeepSeek R1 (1×)
+			"deepseek-ai/DeepSeek-V4-Pro",             // DeepSeek V4 Pro (0.75×)
 			"meta-llama/Llama-3.3-70B",                // Llama 3.3 70B (1×)
 			"zai-org/GLM-5-FP8",                       // GLM 5 (0.6×)
 			"dphn/Dolphin-Mistral-24B-Venice-Edition", // Dolphin Mistral (0.5×, uncensored)
