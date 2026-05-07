@@ -352,8 +352,12 @@ func handleResponsesAPI(
 		"message":     "Request submitted successfully. Listen to Firestore for updates.",
 	})
 
-	// Log request to database (with multiplier for cost tracking)
-	logRequestToDatabaseWithProvider(c, trackingService, model, nil, provider.Name, provider.TokenMultiplier)
+	// The background polling worker logs final token usage after the Responses API request completes.
+	log.Debug("Responses API request accepted; usage will be logged by background polling worker",
+		slog.String("response_id", bgResponse.ID),
+		slog.String("model", model),
+		slog.String("provider", provider.Name),
+		slog.Float64("multiplier", provider.TokenMultiplier))
 
 	return nil
 }

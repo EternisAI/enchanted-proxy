@@ -117,9 +117,25 @@ func (s *Service) processLogRequest(ctx context.Context, info RequestInfo) {
 			s.logger.Error("failed to insert request log with plan tokens",
 				slog.String("user_id", info.UserID),
 				slog.String("endpoint", info.Endpoint),
+				slog.String("model", info.Model),
 				slog.String("provider", info.Provider),
+				slog.Int("prompt_tokens", intValue(info.PromptTokens)),
+				slog.Int("completion_tokens", intValue(info.CompletionTokens)),
+				slog.Int("total_tokens", intValue(info.TotalTokens)),
+				slog.Int("plan_tokens", intValue(info.PlanTokens)),
+				slog.Float64("multiplier", float64Value(info.Multiplier)),
 				slog.String("error", err.Error()))
+			return
 		}
+
+		s.logger.Debug("inserted request log with plan tokens",
+			slog.String("user_id", info.UserID),
+			slog.String("endpoint", info.Endpoint),
+			slog.String("model", info.Model),
+			slog.String("provider", info.Provider),
+			slog.Int("total_tokens", intValue(info.TotalTokens)),
+			slog.Int("plan_tokens", intValue(info.PlanTokens)),
+			slog.Float64("multiplier", float64Value(info.Multiplier)))
 	} else {
 		// Fallback to old query for backward compatibility
 		params := pgdb.CreateRequestLogParams{
@@ -136,10 +152,36 @@ func (s *Service) processLogRequest(ctx context.Context, info RequestInfo) {
 			s.logger.Error("failed to insert request log",
 				slog.String("user_id", info.UserID),
 				slog.String("endpoint", info.Endpoint),
+				slog.String("model", info.Model),
 				slog.String("provider", info.Provider),
+				slog.Int("prompt_tokens", intValue(info.PromptTokens)),
+				slog.Int("completion_tokens", intValue(info.CompletionTokens)),
+				slog.Int("total_tokens", intValue(info.TotalTokens)),
 				slog.String("error", err.Error()))
+			return
 		}
+
+		s.logger.Debug("inserted request log",
+			slog.String("user_id", info.UserID),
+			slog.String("endpoint", info.Endpoint),
+			slog.String("model", info.Model),
+			slog.String("provider", info.Provider),
+			slog.Int("total_tokens", intValue(info.TotalTokens)))
 	}
+}
+
+func intValue(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func float64Value(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 // LogRequestAsync queues a log request to be processed by the worker pool.
@@ -165,8 +207,26 @@ func (s *Service) LogRequestAsync(ctx context.Context, info RequestInfo) error {
 
 	select {
 	case s.logChan <- logReq:
+		s.logger.Debug("queued request log",
+			slog.String("user_id", info.UserID),
+			slog.String("endpoint", info.Endpoint),
+			slog.String("model", info.Model),
+			slog.String("provider", info.Provider),
+			slog.Int("total_tokens", intValue(info.TotalTokens)),
+			slog.Int("plan_tokens", intValue(info.PlanTokens)),
+			slog.Float64("multiplier", float64Value(info.Multiplier)),
+			slog.Int("queue_depth", len(s.logChan)),
+			slog.Int("queue_capacity", cap(s.logChan)))
 		return nil
 	case <-ctx.Done():
+		s.logger.Warn("request log enqueue canceled",
+			slog.String("user_id", info.UserID),
+			slog.String("endpoint", info.Endpoint),
+			slog.String("model", info.Model),
+			slog.String("provider", info.Provider),
+			slog.Int("total_tokens", intValue(info.TotalTokens)),
+			slog.Int("plan_tokens", intValue(info.PlanTokens)),
+			slog.String("error", ctx.Err().Error()))
 		return ctx.Err()
 	default:
 		// Queue is full - increment counter and log error
@@ -176,8 +236,12 @@ func (s *Service) LogRequestAsync(ctx context.Context, info RequestInfo) error {
 			slog.String("endpoint", info.Endpoint),
 			slog.String("model", info.Model),
 			slog.String("provider", info.Provider),
+			slog.Int("total_tokens", intValue(info.TotalTokens)),
+			slog.Int("plan_tokens", intValue(info.PlanTokens)),
+			slog.Float64("multiplier", float64Value(info.Multiplier)),
 			slog.Int64("total_dropped", dropped),
-			slog.Int("queue_size", config.AppConfig.RequestTrackingBufferSize))
+			slog.Int("queue_depth", len(s.logChan)),
+			slog.Int("queue_capacity", cap(s.logChan)))
 		return fmt.Errorf("log queue is full, dropping request")
 	}
 }

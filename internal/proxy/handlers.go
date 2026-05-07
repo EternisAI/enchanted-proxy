@@ -734,7 +734,7 @@ func handleStreamingDirect(
 			}
 			if provider.TokenMultiplier > 0 {
 				planTokens := int(float64(sessionUsage.TotalTokens) * provider.TokenMultiplier)
-				slog.Info("[TOKEN] request logged",
+				log.Debug("queuing direct streaming usage log with plan tokens",
 					slog.String("user_id", userID),
 					slog.String("model", model),
 					slog.String("provider", provider.Name),
@@ -742,8 +742,7 @@ func handleStreamingDirect(
 					slog.Int("completion_tokens", sessionUsage.CompletionTokens),
 					slog.Int("total_tokens", sessionUsage.TotalTokens),
 					slog.Float64("multiplier", provider.TokenMultiplier),
-					slog.Int("plan_tokens", planTokens),
-				)
+					slog.Int("plan_tokens", planTokens))
 				tokenData := &request_tracking.TokenUsageWithMultiplier{
 					PromptTokens:     sessionUsage.PromptTokens,
 					CompletionTokens: sessionUsage.CompletionTokens,
@@ -751,30 +750,46 @@ func handleStreamingDirect(
 					Multiplier:       provider.TokenMultiplier,
 					PlanTokens:       planTokens,
 				}
-				trackingService.LogRequestWithPlanTokensAsync(ctx, info, tokenData) //nolint:errcheck
+				if err := trackingService.LogRequestWithPlanTokensAsync(ctx, info, tokenData); err != nil {
+					log.Error("failed to queue direct streaming usage log with plan tokens",
+						slog.String("user_id", userID),
+						slog.String("model", model),
+						slog.String("provider", provider.Name),
+						slog.Int("plan_tokens", planTokens),
+						slog.String("error", err.Error()))
+				}
 			} else {
-				slog.Warn("[TOKEN] request logged WITHOUT multiplier",
+				log.Warn("queuing direct streaming usage log without token multiplier",
 					slog.String("user_id", userID),
 					slog.String("model", model),
 					slog.String("provider", provider.Name),
 					slog.Int("prompt_tokens", sessionUsage.PromptTokens),
 					slog.Int("completion_tokens", sessionUsage.CompletionTokens),
-					slog.Int("total_tokens", sessionUsage.TotalTokens),
-				)
+					slog.Int("total_tokens", sessionUsage.TotalTokens))
 				tokenData := &request_tracking.TokenUsage{
 					PromptTokens:     sessionUsage.PromptTokens,
 					CompletionTokens: sessionUsage.CompletionTokens,
 					TotalTokens:      sessionUsage.TotalTokens,
 				}
-				trackingService.LogRequestWithTokensAsync(ctx, info, tokenData) //nolint:errcheck
+				if err := trackingService.LogRequestWithTokensAsync(ctx, info, tokenData); err != nil {
+					log.Error("failed to queue direct streaming usage log",
+						slog.String("user_id", userID),
+						slog.String("model", model),
+						slog.String("provider", provider.Name),
+						slog.String("error", err.Error()))
+				}
 			}
+		} else if trackingService == nil {
+			log.Error("request tracking service unavailable — quota tracking is broken for direct streaming request",
+				slog.String("user_id", userID),
+				slog.String("model", model),
+				slog.String("provider", provider.Name))
 		} else if sessionUsage == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			slog.Error("[TOKEN] MISSING TOKEN USAGE in streaming response — quota tracking is broken for this request",
+			log.Error("MISSING TOKEN USAGE in streaming response — quota tracking is broken for this request",
 				slog.String("user_id", userID),
 				slog.String("model", model),
 				slog.String("provider", provider.Name),
-				slog.Int("status_code", resp.StatusCode),
-			)
+				slog.Int("status_code", resp.StatusCode))
 		}
 
 		log.Info("direct streaming: completed",
@@ -901,9 +916,9 @@ func handleStreamingResponse(resp *http.Response, log *logger.Logger, model stri
 
 			// Log with multiplier if provider is available
 			if provider != nil {
-				logRequestToDatabaseWithProvider(cCopy, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
+				logRequestToDatabaseWithProvider(cCopy, trackingService, log, model, tokenUsage, provider.Name, provider.TokenMultiplier)
 			} else {
-				logRequestToDatabase(cCopy, trackingService, model, tokenUsage)
+				logRequestToDatabase(cCopy, trackingService, log, model, tokenUsage)
 			}
 
 			// Save message to Firestore asynchronously
@@ -990,9 +1005,9 @@ func handleNonStreamingResponse(resp *http.Response, log *logger.Logger, model s
 
 	// Log with multiplier if provider is available
 	if provider != nil {
-		logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
+		logRequestToDatabaseWithProvider(c, trackingService, log, model, tokenUsage, provider.Name, provider.TokenMultiplier)
 	} else {
-		logRequestToDatabase(c, trackingService, model, tokenUsage)
+		logRequestToDatabase(c, trackingService, log, model, tokenUsage)
 	}
 
 	// Include anonymizer replacements if present
@@ -1036,13 +1051,16 @@ func logProxyResponse(log *logger.Logger, resp *http.Response, isStreaming bool,
 }
 
 // logRequestToDatabase logs a request to the database with token usage data.
-func logRequestToDatabase(c *gin.Context, trackingService *request_tracking.Service, model string, tokenUsage *Usage) {
-	logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, "", 1.0)
+func logRequestToDatabase(c *gin.Context, trackingService *request_tracking.Service, log *logger.Logger, model string, tokenUsage *Usage) {
+	logRequestToDatabaseWithProvider(c, trackingService, log, model, tokenUsage, "", 1.0)
 }
 
-func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_tracking.Service, model string, tokenUsage *Usage, providerName string, multiplier float64) {
+func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_tracking.Service, log *logger.Logger, model string, tokenUsage *Usage, providerName string, multiplier float64) {
 	userID, exists := auth.GetUserID(c)
 	if !exists {
+		log.Warn("skipping request usage log because user is unauthenticated",
+			slog.String("model", model),
+			slog.String("provider", providerName))
 		return
 	}
 
@@ -1054,6 +1072,25 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 	}
 	endpoint := c.Request.URL.Path
 
+	if trackingService == nil {
+		log.Error("request tracking service unavailable — quota tracking is broken for this request",
+			slog.String("user_id", userID),
+			slog.String("endpoint", endpoint),
+			slog.String("model", model),
+			slog.String("provider", provider))
+		return
+	}
+
+	if tokenUsage == nil {
+		log.Debug("skipping request usage log because token usage is missing",
+			slog.String("user_id", userID),
+			slog.String("endpoint", endpoint),
+			slog.String("model", model),
+			slog.String("provider", provider),
+			slog.Float64("multiplier", multiplier))
+		return
+	}
+
 	info := request_tracking.RequestInfo{
 		UserID:   userID,
 		Endpoint: endpoint,
@@ -1061,10 +1098,10 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 		Provider: provider,
 	}
 
-	if tokenUsage != nil && multiplier > 0 {
+	if multiplier > 0 {
 		planTokens := int(float64(tokenUsage.TotalTokens) * multiplier)
 
-		slog.Info("[TOKEN] request logged",
+		log.Debug("queuing request usage log with plan tokens",
 			slog.String("user_id", userID),
 			slog.String("model", model),
 			slog.String("provider", provider),
@@ -1072,8 +1109,7 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 			slog.Int("completion_tokens", tokenUsage.CompletionTokens),
 			slog.Int("total_tokens", tokenUsage.TotalTokens),
 			slog.Float64("multiplier", multiplier),
-			slog.Int("plan_tokens", planTokens),
-		)
+			slog.Int("plan_tokens", planTokens))
 
 		tokenData := &request_tracking.TokenUsageWithMultiplier{
 			PromptTokens:     tokenUsage.PromptTokens,
@@ -1083,40 +1119,36 @@ func logRequestToDatabaseWithProvider(c *gin.Context, trackingService *request_t
 			PlanTokens:       planTokens,
 		}
 		if err := trackingService.LogRequestWithPlanTokensAsync(c.Request.Context(), info, tokenData); err != nil {
-			if loggerValue := c.Value("logger"); loggerValue != nil {
-				if log, ok := loggerValue.(*logger.Logger); ok {
-					log.Error("failed to log request with plan tokens to database",
-						slog.String("user_id", userID),
-						slog.String("endpoint", endpoint),
-						slog.Float64("multiplier", multiplier),
-						slog.Int("plan_tokens", planTokens),
-						slog.String("error", err.Error()))
-				}
-			}
+			log.Error("failed to queue request usage log with plan tokens",
+				slog.String("user_id", userID),
+				slog.String("endpoint", endpoint),
+				slog.String("model", model),
+				slog.String("provider", provider),
+				slog.Float64("multiplier", multiplier),
+				slog.Int("plan_tokens", planTokens),
+				slog.String("error", err.Error()))
 		}
-	} else if tokenUsage != nil {
-		slog.Warn("[TOKEN] request logged WITHOUT multiplier",
+		return
+	}
+
+	log.Warn("queuing request usage log without token multiplier",
+		slog.String("user_id", userID),
+		slog.String("model", model),
+		slog.String("provider", provider),
+		slog.Int("prompt_tokens", tokenUsage.PromptTokens),
+		slog.Int("completion_tokens", tokenUsage.CompletionTokens),
+		slog.Int("total_tokens", tokenUsage.TotalTokens))
+	tokenData := &request_tracking.TokenUsage{
+		PromptTokens:     tokenUsage.PromptTokens,
+		CompletionTokens: tokenUsage.CompletionTokens,
+		TotalTokens:      tokenUsage.TotalTokens,
+	}
+	if err := trackingService.LogRequestWithTokensAsync(c.Request.Context(), info, tokenData); err != nil {
+		log.Error("failed to queue request usage log",
 			slog.String("user_id", userID),
+			slog.String("endpoint", endpoint),
 			slog.String("model", model),
 			slog.String("provider", provider),
-			slog.Int("prompt_tokens", tokenUsage.PromptTokens),
-			slog.Int("completion_tokens", tokenUsage.CompletionTokens),
-			slog.Int("total_tokens", tokenUsage.TotalTokens),
-		)
-		tokenData := &request_tracking.TokenUsage{
-			PromptTokens:     tokenUsage.PromptTokens,
-			CompletionTokens: tokenUsage.CompletionTokens,
-			TotalTokens:      tokenUsage.TotalTokens,
-		}
-		if err := trackingService.LogRequestWithTokensAsync(c.Request.Context(), info, tokenData); err != nil {
-			if loggerValue := c.Value("logger"); loggerValue != nil {
-				if log, ok := loggerValue.(*logger.Logger); ok {
-					log.Error("failed to log request to database",
-						slog.String("user_id", userID),
-						slog.String("endpoint", endpoint),
-						slog.String("error", err.Error()))
-				}
-			}
-		}
+			slog.String("error", err.Error()))
 	}
 }
