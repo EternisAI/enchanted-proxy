@@ -17,7 +17,7 @@ Concise spec of plan quotas, model cost weightings, and deep research limits.
 - Default chat model: **GLM-4.6**
 - Models:
     - GLM-4.6
-    - DeepSeek R1
+    - DeepSeek V4 Pro
     - Llama 3.3 70B
 - Deep research (GLM-4.6):
     - **1 deep research run total per account (lifetime)**
@@ -34,11 +34,11 @@ Concise spec of plan quotas, model cost weightings, and deep research limits.
 - Default chat model: **GLM-4.6**
 - Models:
     - GLM-4.6
-    - DeepSeek R1
+    - DeepSeek V4 Pro
     - Llama 3.3 70B
     - GPT-4.1
-    - GPT-5
-    - GPT-5 Pro
+    - GPT-5.5
+    - GPT-5.5 Pro
 - Deep research (GLM-4.6):
     - **10 deep research runs/day**
     - Per-run cap: **10,000 GLM tokens** (prompt + output, unweighted)
@@ -61,7 +61,7 @@ Concise spec of plan quotas, model cost weightings, and deep research limits.
 
 Baseline:
 
-- DeepSeek R1 and Llama 3.3 70B at **$2 / 1M tokens** are treated as **1× cost**
+- DeepSeek V4 Pro and Llama 3.3 70B are treated as low-cost TEE models
 - 1 DeepSeek/Llama token = **1 plan token**
 
 Multipliers are set to target at least **25% gross margin** under heavy usage, assuming typical OpenRouter and infra pricing.
@@ -72,28 +72,29 @@ Multipliers are set to target at least **25% gross margin** under heavy usage, a
 
 Pricing assumptions:
 
-- DeepSeek R1, Llama 3.3 70B: **$2 / 1M tokens**
+- DeepSeek V4 Pro: Tinfoil-hosted, **$1.50 / 1M input**, **$5.25 / 1M output**
+- Llama 3.3 70B: Tinfoil-hosted, low-cost TEE baseline
 - GPT-4.1: blended **~$5–$6 / 1M** (input + output)
-- GPT-5: blended **~$6–$7 / 1M** (input + output)
-- GPT-5 Pro: **$15 / 1M input**, **$120 / 1M output**, **$10 / 1K web search**
+- GPT-5.5: **$5 / 1M input**, **$30 / 1M output**
+- GPT-5.5 Pro: **$30 / 1M input**, **$180 / 1M output**, web search overhead where enabled
 (output-heavy usage; web search cost treated as additional overhead)
 - GLM-4.6: self-hosted, cost from infra
 
 | Model | Pricing basis (USD, approximate) | Relative cost (approx.) | Plan-token multiplier |
 | --- | --- | --- | --- |
-| DeepSeek R1 | $2 / 1M tokens | 1× baseline | **1×** |
-| Llama 3.3 70B | $2 / 1M tokens | 1× baseline | **1×** |
+| DeepSeek V4 Pro | $1.50 input / $5.25 output per 1M tokens | low-cost TEE | **0.75×** |
+| Llama 3.3 70B | low-cost TEE baseline | low-cost TEE | **0.75×** |
 | GLM-4.6 (self-host) | internal infra, treated as ~$4–$5 / 1M tokens | ~2–2.5× baseline | **3×** |
 | GPT-4.1 | blended ~$5–$6 / 1M tokens | ~2.5–3× baseline | **4×** |
-| GPT-5 | blended ~$6–$7 / 1M tokens | ~3–3.5× baseline | **6×** |
-| GPT-5 Pro | $15 / 1M input, $120 / 1M output, $10 / 1K web search (output-heavy) | ~30–50× baseline (conservative) | **50×** |
+| GPT-5.5 | $5 input / $30 output per 1M tokens | 2× GPT-5.4 pricing | **12.8×** |
+| GPT-5.5 Pro | $30 input / $180 output per 1M tokens | same pricing basis as GPT-5.4 Pro | **54×** |
 
 Examples:
 
 - 1,000 GLM-4.6 tokens → **3,000 plan tokens**
 - 1,000 GPT-4.1 tokens → **4,000 plan tokens**
-- 1,000 GPT-5 tokens → **6,000 plan tokens**
-- 1,000 GPT-5 Pro tokens → **50,000 plan tokens**
+- 1,000 GPT-5.5 tokens → **12,800 plan tokens**
+- 1,000 GPT-5.5 Pro tokens → **54,000 plan tokens**
 
 Multipliers can be recalibrated once exact infra and API costs are finalized but should remain sufficiently high to maintain ≥25% margin, especially for GPT-5 Pro due to high output and web-search cost.
 
@@ -157,9 +158,9 @@ Run limits summary:
 
 ---
 
-## 6. GPT-5 Pro access and throttling
+## 6. GPT-5.5 Pro access and throttling
 
-- GPT-5 Pro access: **Premium only**
-- GPT-5 Pro tokens consume plan tokens with a **50× multiplier**
-- High GPT-5 Pro usage rapidly depletes daily plan-token quota
-- This multiplier provides a strong throttle on extremely expensive usage while preserving at least **25% gross margin** under heavy GPT-5 Pro usage
+- GPT-5.5 Pro access: **Premium only**
+- GPT-5.5 Pro tokens consume plan tokens with a **54× multiplier**
+- High GPT-5.5 Pro usage rapidly depletes daily plan-token quota
+- This multiplier provides a strong throttle on extremely expensive usage while preserving the existing gross margin under heavy GPT-5.5 Pro usage

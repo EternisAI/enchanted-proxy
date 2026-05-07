@@ -404,7 +404,7 @@ func (w *probeWorker) runProbe() probeResult {
 
 	// Check content match if configured and response was successful.
 	// Content checking is only active when ExpectedResponse is non-nil AND non-empty.
-	// Strip thinking tags (e.g. DeepSeek R1 wraps reasoning in <think>...</think>),
+	// Strip thinking tags (e.g. DeepSeek models wrap reasoning in <think>...</think>),
 	// trim whitespace, then do a case-insensitive exact match.
 	contentMatch := false
 	hasExpectedResponse := w.probe.ExpectedResponse != nil && *w.probe.ExpectedResponse != ""

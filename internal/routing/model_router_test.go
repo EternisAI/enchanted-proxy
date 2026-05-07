@@ -122,7 +122,7 @@ func TestRouteModelExactMatch(t *testing.T) {
 		{"zai-org/GLM-4.6", EternisGLM46BaseURL, EternisAPIKey, config.APITypeChatCompletions, "Eternis"},
 		{"dphn/Dolphin-Mistral-24B-Venice-Edition", EternisMistralBaseURL, EternisAPIKey, config.APITypeChatCompletions, "Eternis"},
 		{"openai/gpt-4.1", OpenRouterBaseURL, OpenRouterMobileAPIKey, config.APITypeChatCompletions, "OpenRouter"},
-		{"openai/gpt-5.2", OpenRouterBaseURL, OpenRouterMobileAPIKey, config.APITypeChatCompletions, "OpenRouter"},
+		{"openai/gpt-5.5", OpenRouterBaseURL, OpenRouterMobileAPIKey, config.APITypeChatCompletions, "OpenRouter"},
 	}
 
 	for _, tt := range tests {
@@ -155,7 +155,7 @@ func TestRouteModelTokenMultiplier(t *testing.T) {
 
 	tests := map[string]float64{
 		"gpt-4":   1.0,
-		"gpt-5.2": 6.0,
+		"gpt-5.5": 12.8,
 	}
 
 	for model, expectedTokenMultiplier := range tests {
@@ -193,8 +193,8 @@ func TestRouteModelNameOverride(t *testing.T) {
 	router := newModelRouter(t, newEnv(nil))
 
 	tests := map[string]string{
-		"moonshot/kimi-k2":             "kimi-k2-6",
-		"deepseek-ai/DeepSeek-R1-0528": "deepseek-r1-0528",
+		"moonshot/kimi-k2":            "kimi-k2-6",
+		"deepseek-ai/DeepSeek-V4-Pro": "deepseek-v4-pro",
 	}
 
 	for model, expectedModel := range tests {
@@ -216,7 +216,7 @@ func TestRouteModelAPITypeOverride(t *testing.T) {
 
 	tests := map[string]config.APIType{
 		"gpt-4":       config.APITypeChatCompletions,
-		"gpt-5.2-pro": config.APITypeResponses,
+		"gpt-5.5-pro": config.APITypeResponses,
 	}
 
 	for model, expectedAPIType := range tests {
@@ -241,13 +241,16 @@ func TestRouteModelAliasMatch(t *testing.T) {
 		"kimi-k2":                   "kimi-k2-6",
 		"kimi-2.5":                  "kimi-k2-6",
 		"kimi":                      "kimi-k2-6",
-		"deepseek/deepseek-r1-0528": "deepseek-r1-0528",
+		"deepseek/deepseek-v4-pro":  "deepseek-v4-pro",
+		"deepseek/deepseek-r1-0528": "deepseek-v4-pro",
 		"llama-3.3-70b":             "llama3-3-70b",
 		"z-ai/glm-4.6":              "zai-org/GLM-4.6",
 		"dolphin-mistral-eternis":   "dphn/Dolphin-Mistral-24B-Venice-Edition",
 		"gpt-4.1":                   "openai/gpt-4.1",
-		"gpt-5.2":                   "openai/gpt-5.2",
-		"openai/gpt-5.2-pro":        "gpt-5.2-pro",
+		"gpt-5.5":                   "openai/gpt-5.5",
+		"gpt-5.2":                   "openai/gpt-5.5",
+		"openai/gpt-5.5-pro":        "gpt-5.5-pro",
+		"openai/gpt-5.2-pro":        "gpt-5.5-pro",
 		"openai/gpt-4":              "gpt-4",
 		"openai/gpt-4-turbo":        "gpt-4-turbo",
 		"openai/gpt-3.5-turbo":      "gpt-3.5-turbo",
@@ -415,14 +418,14 @@ func TestGetSupportedModels(t *testing.T) {
 	// Should be a sorted list of canonical names of configured models
 	expectedModels := []string{
 		"moonshot/kimi-k2",
-		"deepseek-ai/DeepSeek-R1-0528",
+		"deepseek-ai/DeepSeek-V4-Pro",
 		"meta-llama/Llama-3.3-70B",
 		"zai-org/GLM-4.6",
 		"Qwen/Qwen3-30B-A3B-Instruct-2507",
 		"dphn/Dolphin-Mistral-24B-Venice-Edition",
 		"openai/gpt-4.1",
-		"openai/gpt-5.2",
-		"openai/gpt-5.2-pro",
+		"openai/gpt-5.5",
+		"openai/gpt-5.5-pro",
 		"openai/gpt-4",
 		"openai/gpt-4-turbo",
 		"openai/gpt-3.5-turbo",

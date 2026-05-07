@@ -172,9 +172,9 @@ func handleStreamingWithBroadcast(
 			}
 		}
 
-		// For GPT-5.2 Pro, save placeholder message immediately to allow client reconnection
-		// This creates a "thinking" message in Firestore before streaming starts
-		if model == "gpt-5.2-pro" && messageService != nil {
+		// For GPT-5.5 Pro, save placeholder message immediately to allow client reconnection.
+		// Legacy Pro model IDs are kept here because older clients may still send them.
+		if isGPT5ProModel(model) && messageService != nil {
 			userID, exists := auth.GetUserID(c)
 			if exists {
 				// Extract encryption setting
@@ -275,4 +275,15 @@ func handleStreamingWithBroadcast(
 	}
 
 	return nil
+}
+
+func isGPT5ProModel(model string) bool {
+	switch model {
+	case "gpt-5.5-pro", "openai/gpt-5.5-pro",
+		"gpt-5.4-pro", "openai/gpt-5.4-pro",
+		"gpt-5.2-pro", "openai/gpt-5.2-pro":
+		return true
+	default:
+		return false
+	}
 }
