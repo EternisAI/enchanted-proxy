@@ -316,8 +316,12 @@ func (w *PollingWorker) fetchAndSaveResponse(ctx context.Context) error {
 
 	// Log token usage to database for GPT-5 Pro requests
 	if content.Usage == nil {
-		w.logger.Warn("no token usage data in completed response",
-			slog.String("response_id", w.job.ResponseID))
+		w.logger.Error("MISSING TOKEN USAGE in completed GPT-5 Pro response — quota tracking is broken for this request",
+			slog.String("response_id", w.job.ResponseID),
+			slog.String("user_id", w.job.UserID),
+			slog.String("chat_id", w.job.ChatID),
+			slog.String("message_id", w.job.MessageID),
+			slog.String("model", w.job.Model))
 	} else if w.trackingService == nil {
 		// CRITICAL: Tracking service unavailable - cannot log GPT-5 Pro tokens
 		// This causes revenue loss and rate limiting bypass
@@ -363,8 +367,10 @@ func (w *PollingWorker) fetchAndSaveResponse(ctx context.Context) error {
 		// cancel here previously caused every queued write to fail with
 		// `context canceled` once the worker dequeued.
 		if err := w.trackingService.LogRequestWithPlanTokensAsync(context.Background(), requestInfo, tokenData); err != nil {
-			w.logger.Error("failed to log token usage for GPT-5 Pro response",
+			w.logger.Error("failed to queue token usage log for GPT-5 Pro response",
 				slog.String("response_id", w.job.ResponseID),
+				slog.String("user_id", w.job.UserID),
+				slog.String("model", w.job.Model),
 				slog.Int("total_tokens", totalTokens),
 				slog.Int("plan_tokens", planTokens),
 				slog.Float64("multiplier", w.tokenMultiplier),

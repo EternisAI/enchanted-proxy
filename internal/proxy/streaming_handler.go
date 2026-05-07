@@ -268,9 +268,9 @@ func handleStreamingWithBroadcast(
 		}
 
 		if provider != nil {
-			logRequestToDatabaseWithProvider(c, trackingService, model, tokenUsage, provider.Name, provider.TokenMultiplier)
+			logRequestToDatabaseWithProvider(c, trackingService, log, model, tokenUsage, provider.Name, provider.TokenMultiplier)
 		} else {
-			logRequestToDatabase(c, trackingService, model, tokenUsage)
+			logRequestToDatabase(c, trackingService, log, model, tokenUsage)
 		}
 	}
 
