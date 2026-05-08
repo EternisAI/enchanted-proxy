@@ -112,7 +112,7 @@ model_router:
     providers:
     # Temporary reroute due to GLM issues
     - name: Tinfoil
-      model: kimi-k2-5
+      model: kimi-k2-6
 
   # GLM 5 - via NEAR AI (0.6× multiplier) - Available when explicitly requested
   - name: zai-org/GLM-5-FP8
@@ -125,7 +125,7 @@ model_router:
     providers:
     # Temporary reroute due to GLM issues
     - name: Tinfoil
-      model: kimi-k2-5
+      model: kimi-k2-6
 
   # Qwen3 30B A3B - Free & Pro - via NEAR AI (0.04× multiplier, fallback model)
   - name: Qwen/Qwen3-30B-A3B-Instruct-2507
