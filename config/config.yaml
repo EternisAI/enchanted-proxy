@@ -137,6 +137,11 @@ model_router:
     providers:
     - name: NEAR AI
       model: Qwen/Qwen3.6-35B-A3B-FP8
+      # Reroute target is a thinking model; reasoning_content alone can exceed the
+      # default 100-token probe budget, leaving content empty (finish_reason=length).
+      # Give it room to finish reasoning AND emit the answer.
+      probe:
+        max_tokens: 512
 
   # Dolphin Mistral (Venice) - Free & Pro - via GCP self-hosted (0.5× multiplier)
   - name: dphn/Dolphin-Mistral-24B-Venice-Edition
