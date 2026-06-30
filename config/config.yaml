@@ -132,9 +132,11 @@ model_router:
     aliases:
     - qwen3-30b
     - qwen-30b
+    - Qwen/Qwen3.6-35B-A3B-FP8
     token_multiplier: 0.04
     providers:
     - name: NEAR AI
+      model: Qwen/Qwen3.6-35B-A3B-FP8
 
   # Dolphin Mistral (Venice) - Free & Pro - via GCP self-hosted (0.5× multiplier)
   - name: dphn/Dolphin-Mistral-24B-Venice-Edition
