@@ -70,6 +70,8 @@ type Querier interface {
 	GetUserPlanTokensToday(ctx context.Context, userID string) (int64, error)
 	GetUserTier(ctx context.Context, userID string) (GetUserTierRow, error)
 	GetZcashInvoice(ctx context.Context, id uuid.UUID) (ZcashInvoice, error)
+	// Row-locking read used to serialise concurrent payment callbacks for one invoice.
+	GetZcashInvoiceForUpdate(ctx context.Context, id uuid.UUID) (ZcashInvoice, error)
 	GetZcashInvoiceForUser(ctx context.Context, arg GetZcashInvoiceForUserParams) (ZcashInvoice, error)
 	GetZcashInvoicesByUserAndStatus(ctx context.Context, arg GetZcashInvoicesByUserAndStatusParams) ([]ZcashInvoice, error)
 	HasActiveDeepResearchRun(ctx context.Context, userID string) (bool, error)
@@ -86,8 +88,13 @@ type Querier interface {
 	UpdateTaskStatus(ctx context.Context, arg UpdateTaskStatusParams) error
 	UpdateZcashInvoiceStatus(ctx context.Context, arg UpdateZcashInvoiceStatusParams) error
 	UpdateZcashInvoiceToExpired(ctx context.Context, id uuid.UUID) error
-	UpdateZcashInvoiceToPaid(ctx context.Context, id uuid.UUID) error
-	UpdateZcashInvoiceToProcessing(ctx context.Context, id uuid.UUID) error
+	// Every non-paid status is accepted: a payment that lands after the invoice expired
+	// is still a payment, and the backend only calls back for invoices it still tracks.
+	// Returning the row count lets the caller refuse to commit a silent no-op.
+	UpdateZcashInvoiceToPaid(ctx context.Context, id uuid.UUID) (int64, error)
+	// 'expired' is included because the expiry worker retires invoices after 24h while
+	// the payment backend may still be tracking a partial payment against them.
+	UpdateZcashInvoiceToProcessing(ctx context.Context, id uuid.UUID) (int64, error)
 	UpsertEntitlement(ctx context.Context, arg UpsertEntitlementParams) error
 	// Grants or extends an entitlement. For same-tier renewals where the current
 	// subscription is still active (expires after invoice creation), extends from

@@ -43,13 +43,17 @@ const (
 )
 
 type Service struct {
+	db              *sql.DB
 	queries         pgdb.Querier
 	logger          *logger.Logger
 	httpClient      *http.Client
 	firestoreClient *firestore.Client
 }
 
-func NewService(queries pgdb.Querier, firestoreClient *firestore.Client, logger *logger.Logger) *Service {
+// NewService needs the raw *sql.DB in addition to queries: settling a payment has to
+// grant the entitlement and mark the invoice paid in one transaction, which the
+// Querier interface alone cannot express.
+func NewService(db *sql.DB, queries pgdb.Querier, firestoreClient *firestore.Client, logger *logger.Logger) *Service {
 	client := &http.Client{
 		Timeout: 60 * time.Second,
 	}
@@ -64,6 +68,7 @@ func NewService(queries pgdb.Querier, firestoreClient *firestore.Client, logger 
 	}
 
 	return &Service{
+		db:              db,
 		queries:         queries,
 		logger:          logger,
 		httpClient:      client,
@@ -471,21 +476,22 @@ func (s *Service) HandlePaymentCallback(ctx context.Context, invoiceIDStr, statu
 		return fmt.Errorf("insufficient payment: got %d zatoshis, expected %d", accumulatedZatoshis, row.AmountZatoshis)
 	}
 
-	// For paid status: grant entitlement first, then mark invoice as paid.
-	// This ordering ensures retries work correctly - if grantEntitlement succeeds
-	// but UpdateZcashInvoiceToPaid fails, the retry will re-grant (idempotent upsert)
-	// and then mark as paid. The invoice only reaches "paid" status after entitlement
-	// is granted, so the idempotency check above is safe.
 	if status == "paid" {
-		if err := s.grantEntitlement(ctx, row); err != nil {
-			return fmt.Errorf("failed to grant entitlement: %w", err)
-		}
-		if err := s.queries.UpdateZcashInvoiceToPaid(ctx, invoiceID); err != nil {
-			return fmt.Errorf("failed to update invoice status: %w", err)
+		if err := s.settlePaidInvoice(ctx, invoiceID); err != nil {
+			return err
 		}
 	} else if status == "processing" {
-		if err := s.queries.UpdateZcashInvoiceToProcessing(ctx, invoiceID); err != nil {
+		affected, err := s.queries.UpdateZcashInvoiceToProcessing(ctx, invoiceID)
+		if err != nil {
 			return fmt.Errorf("failed to update invoice status: %w", err)
+		}
+		if affected == 0 {
+			// Already processing, or already settled by a concurrent delivery.
+			// Both are benign; the status is only ever moved forward.
+			s.logger.Debug("processing callback left invoice status unchanged",
+				"invoice_id", invoiceIDStr,
+				"status", row.Status,
+			)
 		}
 	}
 
@@ -503,7 +509,71 @@ func (s *Service) HandlePaymentCallback(ctx context.Context, invoiceIDStr, statu
 	return nil
 }
 
-func (s *Service) grantEntitlement(ctx context.Context, invoice pgdb.ZcashInvoice) error {
+// settlePaidInvoice grants the entitlement and marks the invoice paid in a single
+// transaction, re-reading the invoice under a row lock first.
+//
+// The two writes must land together. Granting outside a transaction - and against a
+// status update that could silently match no rows - meant an expired invoice took the
+// entitlement while its row stayed "expired". The idempotency check in the caller keys
+// on that status, so it never engaged, and because callbacks are delivered
+// at-least-once by design, each redelivery granted the user another full period.
+//
+// The FOR UPDATE read also serializes concurrent deliveries: the second one blocks
+// until the first commits, then observes "paid" rather than the status it read before
+// the backend verification round trip.
+func (s *Service) settlePaidInvoice(ctx context.Context, invoiceID uuid.UUID) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	qtx := pgdb.New(tx)
+
+	row, err := qtx.GetZcashInvoiceForUpdate(ctx, invoiceID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvoiceNotFound
+		}
+		return err
+	}
+
+	if row.Status == "paid" {
+		s.logger.Debug("invoice already paid, ignoring callback", "invoice_id", invoiceID.String())
+		return nil
+	}
+
+	if row.Status == "expired" {
+		s.logger.Warn("crediting a payment that arrived after the invoice expired",
+			"invoice_id", invoiceID.String(),
+			"user_id", row.UserID,
+			"created_at", row.CreatedAt,
+		)
+	}
+
+	if err := s.grantEntitlement(ctx, qtx, row); err != nil {
+		return fmt.Errorf("failed to grant entitlement: %w", err)
+	}
+
+	affected, err := qtx.UpdateZcashInvoiceToPaid(ctx, invoiceID)
+	if err != nil {
+		return fmt.Errorf("failed to update invoice status: %w", err)
+	}
+	if affected == 0 {
+		// Unreachable while we hold the row lock and have just seen a non-paid status.
+		// Fail rather than commit an entitlement against an invoice that stayed unpaid;
+		// the deferred rollback undoes the grant and the callback is retried.
+		return fmt.Errorf("invoice %s not marked paid from status %q", invoiceID, row.Status)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit payment: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) grantEntitlement(ctx context.Context, q pgdb.Querier, invoice pgdb.ZcashInvoice) error {
 	product := s.GetProduct(invoice.ProductID)
 	if product == nil {
 		return fmt.Errorf("unknown product: %s", invoice.ProductID)
@@ -515,7 +585,7 @@ func (s *Service) grantEntitlement(ctx context.Context, invoice pgdb.ZcashInvoic
 			Time:  time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC),
 			Valid: true,
 		}
-		err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
+		err := q.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
 			UserID:                invoice.UserID,
 			SubscriptionTier:      product.Tier,
 			SubscriptionExpiresAt: expiresAt,
@@ -549,7 +619,7 @@ func (s *Service) grantEntitlement(ctx context.Context, invoice pgdb.ZcashInvoic
 		durationDays = 30
 	}
 
-	err := s.queries.UpsertEntitlementWithExtension(ctx, pgdb.UpsertEntitlementWithExtensionParams{
+	err := q.UpsertEntitlementWithExtension(ctx, pgdb.UpsertEntitlementWithExtensionParams{
 		UserID:               invoice.UserID,
 		SubscriptionTier:     product.Tier,
 		BaseTime:             invoice.CreatedAt,

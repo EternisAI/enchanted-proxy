@@ -153,7 +153,7 @@ func main() {
 	if firebaseClient != nil {
 		zcashFirestoreClient = firebaseClient.GetFirestoreClient()
 	}
-	zcashService := zcash.NewService(db.Queries, zcashFirestoreClient, logger.WithComponent("zcash"))
+	zcashService := zcash.NewService(db.DB, db.Queries, zcashFirestoreClient, logger.WithComponent("zcash"))
 
 	// Initialize FAI payment service
 	faiService := fai.NewService(db.Queries, logger.WithComponent("fai"))
