@@ -11,6 +11,7 @@ package zcash
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -21,6 +22,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/storage/pg"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/google/uuid"
+	"github.com/lib/pq" // registers the driver here rather than relying on pg to do it
 )
 
 func newTestService(t *testing.T) (*Service, *sql.DB) {
@@ -170,12 +172,22 @@ func TestSettlePaidInvoiceConcurrentDeliveriesGrantOnce(t *testing.T) {
 	}
 }
 
-// A failed grant must not leave the invoice marked paid: the whole settlement rolls
-// back so the next delivery retries it. An unknown product makes grantEntitlement fail.
-func TestSettlePaidInvoiceRollsBackOnGrantFailure(t *testing.T) {
+func countEntitlements(t *testing.T, db *sql.DB, userID string) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM entitlements WHERE user_id = $1`, userID).Scan(&n); err != nil {
+		t.Fatalf("count entitlements: %v", err)
+	}
+	return n
+}
+
+// A grant that fails must not leave the invoice marked paid, so the next delivery
+// retries it. An unknown product fails grantEntitlement before it issues any
+// statement, so this covers the ordering only - see the test below for atomicity.
+func TestSettlePaidInvoiceLeavesInvoiceUnpaidWhenGrantFails(t *testing.T) {
 	svc, db := newTestService(t)
 	ctx := context.Background()
-	userID := "user-rollback-" + uuid.NewString()
+	userID := "user-grantfail-" + uuid.NewString()
 
 	id, _ := seedInvoice(t, db, userID, "processing", time.Hour)
 	if _, err := db.Exec(`UPDATE zcash_invoices SET product_id = 'silo.nonexistent' WHERE id = $1`, id); err != nil {
@@ -189,12 +201,51 @@ func TestSettlePaidInvoiceRollsBackOnGrantFailure(t *testing.T) {
 	if status, paidAt := readInvoice(t, db, id); status != "processing" || paidAt != nil {
 		t.Fatalf("invoice = (%q, %v) after failed settle, want (\"processing\", <nil>)", status, paidAt)
 	}
-
-	var n int
-	if err := db.QueryRow(`SELECT count(*) FROM entitlements WHERE user_id = $1`, userID).Scan(&n); err != nil {
-		t.Fatalf("count entitlements: %v", err)
-	}
-	if n != 0 {
+	if n := countEntitlements(t, db, userID); n != 0 {
 		t.Fatalf("entitlement rows = %d after failed settle, want 0", n)
+	}
+}
+
+// The atomicity guarantee: an entitlement upsert that has already succeeded must be
+// undone when a later statement in the settlement fails. Without the transaction the
+// user would keep a subscription period bought by an invoice that never settled.
+//
+// A trigger scoped to this user's invoice makes the status update fail after the
+// upsert has landed - the one ordering that cannot be produced from the Go side.
+func TestSettlePaidInvoiceRollsBackGrantWhenStatusUpdateFails(t *testing.T) {
+	svc, db := newTestService(t)
+	ctx := context.Background()
+	userID := "user-rollback-" + uuid.NewString()
+
+	id, _ := seedInvoice(t, db, userID, "processing", time.Hour)
+
+	if _, err := db.Exec(`
+		CREATE OR REPLACE FUNCTION test_fail_paid_update() RETURNS trigger AS $$
+		BEGIN RAISE EXCEPTION 'forced failure after grant'; END;
+		$$ LANGUAGE plpgsql`); err != nil {
+		t.Fatalf("create trigger function: %v", err)
+	}
+	// DDL takes no bind parameters, so the user id is quoted into the WHEN clause.
+	if _, err := db.Exec(fmt.Sprintf(`
+		CREATE TRIGGER test_fail_paid_update BEFORE UPDATE ON zcash_invoices
+		FOR EACH ROW WHEN (NEW.user_id = %s) EXECUTE FUNCTION test_fail_paid_update()`,
+		pq.QuoteLiteral(userID))); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec(`DROP TRIGGER IF EXISTS test_fail_paid_update ON zcash_invoices`)
+		_, _ = db.Exec(`DROP FUNCTION IF EXISTS test_fail_paid_update()`)
+	})
+
+	if err := svc.settlePaidInvoice(ctx, id); err == nil {
+		t.Fatal("expected settle to fail when the status update fails")
+	}
+
+	// grantEntitlement ran and its upsert succeeded; only the rollback removes it.
+	if n := countEntitlements(t, db, userID); n != 0 {
+		t.Fatalf("entitlement rows = %d after rollback, want 0 (grant was not undone)", n)
+	}
+	if status, paidAt := readInvoice(t, db, id); status != "processing" || paidAt != nil {
+		t.Fatalf("invoice = (%q, %v) after rollback, want (\"processing\", <nil>)", status, paidAt)
 	}
 }
