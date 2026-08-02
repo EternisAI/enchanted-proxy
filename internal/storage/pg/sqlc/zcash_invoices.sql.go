@@ -116,6 +116,30 @@ func (q *Queries) GetZcashInvoice(ctx context.Context, id uuid.UUID) (ZcashInvoi
 	return i, err
 }
 
+const getZcashInvoiceForUpdate = `-- name: GetZcashInvoiceForUpdate :one
+SELECT id, user_id, product_id, amount_zatoshis, zec_amount, price_usd, receiving_address, status, created_at, updated_at, paid_at FROM zcash_invoices WHERE id = $1 FOR UPDATE
+`
+
+// Row-locking read used to serialise concurrent payment callbacks for one invoice.
+func (q *Queries) GetZcashInvoiceForUpdate(ctx context.Context, id uuid.UUID) (ZcashInvoice, error) {
+	row := q.db.QueryRowContext(ctx, getZcashInvoiceForUpdate, id)
+	var i ZcashInvoice
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ProductID,
+		&i.AmountZatoshis,
+		&i.ZecAmount,
+		&i.PriceUsd,
+		&i.ReceivingAddress,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PaidAt,
+	)
+	return i, err
+}
+
 const getZcashInvoiceForUser = `-- name: GetZcashInvoiceForUser :one
 SELECT id, user_id, product_id, amount_zatoshis, zec_amount, price_usd, receiving_address, status, created_at, updated_at, paid_at FROM zcash_invoices WHERE id = $1 AND user_id = $2
 `
@@ -217,24 +241,35 @@ func (q *Queries) UpdateZcashInvoiceToExpired(ctx context.Context, id uuid.UUID)
 	return err
 }
 
-const updateZcashInvoiceToPaid = `-- name: UpdateZcashInvoiceToPaid :exec
+const updateZcashInvoiceToPaid = `-- name: UpdateZcashInvoiceToPaid :execrows
 UPDATE zcash_invoices
 SET status = 'paid', paid_at = NOW(), updated_at = NOW()
-WHERE id = $1 AND status IN ('pending', 'processing')
+WHERE id = $1 AND status <> 'paid'
 `
 
-func (q *Queries) UpdateZcashInvoiceToPaid(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.ExecContext(ctx, updateZcashInvoiceToPaid, id)
-	return err
+// Every non-paid status is accepted: a payment that lands after the invoice expired
+// is still a payment, and the backend only calls back for invoices it still tracks.
+// Returning the row count lets the caller refuse to commit a silent no-op.
+func (q *Queries) UpdateZcashInvoiceToPaid(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateZcashInvoiceToPaid, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
-const updateZcashInvoiceToProcessing = `-- name: UpdateZcashInvoiceToProcessing :exec
+const updateZcashInvoiceToProcessing = `-- name: UpdateZcashInvoiceToProcessing :execrows
 UPDATE zcash_invoices
 SET status = 'processing', updated_at = NOW()
-WHERE id = $1 AND status = 'pending'
+WHERE id = $1 AND status IN ('pending', 'expired')
 `
 
-func (q *Queries) UpdateZcashInvoiceToProcessing(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.ExecContext(ctx, updateZcashInvoiceToProcessing, id)
-	return err
+// 'expired' is included because the expiry worker retires invoices after 24h while
+// the payment backend may still be tracking a partial payment against them.
+func (q *Queries) UpdateZcashInvoiceToProcessing(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateZcashInvoiceToProcessing, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

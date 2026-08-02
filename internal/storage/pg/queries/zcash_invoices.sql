@@ -7,6 +7,10 @@ INSERT INTO zcash_invoices (
 -- name: GetZcashInvoice :one
 SELECT * FROM zcash_invoices WHERE id = $1;
 
+-- name: GetZcashInvoiceForUpdate :one
+-- Row-locking read used to serialise concurrent payment callbacks for one invoice.
+SELECT * FROM zcash_invoices WHERE id = $1 FOR UPDATE;
+
 -- name: GetZcashInvoiceForUser :one
 SELECT * FROM zcash_invoices WHERE id = $1 AND user_id = $2;
 
@@ -20,15 +24,20 @@ UPDATE zcash_invoices
 SET status = $2, updated_at = NOW()
 WHERE id = $1;
 
--- name: UpdateZcashInvoiceToProcessing :exec
+-- name: UpdateZcashInvoiceToProcessing :execrows
+-- 'expired' is included because the expiry worker retires invoices after 24h while
+-- the payment backend may still be tracking a partial payment against them.
 UPDATE zcash_invoices
 SET status = 'processing', updated_at = NOW()
-WHERE id = $1 AND status = 'pending';
+WHERE id = $1 AND status IN ('pending', 'expired');
 
--- name: UpdateZcashInvoiceToPaid :exec
+-- name: UpdateZcashInvoiceToPaid :execrows
+-- Every non-paid status is accepted: a payment that lands after the invoice expired
+-- is still a payment, and the backend only calls back for invoices it still tracks.
+-- Returning the row count lets the caller refuse to commit a silent no-op.
 UPDATE zcash_invoices
 SET status = 'paid', paid_at = NOW(), updated_at = NOW()
-WHERE id = $1 AND status IN ('pending', 'processing');
+WHERE id = $1 AND status <> 'paid';
 
 -- name: GetExpiredPendingInvoices :many
 SELECT * FROM zcash_invoices
