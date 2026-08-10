@@ -62,32 +62,35 @@ model_router:
     base_url: https://openrouter.ai/api/v1
 
   models:
-  # Kimi K2.6 - Free & Pro - via Tinfoil (0.75× multiplier) - NEW DEFAULT
-  - name: moonshot/kimi-k2
+  # Kimi K3 - Free & Pro - via Tinfoil (0.75× multiplier) - NEW DEFAULT
+  - name: moonshot/kimi-k3
     aliases:
     - kimi-k2
+    - kimi-k2-6
     - kimi-2.5
+    - kimi-k3
     - kimi
+    - moonshot/kimi-k2
     token_multiplier: 0.75
     providers:
     - name: Tinfoil
-      model: kimi-k2-6
+      model: kimi-k3
 
-  # DeepSeek V4 Pro - Free & Pro - via Tinfoil (0.75× multiplier)
-  - name: deepseek-ai/DeepSeek-V4-Pro
-    aliases:
-    - deepseek/deepseek-v4-pro
-    - deepseek-v4-pro
-    - deepseek-v4
-    - deepseek/deepseek-r1-0528
-    - deepseek-r1-0528
-    - deepseek-r1
-    token_multiplier: 0.75
-    providers:
-    - name: Tinfoil
-      model: deepseek-v4-pro
-      probe:
-        max_tokens: 400
+  ## DeepSeek V4 Pro - Free & Pro - via Tinfoil (0.75× multiplier)
+  #- name: deepseek-ai/DeepSeek-V4-Pro
+  #  aliases:
+  #  - deepseek/deepseek-v4-pro
+  #  - deepseek-v4-pro
+  #  - deepseek-v4
+  #  - deepseek/deepseek-r1-0528
+  #  - deepseek-r1-0528
+  #  - deepseek-r1
+  #  token_multiplier: 0.75
+  #  providers:
+  #  - name: Tinfoil
+  #    model: deepseek-v4-pro
+  #    probe:
+  #      max_tokens: 400
 
   # Llama 3.3 70B - Free & Pro - via Tinfoil (0.75× multiplier)
   - name: meta-llama/Llama-3.3-70B
@@ -110,9 +113,8 @@ model_router:
     - glm-4.6
     token_multiplier: 0.75
     providers:
-    # Temporary reroute due to GLM issues
-    - name: Tinfoil
-      model: kimi-k2-6
+    - name: NEAR AI
+      model: z-ai/glm-5.2
 
   # GLM 5 - via NEAR AI (0.6× multiplier) - Available when explicitly requested
   - name: zai-org/GLM-5-FP8
@@ -120,12 +122,13 @@ model_router:
     - glm-5
     - glm5
     - z-ai/glm-5
+    - z-ai/glm-5.2
     - zai-org/glm-5.0
     token_multiplier: 0.75
     providers:
     # Temporary reroute due to GLM issues
-    - name: Tinfoil
-      model: kimi-k2-6
+    - name: NEAR AI
+      model: z-ai/glm-5.2
 
   # Qwen3 30B A3B - Free & Pro - via NEAR AI (0.04× multiplier, fallback model)
   - name: Qwen/Qwen3-30B-A3B-Instruct-2507
