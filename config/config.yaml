@@ -102,28 +102,21 @@ model_router:
     - name: Tinfoil
       model: llama3-3-70b
 
-  # GLM 4.7 - via NEAR AI (0.6× multiplier) - Keep on actual 4.7
-  - name: zai-org/GLM-4.7
-    aliases:
-    - zhipu/glm-4.7
-    - z-ai/glm-4.7
-    - glm-4.7
-    - zai-org/GLM-4.6
-    - z-ai/glm-4.6
-    - glm-4.6
-    token_multiplier: 0.75
-    providers:
-    - name: NEAR AI
-      model: z-ai/glm-5.2
-
-  # GLM 5 - via NEAR AI (0.6× multiplier) - Available when explicitly requested
+  # GLM 5 - via NEAR AI (0.75× multiplier) - Available when explicitly requested
   - name: zai-org/GLM-5-FP8
     aliases:
+    - glm-4.6
+    - glm-4.7
     - glm-5
     - glm5
+    - z-ai/glm-4.6
+    - z-ai/glm-4.7
     - z-ai/glm-5
     - z-ai/glm-5.2
+    - zai-org/GLM-4.6
+    - zai-org/GLM-4.7
     - zai-org/glm-5.0
+    - zhipu/glm-4.7
     token_multiplier: 0.75
     providers:
     # Temporary reroute due to GLM issues
