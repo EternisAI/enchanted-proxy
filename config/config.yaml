@@ -62,35 +62,33 @@ model_router:
     base_url: https://openrouter.ai/api/v1
 
   models:
-  # Kimi K3 - Free & Pro - via Tinfoil (0.75× multiplier) - NEW DEFAULT
-  - name: moonshot/kimi-k3
+  # Kimi K2.6 - Free & Pro - via NEAR AI (0.75× multiplier) - NEW DEFAULT
+  - name: moonshot/kimi-k2
     aliases:
     - kimi-k2
     - kimi-k2-6
     - kimi-2.5
-    - kimi-k3
     - kimi
     - moonshot/kimi-k2
     token_multiplier: 0.75
     providers:
-    - name: Tinfoil
-      model: kimi-k3
+    - name: NEAR AI
+      model: moonshotai/kimi-k2.6
 
-  ## DeepSeek V4 Pro - Free & Pro - via Tinfoil (0.75× multiplier)
-  #- name: deepseek-ai/DeepSeek-V4-Pro
-  #  aliases:
-  #  - deepseek/deepseek-v4-pro
-  #  - deepseek-v4-pro
-  #  - deepseek-v4
-  #  - deepseek/deepseek-r1-0528
-  #  - deepseek-r1-0528
-  #  - deepseek-r1
-  #  token_multiplier: 0.75
-  #  providers:
-  #  - name: Tinfoil
-  #    model: deepseek-v4-pro
-  #    probe:
-  #      max_tokens: 400
+  # DeepSeek V4 Pro - Free & Pro - temporary reroute to DeepSeek V4 Flash via NEAR AI (0.75× multiplier)
+  - name: deepseek-ai/DeepSeek-V4-Pro
+    aliases:
+    - deepseek/deepseek-v4-pro
+    - deepseek-v4-pro
+    - deepseek-v4
+    - deepseek/deepseek-r1-0528
+    - deepseek-r1-0528
+    - deepseek-r1
+    token_multiplier: 0.75
+    providers:
+    # Temporary reroute before full deprecation as unavailable at upstream providers
+    - name: NEAR AI
+      model: deepseek-ai/DeepSeek-V4-Flash
 
   # Llama 3.3 70B - Free & Pro - via Tinfoil (0.75× multiplier)
   - name: meta-llama/Llama-3.3-70B
