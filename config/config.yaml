@@ -145,7 +145,7 @@ model_router:
     token_multiplier: 0.5
     providers:
     - name: Eternis
-      base_url: http://34.30.193.13:8000/v1
+      base_url: http://34.28.19.236:8000/v1
 
   # GPT-4.1 - Pro only - via OpenRouter (4× multiplier)
   - name: openai/gpt-4.1
