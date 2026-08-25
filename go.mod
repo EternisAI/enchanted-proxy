@@ -29,6 +29,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stripe/stripe-go/v84 v84.0.0
 	github.com/vektah/gqlparser/v2 v2.5.30
+	go.etcd.io/bbolt v1.4.3
 	go.temporal.io/sdk v1.37.0
 	golang.org/x/crypto v0.45.0
 	golang.org/x/oauth2 v0.32.0

@@ -32,6 +32,14 @@ RUN apk add --no-cache ca-certificates && \
 COPY --chown=prober:prober config/config.yaml /etc/enchanted-proxy/config.yaml
 ENV CONFIG_FILE=/etc/enchanted-proxy/config.yaml
 
+# Probe state survives restarts so an endpoint that was failing before a restart
+# still announces its recovery. Mount a PersistentVolume here to carry that state
+# across rescheduling; without one it only survives in-place container restarts,
+# and if the directory is unwritable the prober logs a warning and runs stateless.
+# See docs/llm-prober-state.md for the volume requirements.
+RUN mkdir -p /var/lib/llm-prober && chown prober:prober /var/lib/llm-prober
+ENV LLM_PROBER_STATE_DB=/var/lib/llm-prober/state.db
+
 COPY --chown=prober:prober --from=builder /app/llm-prober /usr/local/bin/llm-prober
 EXPOSE 9090
 USER prober

@@ -24,6 +24,9 @@ func main() {
 	listenAddr := flag.String("listen", ":9090", "address for metrics server")
 	logLevel := flag.String("log-level", "info", "log level (debug, info, warn, error)")
 	logFormat := flag.String("log-format", "", "log format (json or text)")
+	stateDB := flag.String("state-db", "", "path to the persistent probe state database (default: LLM_PROBER_STATE_DB env; empty disables persistence)")
+	stateFlush := flag.Duration("state-flush-interval", 5*time.Minute, "how often pending probe timestamps are coalesced into a single write")
+	dumpState := flag.Bool("dump-state", false, "print the contents of the probe state database as JSON and exit")
 	flag.Parse()
 
 	// Resolve config file path: flag > env > default.
@@ -33,6 +36,21 @@ func main() {
 		if cfgPath == "" {
 			cfgPath = "config/config.yaml"
 		}
+	}
+
+	// Resolve state database path: flag > env > disabled.
+	statePath := *stateDB
+	if statePath == "" {
+		statePath = os.Getenv("LLM_PROBER_STATE_DB")
+	}
+
+	// -dump-state is an operator tool: read the database and exit without
+	// touching config, the network, or the running prober's state.
+	if *dumpState {
+		if err := probe.DumpState(statePath, os.Stdout); err != nil {
+			log.Fatalf("failed to dump probe state: %v", err)
+		}
+		return
 	}
 
 	// Initialize logger.
@@ -76,7 +94,11 @@ func main() {
 		appLogger.WithComponent("probe"),
 		router,
 		cfg.ModelRouterConfig.Models,
-		os.Getenv("LLM_PROBER_SLACK_WEBHOOK_URL"),
+		probe.Options{
+			SlackWebhookURL:    os.Getenv("LLM_PROBER_SLACK_WEBHOOK_URL"),
+			StateDBPath:        statePath,
+			StateFlushInterval: *stateFlush,
+		},
 	)
 
 	// Start metrics HTTP server.

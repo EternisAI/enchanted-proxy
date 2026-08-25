@@ -32,6 +32,9 @@ type probeWorker struct {
 	client   *http.Client
 	logger   *logger.Logger
 	slack    *slackNotifier
+
+	key      targetKey    // identity used to persist and restore this worker's state
+	restored *targetState // state recovered from disk at startup; nil if none
 }
 
 // probeResult holds the outcome of a single probe execution.
@@ -79,66 +82,98 @@ func (w *probeWorker) run() {
 		slog.Duration("retry_interval", w.probe.RetryInterval),
 		slog.Int("success_threshold", w.probe.SuccessThreshold),
 		slog.Int("failure_threshold", w.probe.FailureThreshold),
-		slog.Duration("initial_jitter", jitter))
+		slog.Duration("initial_jitter", jitter),
+		slog.Bool("resumed", w.restored != nil))
 
-	// --- Stage 1: Initial ---
-	// Use retry interval and accumulate consecutive results until one of the
-	// thresholds is crossed. Only send a Slack notification if consecutive
-	// failures reach the failure threshold; initial successes are silent.
 	healthy := false
 	consecutiveCount := 0
 
 	ticker := time.NewTicker(w.probe.RetryInterval)
 	defer ticker.Stop()
 
-	// Run the first probe after the jitter delay.
-	select {
-	case <-time.After(jitter):
-	case <-w.service.shutdown:
-		return
-	}
+	// probeNow makes the normal-operation loop probe without waiting for its
+	// first tick, which is how a resumed worker whose interval already elapsed
+	// gets checked right away.
+	probeNow := false
 
-	lastSuccess := false // tracks the previous result to detect outcome flips
-	initial := true
-	for initial {
-		result := w.runProbe()
-		if w.ctx.Err() != nil {
-			break
+	if w.restored != nil {
+		// --- Resumed from persisted state ---
+		// The initial stage exists to discover a state we do not know. Here we do
+		// know it, and running the initial stage anyway would be actively harmful:
+		// its first success is silent by design, so an endpoint that was failing
+		// before the restart would recover without ever announcing it.
+		healthy = w.resume(*w.restored)
+
+		delay := w.resumeDelay(*w.restored, jitter)
+		w.logger.Info("resuming probe from persisted state",
+			slog.String("provider", w.provider),
+			slog.String("model", w.model),
+			slog.String("state", string(w.restored.State)),
+			slog.Time("state_changed_at", w.restored.StateChangedAt),
+			slog.Duration("first_probe_in", delay))
+
+		select {
+		case <-time.After(delay):
+		case <-w.service.shutdown:
+			return
+		}
+		probeNow = true
+	} else {
+		// --- Stage 1: Initial ---
+		// Use retry interval and accumulate consecutive results until one of the
+		// thresholds is crossed. Only send a Slack notification if consecutive
+		// failures reach the failure threshold; initial successes are silent.
+
+		// Run the first probe after the jitter delay.
+		select {
+		case <-time.After(jitter):
+		case <-w.service.shutdown:
+			return
 		}
 
-		// Reset counter on outcome flip.
-		if result.success != lastSuccess {
-			consecutiveCount = 0
-			lastSuccess = result.success
-		}
-		consecutiveCount++
-
-		if result.success {
-			if consecutiveCount >= w.probe.SuccessThreshold {
-				healthy = true
-				consecutiveCount = 0
-				w.logStateChange(result)
-				initial = false
-			} else {
-				w.logProbeResult(result, consecutiveCount, w.probe.SuccessThreshold)
+		lastSuccess := false // tracks the previous result to detect outcome flips
+		initial := true
+		for initial {
+			result := w.runProbe()
+			if w.ctx.Err() != nil {
+				break
 			}
-		} else {
-			if consecutiveCount >= w.probe.FailureThreshold {
-				healthy = false
-				consecutiveCount = 0
-				w.logStateChange(result)
-				w.sendSlackNotification(result)
-				initial = false
-			} else {
-				w.logProbeResult(result, consecutiveCount, w.probe.FailureThreshold)
-			}
-		}
+			w.service.state.RecordProbe(w.key, time.Now())
 
-		if initial {
-			select {
-			case <-ticker.C:
-			case <-w.service.shutdown:
-				return
+			// Reset counter on outcome flip.
+			if result.success != lastSuccess {
+				consecutiveCount = 0
+				lastSuccess = result.success
+			}
+			consecutiveCount++
+
+			if result.success {
+				if consecutiveCount >= w.probe.SuccessThreshold {
+					healthy = true
+					consecutiveCount = 0
+					w.logStateChange(result)
+					initial = false
+				} else {
+					w.logProbeResult(result, consecutiveCount, w.probe.SuccessThreshold)
+				}
+			} else {
+				if consecutiveCount >= w.probe.FailureThreshold {
+					healthy = false
+					consecutiveCount = 0
+					w.logStateChange(result)
+					w.sendSlackNotification(result)
+					initial = false
+				} else {
+					w.logProbeResult(result, consecutiveCount, w.probe.FailureThreshold)
+				}
+			}
+
+			if initial {
+				select {
+				case <-ticker.C:
+				case <-w.service.shutdown:
+					return
+				}
 			}
 		}
 	}
@@ -153,61 +188,112 @@ func (w *probeWorker) run() {
 	}
 
 	for {
-		select {
-		case <-ticker.C:
-			result := w.runProbe()
-			if w.ctx.Err() != nil {
-				continue
+		if !probeNow {
+			select {
+			case <-ticker.C:
+			case <-w.service.shutdown:
+				w.logger.Debug("stopped probe worker",
+					slog.String("provider", w.provider),
+					slog.String("model", w.model))
+				return
 			}
+		}
+		probeNow = false
 
-			if healthy {
-				if result.success {
-					if consecutiveCount > 0 {
-						// Had some failures before — restore normal interval.
-						consecutiveCount = 0
-						ticker.Reset(w.probe.Interval)
-					}
-					w.logProbeResult(result, consecutiveCount, w.probe.FailureThreshold)
-				} else {
-					consecutiveCount++
-					if consecutiveCount == 1 {
-						// First failure — switch to retry interval immediately
-						// so we can quickly determine if this is a real outage.
-						ticker.Reset(w.probe.RetryInterval)
-					}
-					if consecutiveCount >= w.probe.FailureThreshold {
-						healthy = false
-						consecutiveCount = 0
-						w.logStateChange(result)
-						w.sendSlackNotification(result)
-					} else {
-						w.logProbeResult(result, consecutiveCount, w.probe.FailureThreshold)
-					}
-				}
-			} else {
-				if result.success {
-					consecutiveCount++
-					if consecutiveCount >= w.probe.SuccessThreshold {
-						healthy = true
-						consecutiveCount = 0
-						ticker.Reset(w.probe.Interval)
-						w.logStateChange(result)
-						w.sendSlackNotification(result)
-					} else {
-						w.logProbeResult(result, consecutiveCount, w.probe.SuccessThreshold)
-					}
-				} else {
+		result := w.runProbe()
+		if w.ctx.Err() != nil {
+			continue
+		}
+		w.service.state.RecordProbe(w.key, time.Now())
+
+		if healthy {
+			if result.success {
+				if consecutiveCount > 0 {
+					// Had some failures before — restore normal interval.
 					consecutiveCount = 0
+					ticker.Reset(w.probe.Interval)
+				}
+				w.logProbeResult(result, consecutiveCount, w.probe.FailureThreshold)
+			} else {
+				consecutiveCount++
+				if consecutiveCount == 1 {
+					// First failure — switch to retry interval immediately
+					// so we can quickly determine if this is a real outage.
+					ticker.Reset(w.probe.RetryInterval)
+				}
+				if consecutiveCount >= w.probe.FailureThreshold {
+					healthy = false
+					consecutiveCount = 0
+					w.logStateChange(result)
+					w.sendSlackNotification(result)
+				} else {
+					w.logProbeResult(result, consecutiveCount, w.probe.FailureThreshold)
+				}
+			}
+		} else {
+			if result.success {
+				consecutiveCount++
+				if consecutiveCount >= w.probe.SuccessThreshold {
+					healthy = true
+					consecutiveCount = 0
+					ticker.Reset(w.probe.Interval)
+					w.logStateChange(result)
+					w.sendSlackNotification(result)
+				} else {
 					w.logProbeResult(result, consecutiveCount, w.probe.SuccessThreshold)
 				}
+			} else {
+				consecutiveCount = 0
+				w.logProbeResult(result, consecutiveCount, w.probe.SuccessThreshold)
 			}
-		case <-w.service.shutdown:
-			w.logger.Debug("stopped probe worker",
-				slog.String("provider", w.provider),
-				slog.String("model", w.model))
-			return
 		}
 	}
+}
+
+// resume adopts a persisted state as the worker's current state and returns
+// whether that state is healthy.
+//
+// The health gauge is published immediately so the metric reflects what is known
+// from the moment the process starts, instead of reading as absent (and, for
+// alerting rules, as a gap) until the first probe of the new process completes.
+//
+// No notification is sent: the transition into this state was announced by the
+// process that recorded it.
+func (w *probeWorker) resume(state targetState) bool {
+	healthy := state.State == stateHealthy
+	if healthy {
+		probeHealthy.WithLabelValues(w.provider, w.model).Set(1)
+	} else {
+		probeHealthy.WithLabelValues(w.provider, w.model).Set(0)
+	}
+	return healthy
+}
+
+// resumeDelay returns how long a resumed worker should wait before its first
+// probe: the unelapsed remainder of the interval that applies to its restored
+// state, plus the usual jitter.
+//
+// Measuring from the last probe rather than from the state change is what keeps a
+// crash-looping pod from re-probing every endpoint on every restart; the state
+// change timestamp is the fallback for records written before a timestamp was
+// ever flushed. Either way, an interval that has already elapsed yields a delay of
+// just the jitter, so a long-down deployment is re-checked promptly.
+func (w *probeWorker) resumeDelay(state targetState, jitter time.Duration) time.Duration {
+	interval := w.probe.Interval
+	if state.State != stateHealthy {
+		interval = w.probe.RetryInterval
+	}
+
+	since := state.LastProbeAt
+	if since.IsZero() {
+		since = state.StateChangedAt
+	}
+
+	// Clamped to [0, interval]: a clock that moved backwards between processes
+	// must not push the first probe further out than a full interval.
+	remaining := min(max(interval-time.Since(since), 0), interval)
+
+	return remaining + jitter
 }
 
 // logProbeResult logs an individual probe result that did not cause a state transition
@@ -254,14 +340,17 @@ func (w *probeWorker) logProbeResult(result probeResult, consecutiveCount, thres
 	}
 }
 
-// logStateChange logs a probe state transition (initial state, recovery, or new failure)
-// and updates the health gauge metric.
+// logStateChange logs a probe state transition (initial state, recovery, or new
+// failure), updates the health gauge metric, and persists the new state so a
+// restart resumes from it rather than rediscovering it.
 func (w *probeWorker) logStateChange(result probeResult) {
 	if result.success {
 		probeHealthy.WithLabelValues(w.provider, w.model).Set(1)
 	} else {
 		probeHealthy.WithLabelValues(w.provider, w.model).Set(0)
 	}
+
+	w.service.state.RecordStateChange(w.key, healthStateFor(result.success), time.Now())
 
 	if result.success {
 		attrs := []any{
