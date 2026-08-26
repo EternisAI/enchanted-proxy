@@ -306,3 +306,62 @@ func TestResumeDelayClampsFutureTimestamps(t *testing.T) {
 		t.Errorf("resumeDelay = %s, want at most one interval (15m)", got)
 	}
 }
+
+// TestResumedWorkerDoesNotDoubleProbe guards the interaction between the resume
+// delay and the retry ticker. The ticker channel holds one tick, and Reset does
+// not drain it, so a ticker started before the resume wait can leave a tick
+// buffered — the immediate resume probe then falls straight through the next
+// select and probes again with no interval in between.
+func TestResumedWorkerDoesNotDoubleProbe(t *testing.T) {
+	var mu sync.Mutex
+	var probeTimes []time.Time
+
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		probeTimes = append(probeTimes, time.Now())
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": "OK"}}},
+		})
+	}))
+	t.Cleanup(endpoint.Close)
+
+	slack := newSlackRecorder(t)
+	w := newTestWorker(t, "no-double-probe", endpoint, slack, nil)
+	// A healthy resume waits out the probe interval while the ticker runs at the
+	// much shorter retry interval, so a tick is certain to buffer during the wait.
+	w.probe.Interval = 300 * time.Millisecond
+	w.probe.RetryInterval = 20 * time.Millisecond
+
+	state := failingState(w, 0)
+	state.State = stateHealthy
+	state.LastProbeAt = time.Now() // full interval still to run
+	w.restored = state
+
+	start(t, w)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(probeTimes)
+		mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	mu.Lock()
+	times := append([]time.Time(nil), probeTimes...)
+	mu.Unlock()
+
+	if len(times) < 2 {
+		t.Skipf("only %d probe(s) observed; cannot assess spacing", len(times))
+	}
+	gap := times[1].Sub(times[0])
+	if gap < w.probe.Interval/2 {
+		t.Errorf("second probe came %s after the first, want at least ~%s: a stale ticker tick fired immediately",
+			gap, w.probe.Interval)
+	}
+}

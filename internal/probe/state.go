@@ -34,10 +34,10 @@ const (
 	// stateBucket holds one key per probe target (see targetKey.storageKey).
 	stateBucket = "probe_state"
 
-	// stateOpenTimeout bounds how long we wait for bbolt's file lock. A rolling
-	// restart on an RWO volume can briefly overlap two pods; rather than block
-	// startup indefinitely we give up and run without persistence.
-	stateOpenTimeout = 10 * time.Second
+	// stateDebugPath serves the running prober's state. bbolt's lock is held for
+	// the lifetime of the process that opened the database, so a second process
+	// cannot read it — the live view has to come from inside.
+	stateDebugPath = "/debug/state"
 
 	// defaultStateFlushInterval is how often pending last-probe timestamps are
 	// coalesced into a single write transaction.
@@ -48,6 +48,12 @@ const (
 	// writer and the reader of the volume.
 	stateFutureSkew = 5 * time.Minute
 )
+
+// stateOpenTimeout bounds how long we wait for bbolt's file lock. A rolling
+// restart on an RWO volume can briefly overlap two pods; rather than block
+// startup indefinitely we give up and run without persistence. It is a variable
+// only so tests do not have to sit out the full wait.
+var stateOpenTimeout = 10 * time.Second
 
 // healthState is the persisted health of a probe target.
 type healthState string

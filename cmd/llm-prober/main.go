@@ -114,6 +114,20 @@ func main() {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
+	// Reads the state through the already-open database. bbolt holds its file
+	// lock for the lifetime of this process, so nothing outside it can open the
+	// database while the prober runs — the live view has to be served from here.
+	mux.HandleFunc("/debug/state", func(w http.ResponseWriter, r *http.Request) {
+		records, err := probeService.StateSnapshot()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := probe.WriteDump(w, records); err != nil {
+			appLog.Warn("failed to write state snapshot", slog.String("error", err.Error()))
+		}
+	})
 
 	server := &http.Server{
 		Addr:              *listenAddr,

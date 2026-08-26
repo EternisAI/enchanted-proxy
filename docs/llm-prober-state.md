@@ -103,16 +103,26 @@ ignored, never deleted.
 |---|---|---|---|
 | `-state-db` | `LLM_PROBER_STATE_DB` | `/var/lib/llm-prober/state.db` (set in the image) | Database path; empty disables persistence |
 | `-state-flush-interval` | — | `5m` | How often pending timestamps are coalesced |
-| `-dump-state` | — | — | Print the database as JSON and exit |
+| `-dump-state` | — | — | Print a **stopped** prober's database as JSON and exit |
 
-`-dump-state` opens the database read-only, so it is safe to run against a live
-prober:
+To read a **running** prober, use the `/debug/state` endpoint on the metrics
+port. bbolt holds an exclusive lock on the file for as long as the prober has it
+open, and a read-only open still needs a shared lock, so no second process can
+read the database while the prober runs — the live view has to be served from
+inside the process:
 
 ```bash
-kubectl exec deploy/llm-prober -- llm-prober -dump-state | jq '.[] | select(.valid) | {key, state: .state.state}'
+kubectl exec sts/llm-prober -- wget -qO- localhost:9090/debug/state \
+  | jq '.[] | select(.valid) | {key, state: .state.state}'
 ```
 
-Records that would be skipped at load time are included in the dump, flagged with
+It returns 503 with the reason when persistence is disabled or unavailable.
+
+`-dump-state` is for a prober that is stopped, or for a copy of its volume. Run
+against a running prober it fails with a message pointing at the endpoint rather
+than hanging on the lock.
+
+Both views include records that would be skipped at load time, flagged with
 `valid: false` and the reason, so a store the prober is silently ignoring can be
 diagnosed.
 
@@ -123,19 +133,27 @@ The manifests live in the `gitops-apps` repository, at
 rather than a Deployment, for three reasons that all trace back to the lock bbolt
 holds on the database file:
 
-- **A volume at `/var/lib/llm-prober`,** provisioned by a `volumeClaimTemplate`
-  (1Gi — the smallest EBS volume available; the database is tens of KiB). Without
-  a volume the state lives in the container's writable layer: it survives an
-  in-place container restart, but not rescheduling.
+- **A volume at `/var/lib/llm-prober`,** provisioned by a `volumeClaimTemplates`
+  entry (1Gi — the smallest EBS volume available; the database is tens of KiB).
+  The volume is not optional in Kubernetes: a restarted container is a *new*
+  container built from the image, so anything written to the container's own
+  filesystem is gone. Without a volume the state does not survive even a crash
+  loop, and the prober simply starts fresh every time.
 - **`securityContext.fsGroup: 101`,** matching the `prober` group in the image
   (the container runs as uid 100, gid 101). A freshly provisioned volume is
   mounted `root:root`, which that user cannot write — the prober would warn and
   run stateless.
 - **An update strategy that never overlaps two pods.** A StatefulSet rolling
   update is ordered: the outgoing pod is fully terminated before the incoming one
-  is created. A Deployment cannot promise that over a ReadWriteOnce volume — with
-  `maxSurge > 0` the incoming pod finds the lock held, waits 10s, then gives up
-  and runs stateless for its entire lifetime.
+  is created. The workload previously ran as a Deployment with
+  `maxSurge: 33%, maxUnavailable: 0`, which creates the replacement first — over
+  a ReadWriteOnce volume the incoming pod finds the lock held, waits 10s, gives
+  up, and runs stateless for its entire lifetime. A Deployment with
+  `strategy.type: Recreate` would also terminate before creating, so the ordering
+  alone does not require a StatefulSet; the StatefulSet is what additionally
+  gives a stable pod identity and a per-pod volume from `volumeClaimTemplates`,
+  which is what makes "exactly one holder of this database" structural rather
+  than a property of the rollout settings.
 
 Two further couplings are easy to miss when editing those manifests:
 
@@ -148,6 +166,12 @@ Two further couplings are easy to miss when editing those manifests:
   applied.
 
 The prober runs a single replica by design; running two against one volume is not
-supported (the second gets no persistence). A StatefulSet creates its volumes as
-part of creating a pod, so an environment that pins the prober to zero replicas
-provisions no PVC and no PV — production is the only one that gets storage.
+supported (the second gets no persistence).
+
+A StatefulSet creates its volumes as part of creating a pod, so an environment
+that has *never* run the prober above zero replicas has no PVC and no PV —
+production is the only one that provisions storage. Scaling an existing prober
+down to zero is a different case: its PVC is kept, because
+`persistentVolumeClaimRetentionPolicy.whenScaled` is set to `Retain` (also the
+default) precisely so the state is still there when it scales back up. Deleting
+storage requires deleting the PVC.

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -369,5 +370,48 @@ func TestDumpStateMissingDatabase(t *testing.T) {
 	}
 	if err := DumpState("", &out); err == nil {
 		t.Error("expected an error when dumping with no path configured")
+	}
+}
+
+// TestSnapshotReadsWhileDatabaseIsOpen covers the case DumpState cannot: bbolt
+// holds its file lock for the lifetime of the process that opened the database,
+// so the live view has to be read through the open handle rather than by
+// reopening the file.
+func TestSnapshotReadsWhileDatabaseIsOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	key := testKey()
+
+	store := openTestStore(t, path)
+	store.RecordStateChange(key, stateFailing, time.Now().Add(-time.Hour))
+
+	// Reopening the same path while the store holds it must fail; shorten the
+	// lock wait so the test does not sit out the production timeout.
+	defer func(orig time.Duration) { stateOpenTimeout = orig }(stateOpenTimeout)
+	stateOpenTimeout = 200 * time.Millisecond
+
+	var discard bytes.Buffer
+	if err := DumpState(path, &discard); err == nil {
+		t.Error("expected DumpState to fail against an open database")
+	} else if !strings.Contains(err.Error(), "locked") {
+		t.Errorf("expected a lock-specific message, got: %v", err)
+	}
+
+	// ...while the in-process snapshot succeeds.
+	records, err := store.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("snapshot returned %d records, want 1", len(records))
+	}
+	if !records[0].Valid || records[0].State.State != stateFailing {
+		t.Errorf("unexpected snapshot record: %+v", records[0])
+	}
+}
+
+func TestSnapshotOnNilStore(t *testing.T) {
+	var store *stateStore
+	if _, err := store.Snapshot(); err == nil {
+		t.Error("expected an error when persistence is disabled")
 	}
 }

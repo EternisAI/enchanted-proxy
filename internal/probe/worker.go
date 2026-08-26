@@ -88,9 +88,6 @@ func (w *probeWorker) run() {
 	healthy := false
 	consecutiveCount := 0
 
-	ticker := time.NewTicker(w.probe.RetryInterval)
-	defer ticker.Stop()
-
 	// probeNow makes the normal-operation loop probe without waiting for its
 	// first tick, which is how a resumed worker whose interval already elapsed
 	// gets checked right away.
@@ -119,18 +116,28 @@ func (w *probeWorker) run() {
 		}
 		probeNow = true
 	} else {
-		// --- Stage 1: Initial ---
-		// Use retry interval and accumulate consecutive results until one of the
-		// thresholds is crossed. Only send a Slack notification if consecutive
-		// failures reach the failure threshold; initial successes are silent.
-
 		// Run the first probe after the jitter delay.
 		select {
 		case <-time.After(jitter):
 		case <-w.service.shutdown:
 			return
 		}
+	}
 
+	// Created only after the wait above. A ticker started before it would spend
+	// that wait firing into a channel nobody is receiving from, leaving a tick
+	// ready to deliver the instant the first receive happens — which would probe
+	// twice with no interval in between. Starting it here means every tick it
+	// produces corresponds to a real interval boundary, without relying on Reset
+	// to discard what a longer wait left behind.
+	ticker := time.NewTicker(w.probe.RetryInterval)
+	defer ticker.Stop()
+
+	if w.restored == nil {
+		// --- Stage 1: Initial ---
+		// Use retry interval and accumulate consecutive results until one of the
+		// thresholds is crossed. Only send a Slack notification if consecutive
+		// failures reach the failure threshold; initial successes are silent.
 		lastSuccess := false // tracks the previous result to detect outcome flips
 		initial := true
 		for initial {
