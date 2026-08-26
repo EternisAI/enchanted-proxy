@@ -127,6 +127,11 @@ narrow that. Since the only consumer of the state view is an operator already
 inside the container, binding it to loopback means nothing outside the pod can
 reach it at all.
 
+`-debug-listen` only accepts a loopback host — a `127.0.0.0/8` or `::1` literal,
+or `localhost`. Anything else, including `:9091` and `0.0.0.0:9091`, is refused
+with a warning and leaves the endpoint switched off, so the isolation cannot be
+widened by a flag change alone.
+
 `-dump-state` is for a prober that is stopped, or for a copy of its volume. Run
 against a running prober it fails with a message pointing at the endpoint rather
 than hanging on the lock.

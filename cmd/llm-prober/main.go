@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -27,7 +28,7 @@ func main() {
 	stateDB := flag.String("state-db", "", "path to the persistent probe state database (default: LLM_PROBER_STATE_DB env; empty disables persistence)")
 	stateFlush := flag.Duration("state-flush-interval", 5*time.Minute, "how often pending probe timestamps are coalesced into a single write")
 	dumpState := flag.Bool("dump-state", false, "print the contents of the probe state database as JSON and exit")
-	debugAddr := flag.String("debug-listen", "127.0.0.1:9091", "loopback address serving /debug/state; empty disables it")
+	debugAddr := flag.String("debug-listen", "127.0.0.1:9091", "loopback address serving /debug/state; must be a loopback host; empty disables it")
 	flag.Parse()
 
 	// Resolve config file path: flag > env > default.
@@ -137,8 +138,19 @@ func main() {
 	// readable by anything that can reach the pod. The state view is only ever
 	// consumed by an operator already inside the container, so it is bound to
 	// loopback and reachable by nothing else.
+	// The address is not taken on trust. /debug/state is unauthenticated, so a
+	// value like ":9091" or "0.0.0.0:9091" would undo the isolation the separate
+	// listener exists to provide. A non-loopback address disables the server
+	// rather than failing startup, matching how the rest of this degrades.
+	debugListen := *debugAddr
+	if debugListen != "" && !isLoopbackAddr(debugListen) {
+		appLog.Warn("refusing to serve /debug/state on a non-loopback address; state introspection disabled",
+			slog.String("addr", debugListen))
+		debugListen = ""
+	}
+
 	var debugServer *http.Server
-	if *debugAddr != "" {
+	if debugListen != "" {
 		debugMux := http.NewServeMux()
 		// Reads through the already-open database: bbolt holds its file lock for
 		// the lifetime of this process, so nothing outside it can open the
@@ -156,14 +168,14 @@ func main() {
 		})
 
 		debugServer = &http.Server{
-			Addr:              *debugAddr,
+			Addr:              debugListen,
 			Handler:           debugMux,
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
 
 		go func() {
-			appLog.Info("debug server listening", slog.String("addr", *debugAddr))
+			appLog.Info("debug server listening", slog.String("addr", debugListen))
 			if err := debugServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				// Not fatal: losing state introspection must not stop probing.
 				appLog.Warn("debug server error", slog.String("error", err.Error()))
@@ -191,4 +203,21 @@ func main() {
 	}
 
 	appLog.Info("llm-prober stopped")
+}
+
+// isLoopbackAddr reports whether addr binds the loopback interface only.
+//
+// A missing host (":9091") binds every interface, so it is rejected along with
+// any routable address. Only IP literals are accepted, plus "localhost", so the
+// decision never depends on name resolution.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
