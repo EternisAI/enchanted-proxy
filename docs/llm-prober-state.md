@@ -148,4 +148,6 @@ Two further couplings are easy to miss when editing those manifests:
   applied.
 
 The prober runs a single replica by design; running two against one volume is not
-supported (the second gets no persistence).
+supported (the second gets no persistence). A StatefulSet creates its volumes as
+part of creating a pod, so an environment that pins the prober to zero replicas
+provisions no PVC and no PV — production is the only one that gets storage.
