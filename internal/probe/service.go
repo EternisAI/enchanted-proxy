@@ -20,9 +20,25 @@ import (
 type ProbeService struct {
 	logger   *logger.Logger
 	slack    *slackNotifier
+	state    *stateStore
 	wg       sync.WaitGroup
 	shutdown chan struct{}
 	cancel   context.CancelFunc
+}
+
+// Options holds the optional, deployment-specific settings of the probe service.
+type Options struct {
+	// SlackWebhookURL enables Slack notifications on probe state changes.
+	SlackWebhookURL string
+
+	// StateDBPath is the on-disk location of the persistent probe state database.
+	// Empty disables persistence; workers then start with no prior state, exactly
+	// as they did before persistence existed.
+	StateDBPath string
+
+	// StateFlushInterval is how often pending last-probe timestamps are coalesced
+	// into a single write. Zero selects defaultStateFlushInterval.
+	StateFlushInterval time.Duration
 }
 
 // probeTarget holds deduplicated probe configuration, pairing the resolved
@@ -39,17 +55,24 @@ type probeTarget struct {
 // config declaration order so the first canonical name encountered wins for metrics.
 // Responses API endpoints are routed to /responses with dedicated request/response
 // handling (buildResponsesProbeRequestBody / parseResponsesAPIResponse).
-func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models []config.ModelConfig, slackWebhookURL string) *ProbeService {
+//
+// When persistent state is configured and a target has a valid record, the worker
+// resumes from it instead of re-establishing an initial state, which is what
+// preserves recovery notifications across restarts.
+func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models []config.ModelConfig, opts Options) *ProbeService {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &ProbeService{
 		logger:   logger,
 		shutdown: make(chan struct{}),
 		cancel:   cancel,
 	}
-	if slackWebhookURL != "" {
-		s.slack = newSlackNotifier(slackWebhookURL)
+	if opts.SlackWebhookURL != "" {
+		s.slack = newSlackNotifier(opts.SlackWebhookURL)
 		logger.Info("slack notifications enabled")
 	}
+
+	s.state = openStateStore(opts.StateDBPath, opts.StateFlushInterval, logger)
+	restored := s.state.Load()
 
 	routes := router.GetRoutes()
 
@@ -124,7 +147,21 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 	}
 
 	// Create workers from deduplicated, ordered targets.
+	resumed := 0
 	for _, target := range targets {
+		key := newTargetKey(
+			target.providerName,
+			target.canonicalModel,
+			target.provider.BaseURL,
+			target.provider.Model,
+		)
+
+		var state *targetState
+		if record, ok := restored[key]; ok {
+			state = &record
+			resumed++
+		}
+
 		w := &probeWorker{
 			service:  s,
 			ctx:      ctx,
@@ -132,6 +169,8 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 			model:    target.canonicalModel,
 			endpoint: target.provider,
 			probe:    target.probe,
+			key:      key,
+			restored: state,
 			client: &http.Client{
 				Timeout: probeHTTPTimeout,
 				Transport: &http.Transport{
@@ -153,7 +192,8 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 
 	logger.Info("probe service started",
 		slog.Int("workers", len(targets)),
-		slog.Int("duplicates_skipped", duplicatesSkipped))
+		slog.Int("duplicates_skipped", duplicatesSkipped),
+		slog.Int("resumed_from_state", resumed))
 
 	return s
 }
@@ -177,5 +217,7 @@ func (s *ProbeService) Shutdown() {
 	s.cancel()
 	close(s.shutdown)
 	s.wg.Wait()
+	// Closed after the workers stop so the final flush captures every timestamp.
+	s.state.Close()
 	s.logger.Info("probe service stopped")
 }

@@ -32,6 +32,16 @@ RUN apk add --no-cache ca-certificates && \
 COPY --chown=prober:prober config/config.yaml /etc/enchanted-proxy/config.yaml
 ENV CONFIG_FILE=/etc/enchanted-proxy/config.yaml
 
+# Probe state lives here, so an endpoint that was failing before a restart still
+# announces its recovery. Mount a volume at this path: a restarted container in
+# Kubernetes is a new container built from the image, so a database written to
+# the container's own filesystem is discarded on every restart and the prober
+# would always start fresh. If the directory is unwritable the prober logs a
+# warning and runs without persistence rather than failing to start.
+# See docs/llm-prober-state.md for the volume requirements.
+RUN mkdir -p /var/lib/llm-prober && chown prober:prober /var/lib/llm-prober
+ENV LLM_PROBER_STATE_DB=/var/lib/llm-prober/state.db
+
 COPY --chown=prober:prober --from=builder /app/llm-prober /usr/local/bin/llm-prober
 EXPOSE 9090
 USER prober

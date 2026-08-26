@@ -29,6 +29,7 @@ make sqlc         # Regenerate SQL after editing queries/
 | Quota tracking | `internal/request_tracking/service.go` |
 | Stream management | `internal/streaming/manager.go` |
 | Background polling | `internal/background/polling_manager.go` |
+| Model health probes | `internal/probe/worker.go` ([state](docs/llm-prober-state.md)) |
 | E2EE encryption | `internal/messaging/encryption.go` |
 | Key sharing (WS) | `internal/keyshare/handlers.go` |
 | Deep research | `internal/deepr/handlers.go` |
@@ -139,6 +140,8 @@ make test                          # All tests
 ```
 
 ## Deployment
+
+**LLM prober**: deployed separately from the enclave (`cmd/llm-prober`). Its probe state persists to a PersistentVolume; the volume, `fsGroup`, and `strategy: Recreate` requirements are in [`docs/llm-prober-state.md`](docs/llm-prober-state.md).
 
 **TEE config**: `deploy/enclaver.yaml` - egress allowlist for providers. For the full enclave architecture (networking, egress filtering, DNS, process supervision), see [`docs/tee-architecture.md`](docs/tee-architecture.md). Check there first if you hit unexplained networking or connection issues.
 
