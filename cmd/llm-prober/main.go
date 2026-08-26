@@ -27,6 +27,7 @@ func main() {
 	stateDB := flag.String("state-db", "", "path to the persistent probe state database (default: LLM_PROBER_STATE_DB env; empty disables persistence)")
 	stateFlush := flag.Duration("state-flush-interval", 5*time.Minute, "how often pending probe timestamps are coalesced into a single write")
 	dumpState := flag.Bool("dump-state", false, "print the contents of the probe state database as JSON and exit")
+	debugAddr := flag.String("debug-listen", "127.0.0.1:9091", "loopback address serving /debug/state; empty disables it")
 	flag.Parse()
 
 	// Resolve config file path: flag > env > default.
@@ -114,21 +115,6 @@ func main() {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	// Reads the state through the already-open database. bbolt holds its file
-	// lock for the lifetime of this process, so nothing outside it can open the
-	// database while the prober runs — the live view has to be served from here.
-	mux.HandleFunc("/debug/state", func(w http.ResponseWriter, r *http.Request) {
-		records, err := probeService.StateSnapshot()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := probe.WriteDump(w, records); err != nil {
-			appLog.Warn("failed to write state snapshot", slog.String("error", err.Error()))
-		}
-	})
-
 	server := &http.Server{
 		Addr:              *listenAddr,
 		Handler:           mux,
@@ -143,6 +129,48 @@ func main() {
 		}
 	}()
 
+	// Start the debug server.
+	//
+	// This is deliberately a second listener rather than another route on the
+	// metrics mux. The metrics port is bound on all interfaces so Prometheus can
+	// scrape it, and it carries no authentication, so a route added there is
+	// readable by anything that can reach the pod. The state view is only ever
+	// consumed by an operator already inside the container, so it is bound to
+	// loopback and reachable by nothing else.
+	var debugServer *http.Server
+	if *debugAddr != "" {
+		debugMux := http.NewServeMux()
+		// Reads through the already-open database: bbolt holds its file lock for
+		// the lifetime of this process, so nothing outside it can open the
+		// database while the prober runs.
+		debugMux.HandleFunc("/debug/state", func(w http.ResponseWriter, r *http.Request) {
+			records, err := probeService.StateSnapshot()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := probe.WriteDump(w, records); err != nil {
+				appLog.Warn("failed to write state snapshot", slog.String("error", err.Error()))
+			}
+		})
+
+		debugServer = &http.Server{
+			Addr:              *debugAddr,
+			Handler:           debugMux,
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+
+		go func() {
+			appLog.Info("debug server listening", slog.String("addr", *debugAddr))
+			if err := debugServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				// Not fatal: losing state introspection must not stop probing.
+				appLog.Warn("debug server error", slog.String("error", err.Error()))
+			}
+		}()
+	}
+
 	// Wait for shutdown signal.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -155,6 +183,11 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		appLog.Error("metrics server shutdown error", slog.String("error", err.Error()))
+	}
+	if debugServer != nil {
+		if err := debugServer.Shutdown(ctx); err != nil {
+			appLog.Error("debug server shutdown error", slog.String("error", err.Error()))
+		}
 	}
 
 	appLog.Info("llm-prober stopped")

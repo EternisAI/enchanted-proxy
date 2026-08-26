@@ -104,19 +104,28 @@ ignored, never deleted.
 | `-state-db` | `LLM_PROBER_STATE_DB` | `/var/lib/llm-prober/state.db` (set in the image) | Database path; empty disables persistence |
 | `-state-flush-interval` | — | `5m` | How often pending timestamps are coalesced |
 | `-dump-state` | — | — | Print a **stopped** prober's database as JSON and exit |
+| `-debug-listen` | — | `127.0.0.1:9091` | Loopback address serving `/debug/state`; empty disables it |
 
-To read a **running** prober, use the `/debug/state` endpoint on the metrics
-port. bbolt holds an exclusive lock on the file for as long as the prober has it
-open, and a read-only open still needs a shared lock, so no second process can
-read the database while the prober runs — the live view has to be served from
-inside the process:
+To read a **running** prober, use the `/debug/state` endpoint. bbolt holds an
+exclusive lock on the file for as long as the prober has it open, and a
+read-only open still needs a shared lock, so no second process can read the
+database while the prober runs — the live view has to be served from inside the
+process:
 
 ```bash
-kubectl exec sts/llm-prober -- wget -qO- localhost:9090/debug/state \
+kubectl exec sts/llm-prober -- wget -qO- localhost:9091/debug/state \
   | jq '.[] | select(.valid) | {key, state: .state.state}'
 ```
 
 It returns 503 with the reason when persistence is disabled or unavailable.
+
+The endpoint is on its own listener bound to loopback, not on the metrics port.
+The metrics port is bound on all interfaces so Prometheus can scrape it and
+carries no authentication, so anything able to reach the pod can read what is
+served there; the namespace has no NetworkPolicy or Istio AuthorizationPolicy to
+narrow that. Since the only consumer of the state view is an operator already
+inside the container, binding it to loopback means nothing outside the pod can
+reach it at all.
 
 `-dump-state` is for a prober that is stopped, or for a copy of its volume. Run
 against a running prober it fails with a message pointing at the endpoint rather
