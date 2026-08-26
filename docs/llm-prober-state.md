@@ -118,18 +118,34 @@ diagnosed.
 
 ## Deployment requirements
 
-The manifests live in the `gitops-apps` repository. Three things matter:
+The manifests live in the `gitops-apps` repository, at
+`apps/enchanted-proxy/workloads/llm-prober/`. The prober is a **StatefulSet**
+rather than a Deployment, for three reasons that all trace back to the lock bbolt
+holds on the database file:
 
-- **Mount a PersistentVolume at `/var/lib/llm-prober`.** Without one the state
-  lives in the container's writable layer: it survives an in-place container
-  restart but not rescheduling.
-- **Set `securityContext.fsGroup`.** The container runs as the non-root `prober`
-  user, and a volume mounted `root:root` is not writable by it — the prober would
-  warn and run stateless.
-- **Use `strategy: Recreate`, not `RollingUpdate`.** bbolt takes an exclusive file
-  lock. On a rolling update over a ReadWriteOnce volume the incoming pod finds the
-  lock held by the outgoing one, waits 10s, then gives up and runs stateless for
-  its entire lifetime.
+- **A volume at `/var/lib/llm-prober`,** provisioned by a `volumeClaimTemplate`
+  (1Gi — the smallest EBS volume available; the database is tens of KiB). Without
+  a volume the state lives in the container's writable layer: it survives an
+  in-place container restart, but not rescheduling.
+- **`securityContext.fsGroup: 101`,** matching the `prober` group in the image
+  (the container runs as uid 100, gid 101). A freshly provisioned volume is
+  mounted `root:root`, which that user cannot write — the prober would warn and
+  run stateless.
+- **An update strategy that never overlaps two pods.** A StatefulSet rolling
+  update is ordered: the outgoing pod is fully terminated before the incoming one
+  is created. A Deployment cannot promise that over a ReadWriteOnce volume — with
+  `maxSurge > 0` the incoming pod finds the lock held, waits 10s, then gives up
+  and runs stateless for its entire lifetime.
 
-The prober has a single replica by design; running two against one volume is not
+Two further couplings are easy to miss when editing those manifests:
+
+- The `VaultStaticSecret` for `proxy-api` lists the prober in
+  `rolloutRestartTargets`. That is what restarts it when a rotated API key lands
+  in Vault — the exact scenario this state exists to serve — so the entry must
+  name `kind: StatefulSet`.
+- The per-cluster `PatchTransformer` that stamps version labels selects on
+  `kind`, so it must target `StatefulSet` too, or the labels silently stop being
+  applied.
+
+The prober runs a single replica by design; running two against one volume is not
 supported (the second gets no persistence).
