@@ -34,3 +34,47 @@ func TestIsLoopbackAddr(t *testing.T) {
 		}
 	}
 }
+
+func TestDebugAddrs(t *testing.T) {
+	tests := []struct {
+		addr string
+		want []string
+	}{
+		// "localhost" may resolve to either family, so bind both.
+		{"localhost:9091", []string{"127.0.0.1:9091", "[::1]:9091"}},
+		// An explicit literal is a deliberate choice; bind exactly it.
+		{"127.0.0.1:9091", []string{"127.0.0.1:9091"}},
+		{"[::1]:9091", []string{"[::1]:9091"}},
+		// Unparseable yields nothing to bind.
+		{"garbage", nil},
+		{"", nil},
+	}
+
+	for _, tt := range tests {
+		got := debugAddrs(tt.addr)
+		if len(got) != len(tt.want) {
+			t.Errorf("debugAddrs(%q) = %v, want %v", tt.addr, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("debugAddrs(%q)[%d] = %q, want %q", tt.addr, i, got[i], tt.want[i])
+			}
+		}
+	}
+}
+
+// Every address debugAddrs produces must still pass the loopback guard, so the
+// expansion cannot widen what the guard admitted.
+func TestDebugAddrsStayLoopback(t *testing.T) {
+	for _, addr := range []string{"localhost:9091", "127.0.0.1:9091", "[::1]:9091"} {
+		if !isLoopbackAddr(addr) {
+			t.Fatalf("test input %q is not loopback", addr)
+		}
+		for _, expanded := range debugAddrs(addr) {
+			if !isLoopbackAddr(expanded) {
+				t.Errorf("debugAddrs(%q) produced non-loopback address %q", addr, expanded)
+			}
+		}
+	}
+}

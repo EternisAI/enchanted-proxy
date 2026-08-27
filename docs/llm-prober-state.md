@@ -104,7 +104,7 @@ ignored, never deleted.
 | `-state-db` | `LLM_PROBER_STATE_DB` | `/var/lib/llm-prober/state.db` (set in the image) | Database path; empty disables persistence |
 | `-state-flush-interval` | — | `5m` | How often pending timestamps are coalesced |
 | `-dump-state` | — | — | Print a **stopped** prober's database as JSON and exit |
-| `-debug-listen` | — | `127.0.0.1:9091` | Loopback address serving `/debug/state`; empty disables it |
+| `-debug-listen` | — | `localhost:9091` | Loopback address serving `/debug/state`; empty disables it |
 
 To read a **running** prober, use the `/debug/state` endpoint. bbolt holds an
 exclusive lock on the file for as long as the prober has it open, and a
@@ -131,6 +131,13 @@ reach it at all.
 or `localhost`. Anything else, including `:9091` and `0.0.0.0:9091`, is refused
 with a warning and leaves the endpoint switched off, so the isolation cannot be
 widened by a flag change alone.
+
+`localhost` binds **both** loopback families, because the runtime image maps the
+name to `127.0.0.1` and `::1` alike and a client may pick either — the busybox
+`wget` in the container picks `::1`. Binding one family only would answer
+"connection refused" to a client that chose the other, which reads like the
+endpoint is disabled rather than like an address mismatch. An explicit IP
+literal is bound exactly as given.
 
 `-dump-state` is for a prober that is stopped, or for a copy of its volume. Run
 against a running prober it fails with a message pointing at the endpoint rather

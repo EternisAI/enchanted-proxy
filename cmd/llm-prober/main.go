@@ -28,7 +28,7 @@ func main() {
 	stateDB := flag.String("state-db", "", "path to the persistent probe state database (default: LLM_PROBER_STATE_DB env; empty disables persistence)")
 	stateFlush := flag.Duration("state-flush-interval", 5*time.Minute, "how often pending probe timestamps are coalesced into a single write")
 	dumpState := flag.Bool("dump-state", false, "print the contents of the probe state database as JSON and exit")
-	debugAddr := flag.String("debug-listen", "127.0.0.1:9091", "loopback address serving /debug/state; must be a loopback host; empty disables it")
+	debugAddr := flag.String("debug-listen", "localhost:9091", "loopback address serving /debug/state; must be a loopback host; empty disables it")
 	flag.Parse()
 
 	// Resolve config file path: flag > env > default.
@@ -149,7 +149,7 @@ func main() {
 		debugListen = ""
 	}
 
-	var debugServer *http.Server
+	var debugServers []*http.Server
 	if debugListen != "" {
 		debugMux := http.NewServeMux()
 		// Reads through the already-open database: bbolt holds its file lock for
@@ -167,20 +167,27 @@ func main() {
 			}
 		})
 
-		debugServer = &http.Server{
-			Addr:              debugListen,
-			Handler:           debugMux,
-			ReadHeaderTimeout: 10 * time.Second,
-			IdleTimeout:       60 * time.Second,
-		}
-
-		go func() {
-			appLog.Info("debug server listening", slog.String("addr", debugListen))
-			if err := debugServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				// Not fatal: losing state introspection must not stop probing.
-				appLog.Warn("debug server error", slog.String("error", err.Error()))
+		for _, addr := range debugAddrs(debugListen) {
+			debugServer := &http.Server{
+				Addr:              addr,
+				Handler:           debugMux,
+				ReadHeaderTimeout: 10 * time.Second,
+				IdleTimeout:       60 * time.Second,
 			}
-		}()
+			debugServers = append(debugServers, debugServer)
+
+			go func() {
+				appLog.Info("debug server listening", slog.String("addr", addr))
+				if err := debugServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					// Not fatal, and expected on a host without IPv6: as long as one
+					// address binds the endpoint is reachable, and losing state
+					// introspection entirely must still not stop probing.
+					appLog.Warn("debug server error",
+						slog.String("addr", addr),
+						slog.String("error", err.Error()))
+				}
+			}()
+		}
 	}
 
 	// Wait for shutdown signal.
@@ -196,13 +203,39 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		appLog.Error("metrics server shutdown error", slog.String("error", err.Error()))
 	}
-	if debugServer != nil {
+	for _, debugServer := range debugServers {
 		if err := debugServer.Shutdown(ctx); err != nil {
-			appLog.Error("debug server shutdown error", slog.String("error", err.Error()))
+			appLog.Error("debug server shutdown error",
+				slog.String("addr", debugServer.Addr),
+				slog.String("error", err.Error()))
 		}
 	}
 
 	appLog.Info("llm-prober stopped")
+}
+
+// debugAddrs expands the configured debug address into the addresses to bind.
+//
+// "localhost" becomes both loopback families. The runtime image maps the name to
+// 127.0.0.1 and ::1 alike, and a client is free to pick either — busybox wget,
+// which is what is available in the container, picks ::1. Binding only one of
+// them answers "connection refused" to a client that chose the other, which
+// reads like the endpoint is disabled rather than like an address mismatch.
+//
+// An explicit IP literal is bound exactly as given: that is a deliberate choice
+// and should not be widened.
+func debugAddrs(addr string) []string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil
+	}
+	if host == "localhost" {
+		return []string{
+			net.JoinHostPort("127.0.0.1", port),
+			net.JoinHostPort("::1", port),
+		}
+	}
+	return []string{addr}
 }
 
 // isLoopbackAddr reports whether addr binds the loopback interface only.
