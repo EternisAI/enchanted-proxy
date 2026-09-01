@@ -3,8 +3,6 @@ package probe
 import (
 	"context"
 	"log/slog"
-	"net"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -171,19 +169,9 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 			probe:    target.probe,
 			key:      key,
 			restored: state,
-			client: &http.Client{
-				Timeout: probeHTTPTimeout,
-				Transport: &http.Transport{
-					DialContext: (&net.Dialer{
-						Timeout: 10 * time.Second,
-					}).DialContext,
-					TLSHandshakeTimeout:   10 * time.Second,
-					ResponseHeaderTimeout: 30 * time.Second,
-					DisableKeepAlives:     true,
-				},
-			},
-			logger: logger,
-			slack:  s.slack,
+			client:   newProbeHTTPClient(target.probe.Timeout),
+			logger:   logger,
+			slack:    s.slack,
 		}
 
 		s.wg.Add(1)

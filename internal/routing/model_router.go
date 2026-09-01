@@ -140,6 +140,7 @@ type ProbeConfig struct {
 	Enabled          bool
 	Interval         time.Duration
 	RetryInterval    time.Duration
+	Timeout          time.Duration // budget for a single probe request, dial to response
 	Prompt           string
 	ExpectedResponse *string // nil = no content check, non-nil = check substring
 	MaxTokens        int
@@ -156,6 +157,7 @@ func defaultProbeConfig() *ProbeConfig {
 		Enabled:          true,
 		Interval:         config.DefaultProbeInterval,
 		RetryInterval:    config.DefaultProbeRetryInterval,
+		Timeout:          config.DefaultProbeTimeout,
 		Prompt:           config.DefaultProbePrompt,
 		ExpectedResponse: &defaultResp,
 		MaxTokens:        config.DefaultProbeMaxTokens,
@@ -172,6 +174,7 @@ func probeConfigFromConfig(cfg *config.ProbeConfig) *ProbeConfig {
 		Enabled:          *cfg.Enabled,
 		Interval:         cfg.Interval,
 		RetryInterval:    cfg.RetryInterval,
+		Timeout:          cfg.Timeout,
 		Prompt:           cfg.Prompt,
 		MaxTokens:        cfg.MaxTokens,
 		Temperature:      *cfg.Temperature,

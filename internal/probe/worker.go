@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	probeHTTPTimeout = 45 * time.Second
 	maxResponseBytes = 4096 // limit response body read to avoid unbounded memory
 )
 
@@ -80,6 +79,7 @@ func (w *probeWorker) run() {
 		slog.String("model", w.model),
 		slog.Duration("interval", w.probe.Interval),
 		slog.Duration("retry_interval", w.probe.RetryInterval),
+		slog.Duration("timeout", w.probe.Timeout),
 		slog.Int("success_threshold", w.probe.SuccessThreshold),
 		slog.Int("failure_threshold", w.probe.FailureThreshold),
 		slog.Duration("initial_jitter", jitter),
