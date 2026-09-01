@@ -122,11 +122,9 @@ model_router:
       model: z-ai/glm-5.2
       # This endpoint regularly takes longer than the default 45s budget to
       # answer a short probe, which showed up as flapping rather than as a real
-      # outage. Retry interval is raised past the timeout so a genuinely stuck
-      # endpoint is not probed back to back (3 failures still alert in ~9m).
+      # outage.
       probe:
         timeout: 2m
-        retry_interval: 3m
 
   # Qwen3 30B A3B - Free & Pro - via NEAR AI (0.04× multiplier, fallback model)
   - name: Qwen/Qwen3-30B-A3B-Instruct-2507

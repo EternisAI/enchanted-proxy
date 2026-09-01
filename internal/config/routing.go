@@ -388,7 +388,8 @@ type ProbeConfig struct {
 	// Defaults to true when the probe section is omitted or enabled is not specified.
 	Enabled *bool `yaml:"enabled,omitempty"`
 
-	// Interval is the time between probe requests. Minimum 30s, default 15m.
+	// Interval is the time between probe requests, measured from the end of one
+	// probe to the start of the next. Minimum 30s, default 15m.
 	Interval time.Duration `yaml:"interval,omitempty"`
 
 	// RetryInterval is the time between probe requests after a failure.
@@ -402,8 +403,9 @@ type ProbeConfig struct {
 	// takes longer than this to answer is reported as failing.
 	// Minimum 1s, maximum 5m, additionally clamped to Interval. Default: 45s.
 	//
-	// A timeout longer than RetryInterval leaves a failing endpoint no idle time
-	// between attempts, so raise RetryInterval alongside it.
+	// It may exceed RetryInterval: the wait between probes starts when a probe
+	// finishes, so a slow probe delays the next one rather than consuming the
+	// idle time before it.
 	Timeout time.Duration `yaml:"timeout,omitempty"`
 
 	// Prompt is the user message sent in the probe request. Default: "Say OK"

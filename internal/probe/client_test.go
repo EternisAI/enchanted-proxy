@@ -131,3 +131,62 @@ func TestProbeRespectsConfiguredTimeout(t *testing.T) {
 		})
 	}
 }
+
+// A probe that outruns its own retry interval must still leave that interval
+// idle before the next attempt. The scheduler measures the wait from the end of
+// one probe, so a slow endpoint delays the next probe instead of being hit back
+// to back for as long as it stays down.
+func TestSlowProbesLeaveTheRetryIntervalIdle(t *testing.T) {
+	const (
+		probeTimeout  = 150 * time.Millisecond
+		retryInterval = 100 * time.Millisecond // deliberately shorter than the timeout
+	)
+
+	arrivals := make(chan time.Time, 8)
+	// Never answers: every probe against it runs its full budget and times out.
+	// The client hanging up does not reliably unblock the handler, so shutting
+	// the server down has to release it explicitly — hence a channel closed by a
+	// cleanup registered after (and so running before) the server's own.
+	release := make(chan struct{})
+	endpoint := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case arrivals <- time.Now():
+		default:
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(endpoint.Close)
+	t.Cleanup(func() { close(release) })
+
+	w := newTestWorker(t, "slow-model", endpoint, newSlackRecorder(t), nil)
+	w.probe.Interval = 400 * time.Millisecond
+	w.probe.RetryInterval = retryInterval
+	w.probe.Timeout = probeTimeout
+	w.client = newProbeHTTPClient(probeTimeout)
+	start(t, w)
+
+	const want = 3
+	seen := make([]time.Time, 0, want)
+	for len(seen) < want {
+		select {
+		case at := <-arrivals:
+			seen = append(seen, at)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("got %d probes, want %d", len(seen), want)
+		}
+	}
+
+	// The probe itself accounts for probeTimeout of every gap; what is left is
+	// the idle time the retry interval is supposed to guarantee. Scheduling is
+	// not exact, so allow the wait to come up a little short.
+	minGap := probeTimeout + retryInterval*7/10
+	for i := 1; i < len(seen); i++ {
+		if gap := seen[i].Sub(seen[i-1]); gap < minGap {
+			t.Errorf("probe %d started %v after probe %d, want at least %v",
+				i+1, gap, i, minGap)
+		}
+	}
+}
