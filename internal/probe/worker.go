@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	probeHTTPTimeout = 45 * time.Second
 	maxResponseBytes = 4096 // limit response body read to avoid unbounded memory
 )
 
@@ -80,6 +79,7 @@ func (w *probeWorker) run() {
 		slog.String("model", w.model),
 		slog.Duration("interval", w.probe.Interval),
 		slog.Duration("retry_interval", w.probe.RetryInterval),
+		slog.Duration("timeout", w.probe.Timeout),
 		slog.Int("success_threshold", w.probe.SuccessThreshold),
 		slog.Int("failure_threshold", w.probe.FailureThreshold),
 		slog.Duration("initial_jitter", jitter),
@@ -124,14 +124,18 @@ func (w *probeWorker) run() {
 		}
 	}
 
-	// Created only after the wait above. A ticker started before it would spend
-	// that wait firing into a channel nobody is receiving from, leaving a tick
-	// ready to deliver the instant the first receive happens — which would probe
-	// twice with no interval in between. Starting it here means every tick it
-	// produces corresponds to a real interval boundary, without relying on Reset
-	// to discard what a longer wait left behind.
-	ticker := time.NewTicker(w.probe.RetryInterval)
-	defer ticker.Stop()
+	// Each wait below is its own one-shot timer, started when the previous probe
+	// returned, so the gap between two probes is always the full interval.
+	//
+	// A ticker measured wall-clock cadence instead, which a probe slower than its
+	// own interval breaks: a slow endpoint with a long timeout legitimately runs
+	// past the retry interval, and the tick that fell due mid-request is already
+	// pending when the request returns, so the next probe starts immediately and
+	// a failing provider is hit back to back for as long as it stays down. It
+	// also made correctness depend on when the ticker was created relative to the
+	// waits above it — a timer that does not exist until it is needed can leave
+	// nothing pending.
+	wait := w.probe.RetryInterval
 
 	if w.restored == nil {
 		// --- Stage 1: Initial ---
@@ -177,7 +181,7 @@ func (w *probeWorker) run() {
 
 			if initial {
 				select {
-				case <-ticker.C:
+				case <-time.After(wait):
 				case <-w.service.shutdown:
 					return
 				}
@@ -189,15 +193,15 @@ func (w *probeWorker) run() {
 	// Switch between healthy/failing states when the respective consecutive
 	// threshold is met. Log every result, send Slack on state changes.
 	if healthy {
-		ticker.Reset(w.probe.Interval)
+		wait = w.probe.Interval
 	} else {
-		ticker.Reset(w.probe.RetryInterval)
+		wait = w.probe.RetryInterval
 	}
 
 	for {
 		if !probeNow {
 			select {
-			case <-ticker.C:
+			case <-time.After(wait):
 			case <-w.service.shutdown:
 				w.logger.Debug("stopped probe worker",
 					slog.String("provider", w.provider),
@@ -218,7 +222,7 @@ func (w *probeWorker) run() {
 				if consecutiveCount > 0 {
 					// Had some failures before — restore normal interval.
 					consecutiveCount = 0
-					ticker.Reset(w.probe.Interval)
+					wait = w.probe.Interval
 				}
 				w.logProbeResult(result, consecutiveCount, w.probe.FailureThreshold)
 			} else {
@@ -226,7 +230,7 @@ func (w *probeWorker) run() {
 				if consecutiveCount == 1 {
 					// First failure — switch to retry interval immediately
 					// so we can quickly determine if this is a real outage.
-					ticker.Reset(w.probe.RetryInterval)
+					wait = w.probe.RetryInterval
 				}
 				if consecutiveCount >= w.probe.FailureThreshold {
 					healthy = false
@@ -243,7 +247,7 @@ func (w *probeWorker) run() {
 				if consecutiveCount >= w.probe.SuccessThreshold {
 					healthy = true
 					consecutiveCount = 0
-					ticker.Reset(w.probe.Interval)
+					wait = w.probe.Interval
 					w.logStateChange(result)
 					w.sendSlackNotification(result)
 				} else {

@@ -388,12 +388,25 @@ type ProbeConfig struct {
 	// Defaults to true when the probe section is omitted or enabled is not specified.
 	Enabled *bool `yaml:"enabled,omitempty"`
 
-	// Interval is the time between probe requests. Minimum 30s, default 15m.
+	// Interval is the time between probe requests, measured from the end of one
+	// probe to the start of the next. Minimum 30s, default 15m.
 	Interval time.Duration `yaml:"interval,omitempty"`
 
 	// RetryInterval is the time between probe requests after a failure.
 	// Minimum 30s, maximum is clamped to Interval. Default: 1m.
 	RetryInterval time.Duration `yaml:"retry_interval,omitempty"`
+
+	// Timeout bounds a single probe request, from dialing the endpoint to reading
+	// its response. Slow endpoints need a longer budget than the default: a probe
+	// is a non-streaming completion, so nothing arrives — not even response
+	// headers — until the model has finished generating, and an endpoint that
+	// takes longer than this to answer is reported as failing.
+	// Minimum 1s, maximum 5m, additionally clamped to Interval. Default: 45s.
+	//
+	// It may exceed RetryInterval: the wait between probes starts when a probe
+	// finishes, so a slow probe delays the next one rather than consuming the
+	// idle time before it.
+	Timeout time.Duration `yaml:"timeout,omitempty"`
 
 	// Prompt is the user message sent in the probe request. Default: "Say OK"
 	Prompt string `yaml:"prompt,omitempty"`
@@ -429,6 +442,9 @@ const (
 	DefaultProbeInterval         = 15 * time.Minute
 	MinProbeInterval             = 30 * time.Second
 	DefaultProbeRetryInterval    = 1 * time.Minute
+	DefaultProbeTimeout          = 45 * time.Second
+	MinProbeTimeout              = 1 * time.Second
+	MaxProbeTimeout              = 5 * time.Minute
 	DefaultProbePrompt           = "Say OK"
 	DefaultProbeExpectedResponse = "OK"
 	DefaultProbeMaxTokens          = 100
@@ -459,6 +475,21 @@ func (cfg *ProbeConfig) Validate() error {
 	}
 	if cfg.RetryInterval > cfg.Interval {
 		cfg.RetryInterval = cfg.Interval
+	}
+
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = DefaultProbeTimeout
+	}
+	if cfg.Timeout < MinProbeTimeout {
+		cfg.Timeout = MinProbeTimeout
+	}
+	if cfg.Timeout > MaxProbeTimeout {
+		cfg.Timeout = MaxProbeTimeout
+	}
+	// A probe that outlives its own interval would leave the worker permanently
+	// busy, so the interval is the ceiling regardless of what was asked for.
+	if cfg.Timeout > cfg.Interval {
+		cfg.Timeout = cfg.Interval
 	}
 
 	if cfg.Prompt == "" {
