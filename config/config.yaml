@@ -56,6 +56,10 @@ model_router:
     api_key_env_var: OPENAI_API_KEY
     base_url: https://api.openai.com/v1
 
+  - name: Chutes
+    api_key_env_var: CHUTES_API_KEY
+    base_url: https://llm.chutes.ai/v1
+
   # API key is resolved at route time based on platform (mobile/desktop, defaults to mobile).
   # Default provider for unknown models.
   - name: OpenRouter
@@ -100,7 +104,7 @@ model_router:
     - name: Tinfoil
       model: llama3-3-70b
 
-  # GLM 5 - via NEAR AI (0.75× multiplier) - Available when explicitly requested
+  # GLM 5 - via Chutes.ai (0.75× multiplier) - Available when explicitly requested
   - name: zai-org/GLM-5-FP8
     aliases:
     - glm-4.6
@@ -117,14 +121,8 @@ model_router:
     - zhipu/glm-4.7
     token_multiplier: 0.75
     providers:
-    # Temporary reroute due to GLM issues
-    - name: NEAR AI
-      model: z-ai/glm-5.2
-      # This endpoint regularly takes longer than the default 45s budget to
-      # answer a short probe, which showed up as flapping rather than as a real
-      # outage.
-      probe:
-        timeout: 2m
+    - name: Chutes
+      model: zai-org/GLM-5.1-TEE
 
   # Qwen3 30B A3B - Free & Pro - via NEAR AI (0.04× multiplier, fallback model)
   - name: Qwen/Qwen3-30B-A3B-Instruct-2507
