@@ -12,6 +12,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/routing"
+	"github.com/eternisai/enchanted-proxy/internal/tiers"
 	"github.com/gin-gonic/gin"
 )
 
@@ -114,6 +115,25 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 					err := errors.ModelNotAllowed(model, tierConfig.Name, tierConfig.DisplayName, tierConfig.AllowedModels)
 					errors.AbortWithForbidden(c, err)
 					return
+				}
+
+				// A tier floor on the model itself. Tiers whose AllowedModels list is empty
+				// accept every model, so this is the only gate on a model that a cheaper
+				// tier's daily quota cannot pay for.
+				if modelRouter != nil {
+					minTier := modelRouter.MinTierForModel(model)
+					if !tierConfig.MeetsMinTier(minTier) {
+						log.Warn("model requires a higher tier",
+							slog.String("user_id", userID),
+							slog.String("model", model),
+							slog.String("tier", tierConfig.Name),
+							slog.String("min_tier", minTier))
+
+						err := errors.ModelRequiresTier(model, tierConfig.Name, tierConfig.DisplayName,
+							minTier, tiers.DisplayNameFor(minTier))
+						errors.AbortWithForbidden(c, err)
+						return
+					}
 				}
 			}
 

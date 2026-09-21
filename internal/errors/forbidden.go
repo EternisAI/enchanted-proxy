@@ -80,6 +80,24 @@ func ModelNotAllowed(model, tier, displayName string, allowedModels []string) *F
 	)
 }
 
+// ModelRequiresTier creates a ForbiddenError for a model gated behind a higher tier.
+// It reuses ReasonModelNotAllowed so existing clients keep handling it as a model gate.
+func ModelRequiresTier(model, tier, displayName, requiredTier, requiredDisplayName string) *ForbiddenError {
+	errorMsg := "Model '" + model + "' requires " + requiredDisplayName + " tier; user is on " + displayName + "."
+	uiMsg := "This model is only available on " + requiredDisplayName + ". Upgrade to use it."
+
+	return NewForbiddenError(
+		ReasonModelNotAllowed,
+		errorMsg,
+		uiMsg,
+		tier,
+		map[string]interface{}{
+			"requested_model": model,
+			"required_tier":   requiredTier,
+		},
+	)
+}
+
 // FeatureNotAllowed creates a ForbiddenError for feature access denial.
 func FeatureNotAllowed(feature, tier, displayName, requiredTier string) *ForbiddenError {
 	errorMsg := "Feature '" + feature + "' not available for " + displayName + " tier. Requires " + requiredTier + " tier."

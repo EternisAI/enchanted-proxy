@@ -645,3 +645,63 @@ func TestPanicModeRouting(t *testing.T) {
 		}
 	}
 }
+
+func TestMinTierForModel(t *testing.T) {
+	router := newModelRouter(t, newEnv(nil))
+
+	tests := []struct {
+		model string
+		want  string
+	}{
+		{"openai/gpt-5.5-pro", "pro"},
+		{"gpt-5.5-pro", "pro"},
+		{"OPENAI/GPT-5.5-PRO", "pro"},
+		{"openai/gpt-4o", ""},
+		{"", ""},
+		{"nonexistent/model", ""},
+		// A variant name prefix-routes to the gated model, so it inherits the floor.
+		{"gpt-5.5-pro-2026-01-01", "pro"},
+	}
+
+	for _, tc := range tests {
+		if got := router.MinTierForModel(tc.model); got != tc.want {
+			t.Errorf("MinTierForModel(%q) = %q, want %q", tc.model, got, tc.want)
+		}
+	}
+}
+
+// A model whose providers all drop out - no API key, unknown provider - is left out of the
+// routing table and served by the OpenRouter wildcard instead. The floor has to survive
+// that, or an OpenAI outage would open a Pro-only model to every tier.
+func TestMinTierSurvivesMissingEndpoints(t *testing.T) {
+	router := newModelRouter(t, newEnv(map[string]string{OpenAIAPIKeyEnvVar: ""}))
+
+	if _, exists := router.GetRoutes()["openai/gpt-5.5-pro"]; exists {
+		t.Fatal("expected the model to lose its route once OpenAI has no API key")
+	}
+
+	if got := router.MinTierForModel("gpt-5.5-pro"); got != "pro" {
+		t.Errorf("MinTierForModel = %q, want %q", got, "pro")
+	}
+}
+
+// The fallback service rebuilds ModelRoute values field by field when it flips an endpoint.
+// Tier policy must not live anywhere that rebuild can drop.
+func TestMinTierSurvivesRouteRebuild(t *testing.T) {
+	router := newModelRouter(t, newEnv(nil))
+
+	routes := router.GetRoutes()
+	rebuilt := make(map[string]ModelRoute, len(routes))
+	for name, route := range routes {
+		rebuilt[name] = ModelRoute{
+			ActiveEndpoints:   route.ActiveEndpoints,
+			InactiveEndpoints: route.InactiveEndpoints,
+			RoundRobinCounter: route.RoundRobinCounter,
+		}
+	}
+	router.SetRoutes(rebuilt)
+
+	if got := router.MinTierForModel("gpt-5.5-pro"); got != "pro" {
+		t.Errorf("MinTierForModel = %q, want %q", got, "pro")
+	}
+}
