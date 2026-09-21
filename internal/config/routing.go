@@ -203,6 +203,11 @@ type ModelConfig struct {
 	// Defaults to 1.0
 	TokenMultiplier float64 `yaml:"token_multiplier,omitempty"`
 
+	// MinTier is the lowest subscription tier allowed to use this model ("free", "plus",
+	// "pro"). Empty means every tier may use it. Tier names are compared in the tiers
+	// package, which imports this one, so they are not validated here.
+	MinTier string `yaml:"min_tier,omitempty"`
+
 	// Providers is the list of provider endpoint configurations that specify what providers
 	// should be used to serve requests for this model and define necessary overrides.
 	Providers []ModelEndpointProvider `yaml:"providers"`

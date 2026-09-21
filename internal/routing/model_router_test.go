@@ -645,3 +645,25 @@ func TestPanicModeRouting(t *testing.T) {
 		}
 	}
 }
+
+func TestMinTierForModel(t *testing.T) {
+	router := newModelRouter(t, newEnv(nil))
+
+	tests := []struct {
+		model string
+		want  string
+	}{
+		{"openai/gpt-5.5-pro", "pro"},
+		{"gpt-5.5-pro", "pro"},
+		{"OPENAI/GPT-5.5-PRO", "pro"},
+		{"openai/gpt-4o", ""},
+		{"", ""},
+		{"nonexistent/model", ""},
+	}
+
+	for _, tc := range tests {
+		if got := router.MinTierForModel(tc.model); got != tc.want {
+			t.Errorf("MinTierForModel(%q) = %q, want %q", tc.model, got, tc.want)
+		}
+	}
+}

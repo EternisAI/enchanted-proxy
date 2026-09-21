@@ -183,6 +183,44 @@ func (c Config) IsFeatureAllowed(feature Feature) bool {
 	return false
 }
 
+// ranks orders tiers from least to most privileged. A tier missing from this map is
+// treated as unranked, which MeetsMinTier reads as "cannot satisfy any floor" so that a
+// typo in a tier name denies access rather than granting it.
+var ranks = map[Tier]int{
+	TierFree: 0,
+	TierPlus: 1,
+	TierPro:  2,
+}
+
+// MeetsMinTier reports whether this tier is at least minTier. An empty minTier means the
+// model has no floor and every tier passes.
+func (c Config) MeetsMinTier(minTier string) bool {
+	if minTier == "" {
+		return true
+	}
+
+	required, known := ranks[Tier(minTier)]
+	if !known {
+		return false
+	}
+
+	held, known := ranks[Tier(c.Name)]
+	if !known {
+		return false
+	}
+
+	return held >= required
+}
+
+// DisplayNameFor returns the human-readable name of a tier, falling back to the raw value
+// for a tier this build does not know about.
+func DisplayNameFor(tier string) string {
+	if cfg, exists := Configs[Tier(tier)]; exists {
+		return cfg.DisplayName
+	}
+	return tier
+}
+
 // GetDailyResetTime returns when daily quota resets (00:00 UTC daily).
 func (c Config) GetDailyResetTime() time.Time {
 	if c.DailyPlanTokens == 0 {

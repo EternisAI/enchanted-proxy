@@ -80,6 +80,19 @@ func (mr *ModelRouter) ResolveAlias(modelID string) string {
 	return modelID
 }
 
+// MinTierForModel returns the lowest subscription tier configured for a model, or "" if the
+// model has no tier floor. modelID is matched against canonical names only: a model reached
+// by prefix or wildcard routing has no config entry of its own and therefore no floor.
+func (mr *ModelRouter) MinTierForModel(modelID string) string {
+	if modelID == "" {
+		return ""
+	}
+	if route, exists := mr.GetRoutes()[mr.ResolveAlias(modelID)]; exists {
+		return route.MinTier
+	}
+	return ""
+}
+
 // ModelRoute maintains actual lists of provider endpoints where the requests for this model
 // can be routed.
 type ModelRoute struct {
@@ -96,6 +109,10 @@ type ModelRoute struct {
 	// RoundRobinCounter is an atomic counter used to implement simple round-robin balancing
 	// if choosing from multiple endpoints.
 	RoundRobinCounter *atomic.Uint64
+
+	// MinTier is the lowest subscription tier allowed to use this model. Empty means
+	// every tier may use it.
+	MinTier string
 }
 
 // ModelEndpoint contains all information necessary to route requests for a specific model to
@@ -346,12 +363,14 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 				routes[model.Name] = ModelRoute{
 					ActiveEndpoints:   inactiveEndpoints,
 					RoundRobinCounter: &atomic.Uint64{},
+					MinTier:           model.MinTier,
 				}
 			} else {
 				routes[model.Name] = ModelRoute{
 					ActiveEndpoints:   activeEndpoints,
 					InactiveEndpoints: inactiveEndpoints,
 					RoundRobinCounter: &atomic.Uint64{},
+					MinTier:           model.MinTier,
 				}
 			}
 
