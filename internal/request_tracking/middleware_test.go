@@ -43,9 +43,14 @@ func (q tierQuerier) GetUserPlanTokensToday(_ context.Context, _ string) (int64,
 
 func newTestRouter(t *testing.T, tier string) *gin.Engine {
 	t.Helper()
+	return newTestRouterWithKey(t, tier, "test-openai-key")
+}
+
+func newTestRouterWithKey(t *testing.T, tier, openAIKey string) *gin.Engine {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	t.Setenv("OPENAI_API_KEY", "test-openai-key")
+	t.Setenv("OPENAI_API_KEY", openAIKey)
 
 	config.AppConfig = &config.Config{
 		RateLimitEnabled:              true,
@@ -113,5 +118,22 @@ func TestMiddlewareTierFloor(t *testing.T) {
 				t.Errorf("403 did not come from the tier floor: %s", rec.Body.String())
 			}
 		})
+	}
+}
+
+// Without an OpenAI key the model has no endpoints, so it drops out of the routing table
+// and RouteModel would serve it through the OpenRouter wildcard. The gate still has to
+// hold: an upstream outage is not a reason to open a Pro-only model to Plus.
+func TestMiddlewareTierFloorWithoutEndpoints(t *testing.T) {
+	engine := newTestRouterWithKey(t, "plus", "")
+
+	req := httptest.NewRequest(http.MethodPost, "/chat/completions",
+		strings.NewReader(`{"model":"gpt-5.5-pro"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d (body: %s)", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
 }

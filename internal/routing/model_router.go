@@ -37,9 +37,12 @@ import (
 //	// provider.APIKey = os.Getenv("OPENAI_API_KEY")
 type ModelRouter struct {
 	aliases map[string]string
-	apiKeys map[string]map[string]string // Store platform-specific keys for API providers
-	routes  atomic.Pointer[map[string]ModelRoute]
-	logger  *logger.Logger
+	// minTiers maps a normalized model name or alias to its configured tier floor. It is
+	// built from config alone, so a model that loses its endpoints keeps its floor.
+	minTiers map[string]string
+	apiKeys  map[string]map[string]string // Store platform-specific keys for API providers
+	routes   atomic.Pointer[map[string]ModelRoute]
+	logger   *logger.Logger
 }
 
 // GetRoutes retrieves the current routing map from the atomic pointer store.
@@ -81,15 +84,29 @@ func (mr *ModelRouter) ResolveAlias(modelID string) string {
 }
 
 // MinTierForModel returns the lowest subscription tier configured for a model, or "" if the
-// model has no tier floor. modelID is matched against canonical names only: a model reached
-// by prefix or wildcard routing has no config entry of its own and therefore no floor.
+// model has no tier floor.
+//
+// The lookup deliberately does not consult the routing table. A model whose endpoints are
+// all unavailable - no API key, every provider unknown - is dropped from the routes and
+// then served by the OpenRouter wildcard, and reading the floor off a route would hand
+// that request to any tier. Matching mirrors RouteModel: exact name or alias first, then
+// prefix, so a variant name routed to a gated model inherits its floor.
 func (mr *ModelRouter) MinTierForModel(modelID string) string {
-	if modelID == "" {
+	normalized := strings.ToLower(strings.TrimSpace(modelID))
+	if normalized == "" {
 		return ""
 	}
-	if route, exists := mr.GetRoutes()[mr.ResolveAlias(modelID)]; exists {
-		return route.MinTier
+
+	if minTier, exists := mr.minTiers[normalized]; exists {
+		return minTier
 	}
+
+	for name, minTier := range mr.minTiers {
+		if strings.HasPrefix(normalized, name) {
+			return minTier
+		}
+	}
+
 	return ""
 }
 
@@ -109,10 +126,6 @@ type ModelRoute struct {
 	// RoundRobinCounter is an atomic counter used to implement simple round-robin balancing
 	// if choosing from multiple endpoints.
 	RoundRobinCounter *atomic.Uint64
-
-	// MinTier is the lowest subscription tier allowed to use this model. Empty means
-	// every tier may use it.
-	MinTier string
 }
 
 // ModelEndpoint contains all information necessary to route requests for a specific model to
@@ -266,6 +279,7 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 	// Normally each model has at least one alias, so pre-allocate twice the number of items
 	aliases := make(map[string]string, len(cfg.Models)*2)
 	routes := make(map[string]ModelRoute, len(cfg.Models)*2)
+	minTiers := make(map[string]string)
 
 	// Build a map of model providers configs
 	providers := make(map[string]config.ModelProviderConfig, len(cfg.Providers))
@@ -285,6 +299,15 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 			mr.logger.Warn("skipping duplicate model config entry",
 				slog.String("model", model.Name))
 			continue
+		}
+
+		// Tier floors are recorded before endpoints are built, so they hold for a model
+		// that ends up with none.
+		if model.MinTier != "" {
+			minTiers[strings.ToLower(strings.TrimSpace(model.Name))] = model.MinTier
+			for _, alias := range model.Aliases {
+				minTiers[strings.ToLower(strings.TrimSpace(alias))] = model.MinTier
+			}
 		}
 
 		var activeEndpoints, inactiveEndpoints []ModelEndpoint
@@ -363,14 +386,12 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 				routes[model.Name] = ModelRoute{
 					ActiveEndpoints:   inactiveEndpoints,
 					RoundRobinCounter: &atomic.Uint64{},
-					MinTier:           model.MinTier,
 				}
 			} else {
 				routes[model.Name] = ModelRoute{
 					ActiveEndpoints:   activeEndpoints,
 					InactiveEndpoints: inactiveEndpoints,
 					RoundRobinCounter: &atomic.Uint64{},
-					MinTier:           model.MinTier,
 				}
 			}
 
@@ -387,6 +408,7 @@ func (mr *ModelRouter) RebuildRoutes(cfg *config.ModelRouterConfig) {
 
 	// Update the routing table and alias mappings in place
 	mr.aliases = aliases
+	mr.minTiers = minTiers
 	mr.SetRoutes(routes)
 }
 

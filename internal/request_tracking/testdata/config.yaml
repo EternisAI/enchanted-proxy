@@ -4,6 +4,9 @@ model_router:
     api_key_env_var: OPENAI_API_KEY
     base_url: https://api.openai.com/v1
 
+  - name: OpenRouter
+    base_url: https://openrouter.ai/api/v1
+
   models:
   - name: openai/gpt-5.5-pro
     aliases:
@@ -20,3 +23,8 @@ model_router:
     providers:
     - name: OpenAI
       model: gpt-4o
+
+  # Fallback: OpenRouter handles unknown models, and any model that lost its endpoints.
+  - name: '*'
+    providers:
+    - name: OpenRouter
