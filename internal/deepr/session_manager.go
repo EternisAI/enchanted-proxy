@@ -20,6 +20,56 @@ type ActiveSession struct {
 	mu             sync.RWMutex               // Protects clientConns map
 	backendWriteMu sync.Mutex                 // Serializes writes to backend websocket
 	clientConns    map[string]*websocket.Conn // Map of client connection IDs
+
+	// What the client may send to the backend: the query, then one reply after
+	// each clarification question, at most maxClarificationRounds times. Each
+	// further message would start more work in the backend within the same run.
+	inputMu        sync.Mutex
+	querySent      bool
+	awaitingReply  bool
+	clarifications int
+}
+
+// maxClarificationRounds is how many clarification replies one run accepts.
+const maxClarificationRounds = 2
+
+// ClaimClientInput reports whether a message from the client may be forwarded to
+// the backend now and, if so, records it. The reason explains a refusal.
+func (s *ActiveSession) ClaimClientInput() (bool, string) {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	switch {
+	case !s.querySent:
+		s.querySent = true
+		return true, ""
+	case !s.awaitingReply:
+		return false, "Cannot send messages while research is in progress"
+	case s.clarifications >= maxClarificationRounds:
+		return false, "This research has already had its clarification rounds"
+	default:
+		s.awaitingReply = false
+		s.clarifications++
+		return true, ""
+	}
+}
+
+// MarkQuerySent records that the query has gone to the backend by another route.
+func (s *ActiveSession) MarkQuerySent() {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	s.querySent = true
+}
+
+// ObserveBackendEvent updates what the client may send after a backend message.
+func (s *ActiveSession) ObserveBackendEvent(eventType string) {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	switch eventType {
+	case "clarification_needed":
+		s.awaitingReply = true
+	case "error", "research_complete":
+		s.awaitingReply = false
+	}
 }
 
 // SessionManager manages active backend connections.

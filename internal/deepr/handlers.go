@@ -57,7 +57,7 @@ type ClarifyDeepResearchResponse struct {
 }
 
 // StartDeepResearchHandler handles POST requests to start deep research.
-func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool, notificationService *notifications.Service, titleService *title_generation.Service, modelRouter *routing.ModelRouter) gin.HandlerFunc {
+func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool, notificationService *notifications.Service, titleService *title_generation.Service, modelRouter *routing.ModelRouter, cfg *Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := logger.WithContext(c.Request.Context()).WithComponent("deepr")
 
@@ -107,7 +107,7 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			slog.String("query", req.Query))
 
 		// Create service instance
-		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, queries, deepResearchRateLimitEnabled, notificationService)
+		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, queries, deepResearchRateLimitEnabled, notificationService, cfg)
 
 		// Save user's initial query message to Firestore only if message ID is provided
 		// This prevents duplicate messages when client has already saved the message locally
@@ -200,13 +200,12 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			return
 		}
 
-		// Check quota before creating run record
-		if forbiddenErr := service.checkDeepResearchQuota(c.Request.Context(), userID, tierConfig); forbiddenErr != nil {
-			log.Warn("deep research quota check failed",
-				slog.String("user_id", userID),
-				slog.String("chat_id", req.ChatID),
-				slog.String("tier", tierConfig.Name),
-				slog.String("reason", string(forbiddenErr.Reason)))
+		// Check the run limits before creating the run record
+		var identity *auth.Identity
+		if id, ok := auth.GetIdentity(c); ok {
+			identity = &id
+		}
+		if forbiddenErr := service.checkRunAllowed(c.Request.Context(), userID, identity, tierConfig); forbiddenErr != nil {
 			errors.AbortWithForbidden(c, forbiddenErr)
 			return
 		}
@@ -215,6 +214,7 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 		runID, err := service.queries.CreateDeepResearchRun(c.Request.Context(), pgdb.CreateDeepResearchRunParams{
 			UserID: userID,
 			ChatID: req.ChatID,
+			Tier:   &tierConfig.Name,
 		})
 		if err != nil {
 			log.Error("failed to create run record",
@@ -268,7 +268,7 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 		dialer.HandshakeTimeout = 30 * time.Second
 
 		connectStart := time.Now()
-		backendConn, _, err := dialer.Dial(wsURL.String(), nil)
+		backendConn, _, err := dialer.Dial(wsURL.String(), cfg.backendHeaders())
 		if err != nil {
 			log.Error("failed to connect to deep research backend",
 				slog.String("user_id", userID),
@@ -333,6 +333,8 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			return
 		}
 
+		session.MarkQuerySent()
+
 		log.Info("deep research started successfully",
 			slog.String("user_id", userID),
 			slog.String("chat_id", req.ChatID),
@@ -366,7 +368,7 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 }
 
 // ClarifyDeepResearchHandler handles POST requests to submit clarification responses.
-func ClarifyDeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool, notificationService *notifications.Service) gin.HandlerFunc {
+func ClarifyDeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool, notificationService *notifications.Service, cfg *Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := logger.WithContext(c.Request.Context()).WithComponent("deepr")
 
@@ -416,7 +418,7 @@ func ClarifyDeepResearchHandler(logger *logger.Logger, trackingService *request_
 			slog.String("response", req.Response))
 
 		// Create service instance for message saving
-		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, queries, deepResearchRateLimitEnabled, notificationService)
+		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, queries, deepResearchRateLimitEnabled, notificationService, cfg)
 
 		// Check if there's an active backend session
 		if !sessionManager.HasActiveBackend(userID, req.ChatID) {
@@ -439,6 +441,16 @@ func ClarifyDeepResearchHandler(logger *logger.Logger, trackingService *request_
 			c.JSON(http.StatusInternalServerError, ClarifyDeepResearchResponse{
 				Success: false,
 				Error:   "Backend connection not available",
+			})
+			return
+		}
+
+		// Only a reply to a clarification question the backend asked, at most twice per run.
+		if allowed, reason := session.ClaimClientInput(); !allowed {
+			log.Warn("clarification not forwarded", slog.String("reason", reason))
+			c.JSON(http.StatusConflict, ClarifyDeepResearchResponse{
+				Success: false,
+				Error:   reason,
 			})
 			return
 		}
@@ -490,7 +502,7 @@ func ClarifyDeepResearchHandler(logger *logger.Logger, trackingService *request_
 }
 
 // DeepResearchHandler handles WebSocket connections for deep research streaming.
-func DeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool, notificationService *notifications.Service) gin.HandlerFunc {
+func DeepResearchHandler(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool, notificationService *notifications.Service, cfg *Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := logger.WithContext(c.Request.Context()).WithComponent("deepr")
 
@@ -552,7 +564,7 @@ func DeepResearchHandler(logger *logger.Logger, trackingService *request_trackin
 			slog.String("remote_addr", c.Request.RemoteAddr))
 
 		// Create service instance with shared session manager
-		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, queries, deepResearchRateLimitEnabled, notificationService)
+		service := NewService(logger, trackingService, firebaseClient, storage, sessionManager, queries, deepResearchRateLimitEnabled, notificationService, cfg)
 
 		// Handle the WebSocket connection
 		service.HandleConnection(c.Request.Context(), conn, userID, chatID)
