@@ -28,12 +28,14 @@ var (
 	ErrInvalidProduct  = errors.New("invalid product")
 )
 
-// chainReader is the part of the chain client used to replay events and date
-// payments. *ethclient.Client implements it; tests use a fake.
+// chainReader is the part of the chain client the listener uses: subscribing to
+// events, replaying them and dating payments. *ethclient.Client implements it;
+// tests use a fake.
 type chainReader interface {
 	BlockNumber(ctx context.Context) (uint64, error)
 	FilterLogs(ctx context.Context, q ethereum.FilterQuery) ([]types.Log, error)
 	HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error)
+	SubscribeFilterLogs(ctx context.Context, q ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error)
 }
 
 // blockRange is an inclusive range of blocks.
@@ -98,6 +100,8 @@ const (
 	resubscribeSyncBlocks        = 1_800  // ~1 hour
 	replayBatchBlocks            = 500
 	settlementRetryCheckInterval = time.Minute
+	// Live events arriving while a replay runs wait here (the client buffers more).
+	liveLogBuffer = 1024
 
 	// paymentIntentLifetime matches the expiry worker's query and the claim
 	// query: a payment is accepted only within this long of the intent's creation.
@@ -347,14 +351,27 @@ func (s *Service) GetPaymentStatus(ctx context.Context, paymentID, userID string
 
 // StartEventListener subscribes to PaymentReceived events from the Payment Router contract.
 // This should be run as a goroutine.
+//
+// It subscribes before it reads the chain head and replays up to it, so every
+// event lands in the replay, the subscription, or both. Live events that arrive
+// during the replay wait in the channel. Overlap is harmless: an intent is
+// claimed once.
 func (s *Service) StartEventListener(ctx context.Context) error {
-	if s.ethClient == nil {
+	if s.chain == nil {
 		return fmt.Errorf("blockchain not initialized - call InitBlockchain first")
 	}
 
 	s.logger.Info("starting FAI payment event listener",
 		"contract_address", s.contractAddress.Hex(),
 		"event_signature", s.eventSignature.Hex())
+
+	logs := make(chan types.Log, liveLogBuffer)
+	sub, err := s.subscribe(ctx, logs)
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to logs: %w", err)
+	}
+	defer func() { sub.Unsubscribe() }()
+	s.logger.Info("subscribed to PaymentReceived events")
 
 	// The first start in this process replays the last 24 hours: settlement is
 	// idempotent, and this picks up any event whose settlement failed before a
@@ -363,28 +380,10 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 	if !s.initialReplayDone {
 		lookback = startupSyncBlocks
 	}
-	blockNumber, err := s.chain.BlockNumber(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get current block number: %w", err)
+	if err := s.catchUp(ctx, lookback); err != nil {
+		return err
 	}
 	s.initialReplayDone = true
-	if err := s.replay(ctx, lookbackRange(blockNumber, lookback)); err != nil {
-		s.logger.Warn("historical replay failed; retrying it while listening", "error", err.Error())
-	}
-
-	query := ethereum.FilterQuery{
-		Addresses: []common.Address{s.contractAddress},
-		Topics:    [][]common.Hash{{s.eventSignature}},
-		FromBlock: big.NewInt(int64(blockNumber)),
-	}
-
-	logs := make(chan types.Log)
-	sub, err := s.ethClient.SubscribeFilterLogs(ctx, query, logs)
-	if err != nil {
-		return fmt.Errorf("failed to subscribe to logs: %w", err)
-	}
-
-	s.logger.Info("subscribed to PaymentReceived events")
 
 	retryTicker := time.NewTicker(settlementRetryCheckInterval)
 	defer retryTicker.Stop()
@@ -393,19 +392,14 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 		select {
 		case err := <-sub.Err():
 			s.logger.Error("subscription error, resubscribing", "error", err)
-			blockNumber, err := s.chain.BlockNumber(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to get current block number: %w", err)
-			}
-			if err := s.replay(ctx, lookbackRange(blockNumber, resubscribeSyncBlocks)); err != nil {
-				s.logger.Warn("historical replay failed; retrying it while listening", "error", err.Error())
-			}
-			query.FromBlock = big.NewInt(int64(blockNumber))
-			sub, err = s.ethClient.SubscribeFilterLogs(ctx, query, logs)
+			sub, err = s.subscribe(ctx, logs)
 			if err != nil {
 				return fmt.Errorf("failed to resubscribe: %w", err)
 			}
 			s.logger.Info("resubscribed to PaymentReceived events")
+			if err := s.catchUp(ctx, resubscribeSyncBlocks); err != nil {
+				return err
+			}
 
 		case vLog := <-logs:
 			s.logger.Info("received log", "block_number", vLog.BlockNumber, "tx_hash", vLog.TxHash.Hex())
@@ -417,10 +411,30 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 
 		case <-ctx.Done():
 			s.logger.Info("stopping event listener")
-			sub.Unsubscribe()
 			return ctx.Err()
 		}
 	}
+}
+
+// subscribe starts a live subscription to PaymentReceived events.
+func (s *Service) subscribe(ctx context.Context, logs chan<- types.Log) (ethereum.Subscription, error) {
+	return s.chain.SubscribeFilterLogs(ctx, ethereum.FilterQuery{
+		Addresses: []common.Address{s.contractAddress},
+		Topics:    [][]common.Hash{{s.eventSignature}},
+	}, logs)
+}
+
+// catchUp replays the last lookback blocks up to the current head. Call it after
+// subscribing. A failed replay is kept pending and retried by the listener.
+func (s *Service) catchUp(ctx context.Context, lookback uint64) error {
+	head, err := s.chain.BlockNumber(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get current block number: %w", err)
+	}
+	if err := s.replay(ctx, lookbackRange(head, lookback)); err != nil {
+		s.logger.Warn("historical replay failed; retrying it while listening", "error", err.Error())
+	}
+	return nil
 }
 
 // blockTime returns when a block was mined.

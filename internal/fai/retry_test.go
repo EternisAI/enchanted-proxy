@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"database/sql"
 	"math/big"
+	"sync"
 	"testing"
 	"time"
 
@@ -91,14 +93,42 @@ func TestHandlerClassifiesFailures(t *testing.T) {
 
 // fakeChain serves logs and block times; FilterLogs fails for the ranges listed in failFrom.
 type fakeChain struct {
+	mu         sync.Mutex
 	failFrom   map[uint64]bool
 	queried    []blockRange
 	blockTimes map[uint64]time.Time
+	head       uint64
+	calls      []string        // "subscribe" and "head", in order
+	live       chan<- types.Log // the listener's subscription channel
+	onFilter   func()           // runs at the start of each FilterLogs call
 }
 
-func (f *fakeChain) BlockNumber(context.Context) (uint64, error) { return 0, nil }
+type fakeSubscription struct{ errs chan error }
+
+func (f *fakeSubscription) Unsubscribe()      {}
+func (f *fakeSubscription) Err() <-chan error { return f.errs }
+
+func (f *fakeChain) SubscribeFilterLogs(_ context.Context, _ ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "subscribe")
+	f.live = ch
+	return &fakeSubscription{errs: make(chan error)}, nil
+}
+
+func (f *fakeChain) BlockNumber(context.Context) (uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "head")
+	return f.head, nil
+}
 
 func (f *fakeChain) FilterLogs(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+	if f.onFilter != nil {
+		f.onFilter()
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	r := blockRange{from: q.FromBlock.Uint64(), to: q.ToBlock.Uint64()}
 	f.queried = append(f.queried, r)
 	if f.failFrom[r.from] {
@@ -142,5 +172,62 @@ func TestFailedReplayStaysPendingUntilItCompletes(t *testing.T) {
 	last := chain.queried[len(chain.queried)-1]
 	if last.to != 2999 {
 		t.Fatalf("retry stopped at block %d, want 2999", last.to)
+	}
+}
+
+// seenQuerier records which payment IDs the handler looked up; none is known.
+type seenQuerier struct {
+	pgdb.Querier
+	seen chan string
+}
+
+func (q seenQuerier) GetFaiPaymentIntentByPaymentID(_ context.Context, id string) (pgdb.FaiPaymentIntent, error) {
+	q.seen <- id
+	return pgdb.FaiPaymentIntent{}, sql.ErrNoRows
+}
+
+// The listener subscribes before it reads the head it replays to, so a payment
+// mined while the replay runs, which only the live subscription delivers, is
+// still handled.
+func TestListenerSubscribesBeforeReplay(t *testing.T) {
+	sig := common.HexToHash("0x01")
+	q := seenQuerier{seen: make(chan string, 16)}
+	s := NewService(nil, q, logger.New(logger.Config{Level: slog.LevelError + 4}))
+	s.eventSignature = sig
+
+	gap := types.Log{Topics: []common.Hash{sig}, Data: make([]byte, 128), TxHash: common.HexToHash("0x9")}
+	gap.Data[31] = 0x42 // payment ID
+	chain := &fakeChain{head: 1000}
+	var once sync.Once
+	chain.onFilter = func() {
+		once.Do(func() {
+			chain.mu.Lock()
+			live := chain.live
+			chain.mu.Unlock()
+			live <- gap // mined during the replay; the replay itself does not see it
+		})
+	}
+	s.chain = chain
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.StartEventListener(ctx) }()
+
+	want := "0000000000000000000000000000000000000000000000000000000000000042"
+	select {
+	case id := <-q.seen:
+		if id != want {
+			t.Fatalf("handled payment %s, want %s", id, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the payment delivered during the replay was not handled")
+	}
+	cancel()
+	<-done
+
+	chain.mu.Lock()
+	defer chain.mu.Unlock()
+	if len(chain.calls) < 2 || chain.calls[0] != "subscribe" || chain.calls[1] != "head" {
+		t.Fatalf("calls = %v, want subscribe before head", chain.calls)
 	}
 }
