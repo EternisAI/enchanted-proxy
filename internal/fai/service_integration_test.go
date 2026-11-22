@@ -10,11 +10,17 @@ package fai
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
+	"math/big"
 	"os"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -56,7 +62,11 @@ func newTestService(t *testing.T) (*Service, *sql.DB) {
 // seedIntent inserts a pending weekly-pro intent and returns it as the event handler reads it.
 func seedIntent(t *testing.T, db *sql.DB, userID string) pgdb.FaiPaymentIntent {
 	t.Helper()
-	paymentID := uuid.NewString()
+	return seedIntentWithPaymentID(t, db, userID, uuid.NewString())
+}
+
+func seedIntentWithPaymentID(t *testing.T, db *sql.DB, userID, paymentID string) pgdb.FaiPaymentIntent {
+	t.Helper()
 	if _, err := db.Exec(`
 		INSERT INTO fai_payment_intents (id, user_id, payment_id, product_id, price_usd, fai_price, status)
 		VALUES ($1, $2, $3, $4, 4.99, 0.01, 'pending')`,
@@ -206,5 +216,101 @@ func TestSettlePaymentReleasesClaimWhenGrantFails(t *testing.T) {
 	claimed, err := svc.settlePayment(ctx, intent, product, claimParams(intent))
 	if err != nil || !claimed {
 		t.Fatalf("retry: claimed=%v err=%v, want true, nil", claimed, err)
+	}
+}
+
+func installGrantFailure(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`
+		CREATE OR REPLACE FUNCTION fai_test_fail_grant() RETURNS trigger AS $$
+		BEGIN
+			IF NEW.user_id LIKE 'fai-grantfail-%' THEN RAISE EXCEPTION 'grant refused by test'; END IF;
+			RETURN NEW;
+		END $$ LANGUAGE plpgsql;
+		DROP TRIGGER IF EXISTS fai_test_fail_grant ON entitlements;
+		CREATE TRIGGER fai_test_fail_grant BEFORE INSERT OR UPDATE ON entitlements
+			FOR EACH ROW EXECUTE FUNCTION fai_test_fail_grant();`); err != nil {
+		t.Fatalf("install trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec(`DROP TRIGGER IF EXISTS fai_test_fail_grant ON entitlements; DROP FUNCTION IF EXISTS fai_test_fail_grant();`)
+	})
+}
+
+// paymentEvent builds a PaymentReceived log paying 500 tokens for paymentID.
+func paymentEvent(t *testing.T, svc *Service) (types.Log, string) {
+	t.Helper()
+	svc.eventSignature = common.HexToHash("0xfeed")
+	token := common.HexToAddress("0x00000000000000000000000000000000000000aa")
+	svc.tokenConfigs = map[string]TokenConfig{token.Hex(): {CoingeckoID: "unused", Decimals: 18}}
+
+	var id [32]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	data := make([]byte, 128)
+	copy(data[0:32], id[:])
+	copy(data[44:64], token.Bytes())
+	amount := new(big.Int).Mul(big.NewInt(500), new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil))
+	amount.FillBytes(data[64:96])
+	return types.Log{
+		Topics:      []common.Hash{svc.eventSignature},
+		Data:        data,
+		TxHash:      common.BytesToHash(id[:]),
+		BlockNumber: 1,
+	}, hex.EncodeToString(id[:])
+}
+
+// A settlement that fails for a transient reason is queued and settles on a later
+// attempt, without depending on the event being replayed from the chain.
+func TestFailedSettlementIsRetriedUntilItSettles(t *testing.T) {
+	svc, db := newTestService(t)
+	ctx := context.Background()
+	userID := "fai-grantfail-" + uuid.NewString()
+	vLog, paymentID := paymentEvent(t, svc)
+	seedIntentWithPaymentID(t, db, userID, paymentID)
+
+	installGrantFailure(t, db)
+	svc.handleEvent(ctx, vLog)
+	if svc.retries.len() != 1 {
+		t.Fatalf("queued retries = %d, want 1", svc.retries.len())
+	}
+	if s := readStatus(t, db, paymentID); s != "pending" {
+		t.Fatalf("status after failed settlement = %q, want pending", s)
+	}
+
+	// Still failing: stays queued.
+	svc.retryFailedSettlements(ctx, time.Now().Add(2*time.Minute))
+	if svc.retries.len() != 1 {
+		t.Fatalf("queued retries after a failed retry = %d, want 1", svc.retries.len())
+	}
+
+	if _, err := db.Exec(`DROP TRIGGER fai_test_fail_grant ON entitlements`); err != nil {
+		t.Fatalf("drop trigger: %v", err)
+	}
+	svc.retryFailedSettlements(ctx, time.Now().Add(time.Hour))
+
+	if svc.retries.len() != 0 {
+		t.Fatalf("queued retries after success = %d, want 0", svc.retries.len())
+	}
+	if s := readStatus(t, db, paymentID); s != "completed" {
+		t.Fatalf("status after retry = %q, want completed", s)
+	}
+	if _, ok := readExpiry(t, db, userID); !ok {
+		t.Fatal("no entitlement after retry")
+	}
+}
+
+// An underpaid event is a permanent failure and is not queued.
+func TestUnderpaymentIsNotRetried(t *testing.T) {
+	svc, db := newTestService(t)
+	vLog, paymentID := paymentEvent(t, svc)
+	seedIntentWithPaymentID(t, db, "fai-underpaid-"+uuid.NewString(), paymentID)
+	if _, err := db.Exec(`UPDATE fai_payment_intents SET price_usd = 1000 WHERE payment_id = $1`, paymentID); err != nil {
+		t.Fatal(err)
+	}
+	svc.handleEvent(context.Background(), vLog)
+	if svc.retries.len() != 0 {
+		t.Fatalf("queued retries = %d, want 0", svc.retries.len())
 	}
 }

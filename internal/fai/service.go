@@ -39,6 +39,7 @@ type Service struct {
 	eventSignature  common.Hash
 	tokenConfigs    map[string]TokenConfig
 	chainID         uint64
+	retries         *settlementRetries
 }
 
 // Product represents a purchasable subscription product.
@@ -72,6 +73,13 @@ type ConfigResponse struct {
 	ChainID                uint64 `json:"chain_id"`
 }
 
+// Blocks on Base come about every 2 seconds.
+const (
+	startupSyncBlocks            = 43_200 // ~24 hours, the lifetime of a payment intent
+	resubscribeSyncBlocks        = 1_800  // ~1 hour
+	settlementRetryCheckInterval = time.Minute
+)
+
 const (
 	ProductWeeklyPro    = "silo.pro.weekly"
 	ProductMonthlyPro   = "silo.pro.monthly"
@@ -90,6 +98,7 @@ func NewService(db *sql.DB, queries pgdb.Querier, logger *logger.Logger) *Servic
 		queries:   queries,
 		logger:    logger,
 		coingecko: NewCoinGeckoService(logger),
+		retries:   newSettlementRetries(),
 	}
 }
 
@@ -322,7 +331,9 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 		"contract_address", s.contractAddress.Hex(),
 		"event_signature", s.eventSignature.Hex())
 
-	blockNumber, err := s.syncHistoricalBlocks(ctx)
+	// At startup, replay the last 24 hours: settlement is idempotent, and this
+	// picks up any event whose settlement failed before a restart.
+	blockNumber, err := s.syncHistoricalBlocks(ctx, startupSyncBlocks)
 	if err != nil {
 		s.logger.Warn("failed to sync historical blocks, starting from current block", "error", err.Error())
 		blockNumber, err = s.ethClient.BlockNumber(ctx)
@@ -345,11 +356,14 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 
 	s.logger.Info("subscribed to PaymentReceived events")
 
+	retryTicker := time.NewTicker(settlementRetryCheckInterval)
+	defer retryTicker.Stop()
+
 	for {
 		select {
 		case err := <-sub.Err():
 			s.logger.Error("subscription error, resubscribing", "error", err)
-			blockNumber, syncErr := s.syncHistoricalBlocks(ctx)
+			blockNumber, syncErr := s.syncHistoricalBlocks(ctx, resubscribeSyncBlocks)
 			if syncErr != nil {
 				s.logger.Error("failed to sync historical blocks after error", "error", syncErr.Error())
 				return fmt.Errorf("failed to sync historical blocks: %w", syncErr)
@@ -363,14 +377,51 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 
 		case vLog := <-logs:
 			s.logger.Info("received log", "block_number", vLog.BlockNumber, "tx_hash", vLog.TxHash.Hex())
-			if err := s.handlePaymentReceivedEvent(ctx, vLog); err != nil {
-				s.logger.Error("failed to handle payment event", "error", err.Error())
-			}
+			s.handleEvent(ctx, vLog)
+
+		case <-retryTicker.C:
+			s.retryFailedSettlements(ctx, time.Now())
 
 		case <-ctx.Done():
 			s.logger.Info("stopping event listener")
 			sub.Unsubscribe()
 			return ctx.Err()
+		}
+	}
+}
+
+// handleEvent processes one payment event and queues it for another attempt when
+// it failed for a transient reason.
+func (s *Service) handleEvent(ctx context.Context, vLog types.Log) {
+	err := s.handlePaymentReceivedEvent(ctx, vLog)
+	if err == nil {
+		return
+	}
+	s.logger.Error("failed to handle payment event",
+		"error", err.Error(),
+		"block", vLog.BlockNumber,
+		"tx_hash", vLog.TxHash.Hex(),
+		"will_retry", isRetryable(err))
+	if isRetryable(err) {
+		s.retries.add(vLog, time.Now())
+	}
+}
+
+// retryFailedSettlements tries again every queued event that is due.
+func (s *Service) retryFailedSettlements(ctx context.Context, now time.Time) {
+	for _, vLog := range s.retries.due(now) {
+		err := s.handlePaymentReceivedEvent(ctx, vLog)
+		if gaveUp := s.retries.result(vLog, err, now); gaveUp {
+			s.logger.Error("giving up on settling a payment event; settle it by hand",
+				"error", err.Error(), "block", vLog.BlockNumber, "tx_hash", vLog.TxHash.Hex())
+			continue
+		}
+		if err != nil {
+			s.logger.Warn("payment settlement retry failed",
+				"error", err.Error(), "block", vLog.BlockNumber, "tx_hash", vLog.TxHash.Hex(),
+				"will_retry", isRetryable(err))
+		} else {
+			s.logger.Info("payment settlement retry succeeded", "block", vLog.BlockNumber, "tx_hash", vLog.TxHash.Hex())
 		}
 	}
 }
@@ -408,7 +459,7 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("failed to query payment intent: %w", err)
+		return retryable(fmt.Errorf("failed to query payment intent: %w", err))
 	}
 
 	// Idempotency: skip if not pending (already completed or expired)
@@ -439,7 +490,7 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 	} else {
 		tokenPriceUSD, err = s.coingecko.GetTokenPrice(ctx, tokenConfig.CoingeckoID)
 		if err != nil {
-			return fmt.Errorf("failed to get token price: %w", err)
+			return retryable(fmt.Errorf("failed to get token price: %w", err))
 		}
 	}
 
@@ -477,7 +528,7 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 		TxHash:       &txHash,
 	})
 	if err != nil {
-		return err
+		return retryable(err)
 	}
 	if !claimed {
 		s.logger.Info("payment intent already settled, skipping", "payment_id", paymentIDHex)
@@ -588,17 +639,16 @@ func (s *Service) grantEntitlement(ctx context.Context, q pgdb.Querier, intent p
 	return nil
 }
 
-// syncHistoricalBlocks catches up on any missed PaymentReceived events.
-func (s *Service) syncHistoricalBlocks(ctx context.Context) (uint64, error) {
+// syncHistoricalBlocks replays PaymentReceived events from the last lookbackBlocks blocks.
+func (s *Service) syncHistoricalBlocks(ctx context.Context, lookbackBlocks uint64) (uint64, error) {
 	currentBlock, err := s.ethClient.BlockNumber(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get current block number: %w", err)
 	}
 
-	// Look back ~1 hour on Base (≈ 1800 blocks)
-	fromBlock := currentBlock
-	if currentBlock > 1800 {
-		fromBlock = currentBlock - 1800
+	fromBlock := uint64(0)
+	if currentBlock > lookbackBlocks {
+		fromBlock = currentBlock - lookbackBlocks
 	}
 
 	s.logger.Info("syncing historical blocks", "from_block", fromBlock, "to_block", currentBlock)
@@ -623,9 +673,7 @@ func (s *Service) syncHistoricalBlocks(ctx context.Context) (uint64, error) {
 		}
 
 		for _, vLog := range historicalLogs {
-			if err := s.handlePaymentReceivedEvent(ctx, vLog); err != nil {
-				s.logger.Error("failed to handle historical event", "error", err.Error(), "block", vLog.BlockNumber)
-			}
+			s.handleEvent(ctx, vLog)
 		}
 	}
 
