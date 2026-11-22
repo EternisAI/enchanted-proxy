@@ -20,6 +20,9 @@ const (
 	ReasonDeepResearchDailyLimit    ForbiddenReason = "deep_research_daily_limit"
 	ReasonDeepResearchLifetimeLimit ForbiddenReason = "deep_research_lifetime_limit"
 	ReasonDeepResearchTokenCap      ForbiddenReason = "deep_research_token_cap"
+	ReasonDeepResearchWeeklyLimit   ForbiddenReason = "deep_research_weekly_limit"
+	ReasonDeepResearchSignIn        ForbiddenReason = "deep_research_sign_in_required"
+	ReasonDeepResearchBusy          ForbiddenReason = "deep_research_busy"
 
 	// Access Control
 	ReasonChatNotOwned      ForbiddenReason = "chat_not_owned"
@@ -167,6 +170,35 @@ func DeepResearchLifetimeLimit(tier, displayName string, used, limit int64) *For
 			"limit": limit,
 		},
 	)
+}
+
+// DeepResearchWeeklyLimit creates a ForbiddenError for the weekly run limit.
+func DeepResearchWeeklyLimit(tier, displayName string, used, limit int64, resetsAt time.Time) *ForbiddenError {
+	msg := "You've used all your deep research runs this week. Your quota resets on Monday at midnight UTC."
+	return NewForbiddenError(
+		ReasonDeepResearchWeeklyLimit,
+		msg,
+		msg,
+		tier,
+		map[string]interface{}{
+			"used":      used,
+			"limit":     limit,
+			"resets_at": resetsAt.Format(time.RFC3339),
+		},
+	)
+}
+
+// DeepResearchSignInRequired creates a ForbiddenError for a free run requested
+// from an account whose sign-in type does not qualify for it.
+func DeepResearchSignInRequired(tier string) *ForbiddenError {
+	msg := "Sign in with Apple or Google to use your free deep research run."
+	return NewForbiddenError(ReasonDeepResearchSignIn, msg, msg, tier, nil)
+}
+
+// DeepResearchBusy creates a ForbiddenError for when the service-wide ceiling is reached.
+func DeepResearchBusy(tier string) *ForbiddenError {
+	msg := "Deep research is busy right now. Please try again later."
+	return NewForbiddenError(ReasonDeepResearchBusy, msg, msg, tier, nil)
 }
 
 // DeepResearchTokenCap creates a ForbiddenError for per-run token cap.
