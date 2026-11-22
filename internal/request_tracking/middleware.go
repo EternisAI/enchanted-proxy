@@ -27,6 +27,19 @@ func extractModelFromRequestBody(path string, body []byte) string {
 	return common.ExtractModelFromRequestBody(path, body)
 }
 
+// refuseWhenFailClosed aborts the request with 503 when rate limits are configured to
+// fail closed, and reports whether it did. Callers use it whenever a lookup the limit
+// depends on fails, so a database error cannot lift the limit.
+func refuseWhenFailClosed(c *gin.Context) bool {
+	if !config.AppConfig.RateLimitFailClosed {
+		return false
+	}
+	c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+		"error": "Rate limit service temporarily unavailable",
+	})
+	return true
+}
+
 // RequestTrackingMiddleware logs requests for authenticated users and checks rate limits.
 // The modelRouter is used to resolve model aliases to canonical names for consistent rate limiting.
 func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, modelRouter *routing.ModelRouter) gin.HandlerFunc {
@@ -45,10 +58,7 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 					slog.String("user_id", userID),
 					slog.Bool("fail_closed", config.AppConfig.RateLimitFailClosed))
 
-				if config.AppConfig.RateLimitFailClosed {
-					c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-						"error": "Rate limit service temporarily unavailable",
-					})
+				if refuseWhenFailClosed(c) {
 					return
 				}
 
@@ -64,10 +74,7 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 					slog.String("user_id", userID))
 
 				// Fail closed if configured (prevents rate limit bypass during DB outage)
-				if config.AppConfig.RateLimitFailClosed {
-					c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-						"error": "Rate limit service temporarily unavailable",
-					})
+				if refuseWhenFailClosed(c) {
 					return
 				}
 
@@ -141,12 +148,16 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 			if tierConfig.MonthlyPlanTokens > 0 {
 				used, err := trackingService.GetUserPlanTokensThisMonth(c.Request.Context(), userID)
 				if err != nil {
-					log.Error("failed to check monthly rate limit; allowing request because rate limits fail open",
+					log.Error("failed to check monthly rate limit",
 						slog.String("error", err.Error()),
 						slog.String("user_id", userID),
 						slog.String("tier", tierConfig.Name),
 						slog.String("model", model),
-						slog.Int64("limit", tierConfig.MonthlyPlanTokens))
+						slog.Int64("limit", tierConfig.MonthlyPlanTokens),
+						slog.Bool("fail_closed", config.AppConfig.RateLimitFailClosed))
+					if refuseWhenFailClosed(c) {
+						return
+					}
 				} else if used >= tierConfig.MonthlyPlanTokens {
 					log.Warn("monthly rate limit exceeded",
 						slog.String("user_id", userID),
@@ -166,12 +177,16 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 			if tierConfig.WeeklyPlanTokens > 0 {
 				used, err := trackingService.GetUserPlanTokensThisWeek(c.Request.Context(), userID)
 				if err != nil {
-					log.Error("failed to check weekly rate limit; allowing request because rate limits fail open",
+					log.Error("failed to check weekly rate limit",
 						slog.String("error", err.Error()),
 						slog.String("user_id", userID),
 						slog.String("tier", tierConfig.Name),
 						slog.String("model", model),
-						slog.Int64("limit", tierConfig.WeeklyPlanTokens))
+						slog.Int64("limit", tierConfig.WeeklyPlanTokens),
+						slog.Bool("fail_closed", config.AppConfig.RateLimitFailClosed))
+					if refuseWhenFailClosed(c) {
+						return
+					}
 				} else if used >= tierConfig.WeeklyPlanTokens {
 					log.Warn("weekly rate limit exceeded",
 						slog.String("user_id", userID),
@@ -191,12 +206,16 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 			if tierConfig.DailyPlanTokens > 0 {
 				used, err := trackingService.GetUserPlanTokensToday(c.Request.Context(), userID)
 				if err != nil {
-					log.Error("failed to check daily rate limit; allowing request because rate limits fail open",
+					log.Error("failed to check daily rate limit",
 						slog.String("error", err.Error()),
 						slog.String("user_id", userID),
 						slog.String("tier", tierConfig.Name),
 						slog.String("model", model),
-						slog.Int64("limit", tierConfig.DailyPlanTokens))
+						slog.Int64("limit", tierConfig.DailyPlanTokens),
+						slog.Bool("fail_closed", config.AppConfig.RateLimitFailClosed))
+					if refuseWhenFailClosed(c) {
+						return
+					}
 				} else if used >= tierConfig.DailyPlanTokens {
 					// Normal quota exceeded - check if fallback is available
 					isFallbackModel := tierConfig.IsFallbackModel(model)
@@ -206,13 +225,17 @@ func RequestTrackingMiddleware(trackingService *Service, logger *logger.Logger, 
 						// User is requesting a fallback model - check fallback quota
 						fallbackUsed, fallbackErr := trackingService.GetUserFallbackPlanTokensToday(c.Request.Context(), userID, tierConfig.FallbackModel)
 						if fallbackErr != nil {
-							log.Error("failed to check fallback rate limit; allowing request because rate limits fail open",
+							log.Error("failed to check fallback rate limit",
 								slog.String("error", fallbackErr.Error()),
 								slog.String("user_id", userID),
 								slog.String("tier", tierConfig.Name),
 								slog.String("model", model),
 								slog.String("fallback_model", tierConfig.FallbackModel),
-								slog.Int64("fallback_limit", tierConfig.FallbackDailyPlanTokens))
+								slog.Int64("fallback_limit", tierConfig.FallbackDailyPlanTokens),
+								slog.Bool("fail_closed", config.AppConfig.RateLimitFailClosed))
+							if refuseWhenFailClosed(c) {
+								return
+							}
 						} else if fallbackUsed >= tierConfig.FallbackDailyPlanTokens {
 							// Fallback quota also exceeded - hard limit
 							log.Warn("fallback rate limit exceeded (hard limit)",
