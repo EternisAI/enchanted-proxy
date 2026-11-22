@@ -58,3 +58,21 @@ func TestRedeemSuffixCodeIsNotSpecial(t *testing.T) {
 		t.Errorf("status = %d, want 404 (body %s)", w.Code, w.Body.String())
 	}
 }
+
+func TestWhitelistOnlyAnswersForCaller(t *testing.T) {
+	q := &inviteQuerier{whitelisted: map[string]bool{"caller": true, "someone-else": true}}
+	engine := newInviteRouter(q)
+
+	w := serve(engine, http.MethodGet, "/api/v1/invites/caller/whitelist", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"whitelisted":true`) {
+		t.Errorf("own ID: status %d, body %s", w.Code, w.Body.String())
+	}
+
+	w = serve(engine, http.MethodGet, "/api/v1/invites/someone-else/whitelist", "")
+	if w.Code != http.StatusForbidden {
+		t.Errorf("other ID: status = %d, want 403", w.Code)
+	}
+	if len(q.counted) != 1 || q.counted[0] != "caller" {
+		t.Errorf("whitelist queries = %v, want only the caller", q.counted)
+	}
+}

@@ -2,7 +2,6 @@ package invitecode
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/errors"
@@ -73,41 +72,21 @@ func (h *Handler) RedeemInviteCode(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// DeleteInviteCode handles deleting an invite code
-// DELETE /api/v1/invites/:id.
-func (h *Handler) DeleteInviteCode(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		errors.BadRequest(c, "Invalid ID", nil)
-		return
-	}
-
-	if err := h.service.DeleteInviteCode(id); err != nil {
-		errors.Internal(c, err.Error(), nil)
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "Invite code deleted successfully"})
-}
-
-// ResetInviteCode handles resetting an invite code
-// GET /api/v1/invites/reset/:code.
-func (h *Handler) ResetInviteCode(c *gin.Context) {
-	code := c.Param("code")
-
-	if err := h.service.ResetInviteCode(code); err != nil {
-		errors.Internal(c, err.Error(), nil)
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "Invite code reset successfully"})
-}
-
-// CheckUserWhitelist checks if a user ID is whitelisted
+// CheckUserWhitelist checks whether the caller is whitelisted. It answers only
+// for the caller's own user ID.
 // GET /api/v1/invites/:userID/whitelist.
 func (h *Handler) CheckUserWhitelist(c *gin.Context) {
 	userID := c.Param("userID")
+
+	callerID, ok := auth.GetUserID(c)
+	if !ok {
+		errors.Unauthorized(c, "User not authenticated", nil)
+		return
+	}
+	if userID != callerID {
+		c.AbortWithStatusJSON(http.StatusForbidden, errors.NewAPIError("You can only check your own whitelist status", nil))
+		return
+	}
 
 	// Check if user ID is whitelisted (has valid invite codes)
 	isWhitelisted, err := h.service.IsUserWhitelisted(userID)

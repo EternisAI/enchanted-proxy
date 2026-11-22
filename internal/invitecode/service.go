@@ -93,11 +93,6 @@ func (s *Service) UseInviteCode(code string, userID string) error {
 	return s.queries.UpdateInviteCodeUsage(ctx, params)
 }
 
-func (s *Service) DeleteInviteCode(id int64) error {
-	ctx := context.Background()
-	return s.queries.SoftDeleteInviteCode(ctx, id)
-}
-
 func (s *Service) IsUserWhitelisted(userID string) (bool, error) {
 	ctx := context.Background()
 
@@ -107,10 +102,4 @@ func (s *Service) IsUserWhitelisted(userID string) (bool, error) {
 	}
 
 	return count > 0, nil
-}
-
-func (s *Service) ResetInviteCode(code string) error {
-	ctx := context.Background()
-	codeHash := HashCode(code)
-	return s.queries.ResetInviteCode(ctx, codeHash)
 }
