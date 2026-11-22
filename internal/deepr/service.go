@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -1048,11 +1047,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 		deepResearchScheme = "ws"
 	}
 
-	wsURL := url.URL{
-		Scheme: deepResearchScheme,
-		Host:   deepResearchHost,
-		Path:   "/deep_research/" + userID + "/" + chatID + "/",
-	}
+	wsURL := backendSessionURL(deepResearchScheme, deepResearchHost, userID, chatID)
 
 	log.Info("connecting to backend websocket",
 		slog.String("user_id", userID),
