@@ -44,6 +44,14 @@ jobs:
     - name: Checkout
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+    # A release tag deploys to production, so it may only name a commit that is
+    # already on the production branch.
+    - name: Check Release Tag
+      if: github.ref_type == 'tag'
+      uses: ./.github/actions/check-release-tag
+      with:
+        github-token: ${{ github.token }}
+
     - name: Get Enclave Image Ref
       id: enclave-image
       run: |

@@ -42,6 +42,14 @@ jobs:
     - name: Checkout
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+    # A release tag deploys to production, so it may only name a commit that is
+    # already on the production branch.
+    - name: Check Release Tag
+      if: github.ref_type == 'tag'
+      uses: ./.github/actions/check-release-tag
+      with:
+        github-token: ${{ github.token }}
+
     - name: Docker Meta
       id: meta
       uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
