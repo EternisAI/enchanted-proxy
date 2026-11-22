@@ -81,8 +81,10 @@ type Querier interface {
 	ResetInviteCode(ctx context.Context, codeHash string) error
 	SoftDeleteInviteCode(ctx context.Context, id int64) error
 	UpdateDeepResearchRunTokens(ctx context.Context, arg UpdateDeepResearchRunTokensParams) error
-	// Claims a pending intent. Each payment event is delivered to every replica and
-	// again by the historical sync, so the caller grants only when this changed a row.
+	// Claims an intent. Each payment event is delivered to every replica and again by
+	// the historical sync, so the caller grants only when this changed a row. An
+	// expired intent is claimed only when allow_expired is set, which the caller does
+	// after checking that the payment was made before the intent expired.
 	UpdateFaiPaymentIntentToCompleted(ctx context.Context, arg UpdateFaiPaymentIntentToCompletedParams) (int64, error)
 	UpdateFaiPaymentIntentToExpired(ctx context.Context, id string) error
 	UpdateInviteCodeActive(ctx context.Context, arg UpdateInviteCodeActiveParams) error

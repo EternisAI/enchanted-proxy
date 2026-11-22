@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math/big"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -84,5 +86,61 @@ func TestHandlerClassifiesFailures(t *testing.T) {
 	err = s.handlePaymentReceivedEvent(context.Background(), types.Log{Topics: []common.Hash{sig}, Data: make([]byte, 10)})
 	if err == nil || isRetryable(err) {
 		t.Errorf("malformed event: err = %v, want a permanent error", err)
+	}
+}
+
+// fakeChain serves logs and block times; FilterLogs fails for the ranges listed in failFrom.
+type fakeChain struct {
+	failFrom   map[uint64]bool
+	queried    []blockRange
+	blockTimes map[uint64]time.Time
+}
+
+func (f *fakeChain) BlockNumber(context.Context) (uint64, error) { return 0, nil }
+
+func (f *fakeChain) FilterLogs(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+	r := blockRange{from: q.FromBlock.Uint64(), to: q.ToBlock.Uint64()}
+	f.queried = append(f.queried, r)
+	if f.failFrom[r.from] {
+		delete(f.failFrom, r.from) // fail once
+		return nil, errors.New("rpc unavailable")
+	}
+	return nil, nil
+}
+
+func (f *fakeChain) HeaderByNumber(_ context.Context, n *big.Int) (*types.Header, error) {
+	t, ok := f.blockTimes[n.Uint64()]
+	if !ok {
+		return nil, errors.New("unknown block")
+	}
+	return &types.Header{Time: uint64(t.Unix())}, nil
+}
+
+func TestFailedReplayStaysPendingUntilItCompletes(t *testing.T) {
+	chain := &fakeChain{failFrom: map[uint64]bool{1500: true}}
+	s := NewService(nil, nil, logger.New(logger.Config{Level: slog.LevelError + 4}))
+	s.chain = chain
+
+	if err := s.replay(context.Background(), blockRange{from: 1000, to: 2999}); err == nil {
+		t.Fatal("replay reported success although a batch failed")
+	}
+	if s.pendingReplay == nil || *s.pendingReplay != (blockRange{from: 1500, to: 2999}) {
+		t.Fatalf("pending replay = %+v, want 1500-2999", s.pendingReplay)
+	}
+
+	// A second failure elsewhere merges into the pending range.
+	chain.failFrom[100] = true
+	_ = s.replay(context.Background(), blockRange{from: 100, to: 200})
+	if *s.pendingReplay != (blockRange{from: 100, to: 2999}) {
+		t.Fatalf("merged pending replay = %+v, want 100-2999", *s.pendingReplay)
+	}
+
+	s.retryPendingReplay(context.Background())
+	if s.pendingReplay != nil {
+		t.Fatalf("pending replay after a successful retry = %+v, want none", *s.pendingReplay)
+	}
+	last := chain.queried[len(chain.queried)-1]
+	if last.to != 2999 {
+		t.Fatalf("retry stopped at block %d, want 2999", last.to)
 	}
 }

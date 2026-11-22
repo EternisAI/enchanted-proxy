@@ -143,32 +143,37 @@ func (q *Queries) GetFaiPaymentIntentForUser(ctx context.Context, arg GetFaiPaym
 const updateFaiPaymentIntentToCompleted = `-- name: UpdateFaiPaymentIntentToCompleted :execrows
 UPDATE fai_payment_intents
 SET status = 'completed',
-    token_address = $2,
-    token_amount = $3,
-    paid_block = $4,
-    tx_hash = $5,
+    token_address = $1,
+    token_amount = $2,
+    paid_block = $3,
+    tx_hash = $4,
     paid_at = NOW(),
     updated_at = NOW()
-WHERE payment_id = $1 AND status = 'pending'
+WHERE payment_id = $5
+  AND (status = 'pending' OR (status = 'expired' AND $6::bool))
 `
 
 type UpdateFaiPaymentIntentToCompletedParams struct {
-	PaymentID    string          `json:"paymentId"`
 	TokenAddress *string         `json:"tokenAddress"`
 	TokenAmount  sql.NullFloat64 `json:"tokenAmount"`
 	PaidBlock    sql.NullInt64   `json:"paidBlock"`
 	TxHash       *string         `json:"txHash"`
+	PaymentID    string          `json:"paymentId"`
+	AllowExpired bool            `json:"allowExpired"`
 }
 
-// Claims a pending intent. Each payment event is delivered to every replica and
-// again by the historical sync, so the caller grants only when this changed a row.
+// Claims an intent. Each payment event is delivered to every replica and again by
+// the historical sync, so the caller grants only when this changed a row. An
+// expired intent is claimed only when allow_expired is set, which the caller does
+// after checking that the payment was made before the intent expired.
 func (q *Queries) UpdateFaiPaymentIntentToCompleted(ctx context.Context, arg UpdateFaiPaymentIntentToCompletedParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateFaiPaymentIntentToCompleted,
-		arg.PaymentID,
 		arg.TokenAddress,
 		arg.TokenAmount,
 		arg.PaidBlock,
 		arg.TxHash,
+		arg.PaymentID,
+		arg.AllowExpired,
 	)
 	if err != nil {
 		return 0, err

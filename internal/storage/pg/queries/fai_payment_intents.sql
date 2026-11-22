@@ -10,17 +10,20 @@ SELECT * FROM fai_payment_intents WHERE payment_id = $1;
 SELECT * FROM fai_payment_intents WHERE payment_id = $1 AND user_id = $2;
 
 -- name: UpdateFaiPaymentIntentToCompleted :execrows
--- Claims a pending intent. Each payment event is delivered to every replica and
--- again by the historical sync, so the caller grants only when this changed a row.
+-- Claims an intent. Each payment event is delivered to every replica and again by
+-- the historical sync, so the caller grants only when this changed a row. An
+-- expired intent is claimed only when allow_expired is set, which the caller does
+-- after checking that the payment was made before the intent expired.
 UPDATE fai_payment_intents
 SET status = 'completed',
-    token_address = $2,
-    token_amount = $3,
-    paid_block = $4,
-    tx_hash = $5,
+    token_address = sqlc.arg(token_address),
+    token_amount = sqlc.arg(token_amount),
+    paid_block = sqlc.arg(paid_block),
+    tx_hash = sqlc.arg(tx_hash),
     paid_at = NOW(),
     updated_at = NOW()
-WHERE payment_id = $1 AND status = 'pending';
+WHERE payment_id = sqlc.arg(payment_id)
+  AND (status = 'pending' OR (status = 'expired' AND sqlc.arg(allow_expired)::bool));
 
 -- name: UpdateFaiPaymentIntentToExpired :exec
 UPDATE fai_payment_intents

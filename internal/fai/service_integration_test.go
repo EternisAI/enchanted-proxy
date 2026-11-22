@@ -314,3 +314,46 @@ func TestUnderpaymentIsNotRetried(t *testing.T) {
 		t.Fatalf("queued retries = %d, want 0", svc.retries.len())
 	}
 }
+
+// An intent the expiry worker retired is still settled when its payment was made
+// before the deadline, and refused when it was made after.
+func TestExpiredIntentSettlesOnlyIfPaidInTime(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		paidLate bool
+	}{{"paid in time", false}, {"paid late", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, db := newTestService(t)
+			ctx := context.Background()
+			userID := "fai-expired-" + uuid.NewString()
+			vLog, paymentID := paymentEvent(t, svc)
+			seedIntentWithPaymentID(t, db, userID, paymentID)
+
+			createdAt := time.Now().Add(-25 * time.Hour).Truncate(time.Second)
+			if _, err := db.Exec(`UPDATE fai_payment_intents SET status = 'expired', created_at = $2 WHERE payment_id = $1`,
+				paymentID, createdAt); err != nil {
+				t.Fatal(err)
+			}
+			paidAt := createdAt.Add(23 * time.Hour)
+			if tc.paidLate {
+				paidAt = createdAt.Add(24*time.Hour + time.Minute)
+			}
+			svc.chain = &fakeChain{blockTimes: map[uint64]time.Time{vLog.BlockNumber: paidAt}}
+
+			svc.handleEvent(ctx, vLog)
+
+			_, granted := readExpiry(t, db, userID)
+			status := readStatus(t, db, paymentID)
+			if tc.paidLate {
+				if granted || status != "expired" {
+					t.Fatalf("late payment: granted=%v status=%q, want no grant and expired", granted, status)
+				}
+			} else if !granted || status != "completed" {
+				t.Fatalf("payment in time: granted=%v status=%q, want a grant and completed", granted, status)
+			}
+			if svc.retries.len() != 0 {
+				t.Fatalf("queued retries = %d, want 0", svc.retries.len())
+			}
+		})
+	}
+}
