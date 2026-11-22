@@ -1,6 +1,7 @@
 package task
 
 import (
+	stderrors "errors"
 	"log/slog"
 	"net/http"
 
@@ -58,6 +59,10 @@ func (h *Handler) CreateTask(c *gin.Context) {
 	log.Info("calling service.CreateTask")
 	task, err := h.service.CreateTask(c.Request.Context(), userID, &req)
 	if err != nil {
+		if stderrors.Is(err, ErrInvalidChatID) {
+			errors.BadRequest(c, "Invalid chat_id", nil)
+			return
+		}
 		log.Error("failed to create task",
 			slog.String("error", err.Error()),
 			slog.String("user_id", userID))
