@@ -233,6 +233,15 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			slog.String("chat_id", req.ChatID),
 			slog.Int64("run_id", runID))
 
+		// Until handleBackendMessages takes the run over, every exit marks it failed,
+		// so a refused or broken start does not leave the run active forever.
+		runHandedOff := false
+		defer func() {
+			if !runHandedOff {
+				service.markRunFailed(runID)
+			}
+		}()
+
 		// Connect to deep research backend
 		deepResearchHost := os.Getenv("DEEP_RESEARCH_WS")
 		if deepResearchHost == "" {
@@ -345,7 +354,8 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			}
 		}
 
-		// Start goroutine to handle backend messages
+		// Start goroutine to handle backend messages; from here on it completes the run
+		runHandedOff = true
 		go service.handleBackendMessages(sessionCtx, session, userID, req.ChatID)
 
 		c.JSON(http.StatusOK, StartDeepResearchResponse{
