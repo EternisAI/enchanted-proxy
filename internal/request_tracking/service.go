@@ -471,18 +471,28 @@ func (s *Service) GetUserFallbackPlanTokensToday(ctx context.Context, userID str
 	return result, nil
 }
 
-// GetUserDeepResearchRunsToday returns deep research runs today.
-func (s *Service) GetUserDeepResearchRunsToday(ctx context.Context, userID string) (int64, error) {
-	result, err := s.queries.GetUserDeepResearchRunsToday(ctx, userID)
+// GetUserDeepResearchRunsToday returns the deep research runs today of the given accounts.
+func (s *Service) GetUserDeepResearchRunsToday(ctx context.Context, userIDs []string) (int64, error) {
+	result, err := s.queries.GetUserDeepResearchRunsToday(ctx, userIDs)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get daily deep research runs: %w", err)
 	}
 	return result, nil
 }
 
-// GetUserDeepResearchRunsLifetime returns deep research runs lifetime.
-func (s *Service) GetUserDeepResearchRunsLifetime(ctx context.Context, userID string) (int64, error) {
-	result, err := s.queries.GetUserDeepResearchRunsLifetime(ctx, userID)
+// GetUserDeepResearchRunsThisWeek returns the deep research runs this week (from
+// Monday 00:00 UTC) of the given accounts.
+func (s *Service) GetUserDeepResearchRunsThisWeek(ctx context.Context, userIDs []string) (int64, error) {
+	result, err := s.queries.GetUserDeepResearchRunsThisWeek(ctx, userIDs)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get weekly deep research runs: %w", err)
+	}
+	return result, nil
+}
+
+// GetUserDeepResearchRunsLifetime returns the deep research runs ever of the given accounts.
+func (s *Service) GetUserDeepResearchRunsLifetime(ctx context.Context, userIDs []string) (int64, error) {
+	result, err := s.queries.GetUserDeepResearchRunsLifetime(ctx, userIDs)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get lifetime deep research runs: %w", err)
 	}

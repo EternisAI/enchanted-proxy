@@ -103,7 +103,7 @@ func (s *Service) checkDeepResearchQuota(ctx context.Context, userID string, tie
 	// Check active jobs (only applies when MaxActiveSessions == 1, i.e., Free tier)
 	// Pro tier has MaxActiveSessions == 0 (unlimited), so this check is skipped
 	if tierConfig.DeepResearchMaxActiveSessions == 1 {
-		hasActive, err := s.queries.HasActiveDeepResearchRun(ctx, userID)
+		hasActive, err := s.queries.HasActiveDeepResearchRun(ctx, []string{userID})
 		if err != nil {
 			log.Error("failed to check active runs",
 				slog.String("user_id", userID),
@@ -120,7 +120,7 @@ func (s *Service) checkDeepResearchQuota(ctx context.Context, userID string, tie
 
 	// Check daily runs (Pro tier: 10 runs/day)
 	if tierConfig.DeepResearchDailyRuns > 0 {
-		count, err := s.queries.GetUserDeepResearchRunsToday(ctx, userID)
+		count, err := s.queries.GetUserDeepResearchRunsToday(ctx, []string{userID})
 		if err != nil {
 			log.Error("failed to check daily runs",
 				slog.String("user_id", userID),
@@ -140,7 +140,7 @@ func (s *Service) checkDeepResearchQuota(ctx context.Context, userID string, tie
 
 	// Check lifetime runs (Free tier: 1 run total)
 	if tierConfig.DeepResearchLifetimeRuns > 0 {
-		count, err := s.queries.GetUserDeepResearchRunsLifetime(ctx, userID)
+		count, err := s.queries.GetUserDeepResearchRunsLifetime(ctx, []string{userID})
 		if err != nil {
 			log.Error("failed to check lifetime runs",
 				slog.String("user_id", userID),

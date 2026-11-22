@@ -33,6 +33,7 @@ type DeepResearchRun struct {
 	Status          string       `json:"status"`
 	StartedAt       time.Time    `json:"startedAt"`
 	CompletedAt     sql.NullTime `json:"completedAt"`
+	Tier            *string      `json:"tier"`
 }
 
 type Entitlement struct {

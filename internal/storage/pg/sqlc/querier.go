@@ -7,6 +7,7 @@ package pgdb
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -15,6 +16,8 @@ type Querier interface {
 	AddDeepResearchMessage(ctx context.Context, arg AddDeepResearchMessageParams) error
 	AtomicUseInviteCode(ctx context.Context, arg AtomicUseInviteCodeParams) error
 	CompleteDeepResearchRun(ctx context.Context, arg CompleteDeepResearchRunParams) error
+	// All accounts, for the service-wide daily ceiling.
+	CountDeepResearchRunsToday(ctx context.Context) (int64, error)
 	CountInviteCodesByRedeemedBy(ctx context.Context, redeemedBy *string) (int64, error)
 	CountProblemReportsByUserID(ctx context.Context, userID string) (int64, error)
 	CountTaskCreationsSince(ctx context.Context, arg CountTaskCreationsSinceParams) (int64, error)
@@ -31,6 +34,9 @@ type Querier interface {
 	DeleteTask(ctx context.Context, arg DeleteTaskParams) (sql.Result, error)
 	DeleteTelegramChat(ctx context.Context, chatID int64) error
 	DeleteZcashInvoice(ctx context.Context, id uuid.UUID) error
+	// Runs still active long after any run could have finished: their connection
+	// was lost without the run being completed (for example a restart).
+	FailStaleDeepResearchRuns(ctx context.Context, startedBefore time.Time) (int64, error)
 	GetActiveDeepResearchRun(ctx context.Context, arg GetActiveDeepResearchRunParams) (GetActiveDeepResearchRunRow, error)
 	GetAllActiveTasks(ctx context.Context) ([]Task, error)
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
@@ -53,8 +59,11 @@ type Querier interface {
 	GetTelegramChatByChatUUID(ctx context.Context, chatUuid string) (TelegramChat, error)
 	GetUnsentMessageCount(ctx context.Context, sessionID string) (int64, error)
 	GetUnsentMessages(ctx context.Context, sessionID string) ([]DeepResearchMessage, error)
-	GetUserDeepResearchRunsLifetime(ctx context.Context, userID string) (int64, error)
-	GetUserDeepResearchRunsToday(ctx context.Context, userID string) (int64, error)
+	GetUserDeepResearchRunsLifetime(ctx context.Context, userIds []string) (int64, error)
+	GetUserDeepResearchRunsThisWeek(ctx context.Context, userIds []string) (int64, error)
+	// A run counts toward the allowance whatever its outcome, unless it failed within
+	// a minute of starting (the backend refused or broke before doing work).
+	GetUserDeepResearchRunsToday(ctx context.Context, userIds []string) (int64, error)
 	// Returns plan tokens used today on the fallback model.
 	// Used for tracking fallback quota when normal quota is exceeded.
 	GetUserFallbackPlanTokensToday(ctx context.Context, arg GetUserFallbackPlanTokensTodayParams) (int64, error)
@@ -75,7 +84,7 @@ type Querier interface {
 	GetZcashInvoiceForUpdate(ctx context.Context, id uuid.UUID) (ZcashInvoice, error)
 	GetZcashInvoiceForUser(ctx context.Context, arg GetZcashInvoiceForUserParams) (ZcashInvoice, error)
 	GetZcashInvoicesByUserAndStatus(ctx context.Context, arg GetZcashInvoicesByUserAndStatusParams) ([]ZcashInvoice, error)
-	HasActiveDeepResearchRun(ctx context.Context, userID string) (bool, error)
+	HasActiveDeepResearchRun(ctx context.Context, userIds []string) (bool, error)
 	// Tasks that may still run, for the limit checks: the caller's quota group.
 	ListOpenTasksForUsers(ctx context.Context, userIds []string) ([]ListOpenTasksForUsersRow, error)
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)

@@ -56,6 +56,8 @@ type DeepResearchInfo struct {
 	MaxActiveSessions int `json:"max_active_sessions"`
 	DailyRunsUsed     int `json:"daily_runs_used"`
 	LifetimeRunsUsed  int `json:"lifetime_runs_used"`
+	WeeklyRuns        int `json:"weekly_runs"` // 0 = no weekly limit
+	WeeklyRunsUsed    int `json:"weekly_runs_used"`
 }
 
 // RateLimitStatusHandler returns comprehensive rate limit and tier information.
@@ -184,8 +186,9 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger, modelR
 		}
 
 		// Deep research info
-		dailyRunsUsed, _ := trackingService.GetUserDeepResearchRunsToday(ctx, userID)
-		lifetimeRunsUsed, _ := trackingService.GetUserDeepResearchRunsLifetime(ctx, userID)
+		dailyRunsUsed, _ := trackingService.GetUserDeepResearchRunsToday(ctx, []string{userID})
+		weeklyRunsUsed, _ := trackingService.GetUserDeepResearchRunsThisWeek(ctx, []string{userID})
+		lifetimeRunsUsed, _ := trackingService.GetUserDeepResearchRunsLifetime(ctx, []string{userID})
 		response.DeepResearch = &DeepResearchInfo{
 			DailyRuns:         tierConfig.DeepResearchDailyRuns,
 			LifetimeRuns:      tierConfig.DeepResearchLifetimeRuns,
@@ -193,6 +196,8 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger, modelR
 			MaxActiveSessions: tierConfig.DeepResearchMaxActiveSessions,
 			DailyRunsUsed:     int(dailyRunsUsed),
 			LifetimeRunsUsed:  int(lifetimeRunsUsed),
+			WeeklyRuns:        tierConfig.DeepResearchWeeklyRuns,
+			WeeklyRunsUsed:    int(weeklyRunsUsed),
 		}
 
 		c.JSON(http.StatusOK, response)

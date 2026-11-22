@@ -7,6 +7,9 @@ package pgdb
 
 import (
 	"context"
+	"time"
+
+	"github.com/lib/pq"
 )
 
 const completeDeepResearchRun = `-- name: CompleteDeepResearchRun :exec
@@ -26,22 +29,55 @@ func (q *Queries) CompleteDeepResearchRun(ctx context.Context, arg CompleteDeepR
 	return err
 }
 
+const countDeepResearchRunsToday = `-- name: CountDeepResearchRunsToday :one
+SELECT COUNT(*) as run_count
+FROM deep_research_runs
+WHERE run_date = CURRENT_DATE
+  AND NOT (status = 'failed' AND completed_at IS NOT NULL AND completed_at < started_at + INTERVAL '60 seconds')
+`
+
+// All accounts, for the service-wide daily ceiling.
+func (q *Queries) CountDeepResearchRunsToday(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countDeepResearchRunsToday)
+	var run_count int64
+	err := row.Scan(&run_count)
+	return run_count, err
+}
+
 const createDeepResearchRun = `-- name: CreateDeepResearchRun :one
-INSERT INTO deep_research_runs (user_id, chat_id, run_date, status)
-VALUES ($1, $2, CURRENT_DATE, 'active')
+INSERT INTO deep_research_runs (user_id, chat_id, run_date, status, tier)
+VALUES ($1, $2, CURRENT_DATE, 'active', $3)
 RETURNING id
 `
 
 type CreateDeepResearchRunParams struct {
-	UserID string `json:"userId"`
-	ChatID string `json:"chatId"`
+	UserID string  `json:"userId"`
+	ChatID string  `json:"chatId"`
+	Tier   *string `json:"tier"`
 }
 
 func (q *Queries) CreateDeepResearchRun(ctx context.Context, arg CreateDeepResearchRunParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, createDeepResearchRun, arg.UserID, arg.ChatID)
+	row := q.db.QueryRowContext(ctx, createDeepResearchRun, arg.UserID, arg.ChatID, arg.Tier)
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const failStaleDeepResearchRuns = `-- name: FailStaleDeepResearchRuns :execrows
+UPDATE deep_research_runs
+SET status = 'failed', completed_at = NOW()
+WHERE status = 'active'
+  AND started_at < $1
+`
+
+// Runs still active long after any run could have finished: their connection
+// was lost without the run being completed (for example a restart).
+func (q *Queries) FailStaleDeepResearchRuns(ctx context.Context, startedBefore time.Time) (int64, error) {
+	result, err := q.db.ExecContext(ctx, failStaleDeepResearchRuns, startedBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getActiveDeepResearchRun = `-- name: GetActiveDeepResearchRun :one
@@ -94,27 +130,45 @@ func (q *Queries) GetDeepResearchRunCountForChat(ctx context.Context, arg GetDee
 const getUserDeepResearchRunsLifetime = `-- name: GetUserDeepResearchRunsLifetime :one
 SELECT COUNT(*) as run_count
 FROM deep_research_runs
-WHERE user_id = $1
-  AND status IN ('completed', 'active')
+WHERE user_id = ANY($1::text[])
+  AND NOT (status = 'failed' AND completed_at IS NOT NULL AND completed_at < started_at + INTERVAL '60 seconds')
 `
 
-func (q *Queries) GetUserDeepResearchRunsLifetime(ctx context.Context, userID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserDeepResearchRunsLifetime, userID)
+func (q *Queries) GetUserDeepResearchRunsLifetime(ctx context.Context, userIds []string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserDeepResearchRunsLifetime, pq.Array(userIds))
+	var run_count int64
+	err := row.Scan(&run_count)
+	return run_count, err
+}
+
+const getUserDeepResearchRunsThisWeek = `-- name: GetUserDeepResearchRunsThisWeek :one
+SELECT COUNT(*) as run_count
+FROM deep_research_runs
+WHERE user_id = ANY($1::text[])
+  AND run_date >= DATE_TRUNC('week', CURRENT_DATE)::date
+  AND NOT (status = 'failed' AND completed_at IS NOT NULL AND completed_at < started_at + INTERVAL '60 seconds')
+`
+
+func (q *Queries) GetUserDeepResearchRunsThisWeek(ctx context.Context, userIds []string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserDeepResearchRunsThisWeek, pq.Array(userIds))
 	var run_count int64
 	err := row.Scan(&run_count)
 	return run_count, err
 }
 
 const getUserDeepResearchRunsToday = `-- name: GetUserDeepResearchRunsToday :one
+
 SELECT COUNT(*) as run_count
 FROM deep_research_runs
-WHERE user_id = $1
+WHERE user_id = ANY($1::text[])
   AND run_date = CURRENT_DATE
-  AND status IN ('completed', 'active')
+  AND NOT (status = 'failed' AND completed_at IS NOT NULL AND completed_at < started_at + INTERVAL '60 seconds')
 `
 
-func (q *Queries) GetUserDeepResearchRunsToday(ctx context.Context, userID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserDeepResearchRunsToday, userID)
+// A run counts toward the allowance whatever its outcome, unless it failed within
+// a minute of starting (the backend refused or broke before doing work).
+func (q *Queries) GetUserDeepResearchRunsToday(ctx context.Context, userIds []string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserDeepResearchRunsToday, pq.Array(userIds))
 	var run_count int64
 	err := row.Scan(&run_count)
 	return run_count, err
@@ -124,13 +178,13 @@ const hasActiveDeepResearchRun = `-- name: HasActiveDeepResearchRun :one
 SELECT EXISTS(
     SELECT 1
     FROM deep_research_runs
-    WHERE user_id = $1
+    WHERE user_id = ANY($1::text[])
       AND status = 'active'
 ) as has_active
 `
 
-func (q *Queries) HasActiveDeepResearchRun(ctx context.Context, userID string) (bool, error) {
-	row := q.db.QueryRowContext(ctx, hasActiveDeepResearchRun, userID)
+func (q *Queries) HasActiveDeepResearchRun(ctx context.Context, userIds []string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, hasActiveDeepResearchRun, pq.Array(userIds))
 	var has_active bool
 	err := row.Scan(&has_active)
 	return has_active, err
