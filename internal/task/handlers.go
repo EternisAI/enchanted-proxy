@@ -63,6 +63,17 @@ func (h *Handler) CreateTask(c *gin.Context) {
 			errors.BadRequest(c, "Invalid chat_id", nil)
 			return
 		}
+		var invalid *ValidationError
+		if stderrors.As(err, &invalid) {
+			errors.BadRequest(c, invalid.Message, nil)
+			return
+		}
+		var limit *LimitError
+		if stderrors.As(err, &limit) {
+			errors.AbortWithForbidden(c, errors.NewForbiddenError(errors.ReasonTaskLimit, limit.Message, limit.Message,
+				limit.Tier, map[string]interface{}{"limit": limit.Reason}))
+			return
+		}
 		log.Error("failed to create task",
 			slog.String("error", err.Error()),
 			slog.String("user_id", userID))

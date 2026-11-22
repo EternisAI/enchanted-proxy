@@ -13,8 +13,13 @@ import (
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 )
+
+// scheduleCatchupWindow is how late a schedule may still take an action it
+// missed while Temporal was unavailable.
+const scheduleCatchupWindow = 5 * time.Minute
 
 // ErrInvalidChatID is returned when a task's chat ID is malformed.
 var ErrInvalidChatID = errors.New("invalid chat_id")
@@ -22,13 +27,16 @@ var ErrInvalidChatID = errors.New("invalid chat_id")
 // Service handles task scheduling operations.
 type Service struct {
 	temporalClient client.Client
-	queries        *pgdb.Queries
+	queries        pgdb.Querier
 	logger         *logger.Logger
 	namespace      string
+	tierLookup     TierLookup
+	groups         GroupLookup
 }
 
-// NewService creates a new task service.
-func NewService(endpoint, namespace, apiKey string, queries *pgdb.Queries, logger *logger.Logger) (*Service, error) {
+// NewService creates a new task service. tierLookup and groups supply the plan
+// limits applied when a task is created.
+func NewService(endpoint, namespace, apiKey string, queries pgdb.Querier, tierLookup TierLookup, groups GroupLookup, logger *logger.Logger) (*Service, error) {
 	log := logger.WithComponent("task-service")
 
 	if endpoint == "" || namespace == "" || apiKey == "" {
@@ -68,6 +76,8 @@ func NewService(endpoint, namespace, apiKey string, queries *pgdb.Queries, logge
 		queries:        queries,
 		logger:         logger,
 		namespace:      namespace,
+		tierLookup:     tierLookup,
+		groups:         groups,
 	}, nil
 }
 
@@ -105,6 +115,11 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 	if req.Time == "" {
 		log.Error("time is empty")
 		return nil, fmt.Errorf("time cannot be empty")
+	}
+
+	if err := s.checkCreationLimits(ctx, userID, req, time.Now()); err != nil {
+		log.Warn("refusing task", slog.String("error", err.Error()))
+		return nil, err
 	}
 
 	// Generate a unique task ID
@@ -188,6 +203,12 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 			Args:      []interface{}{workflowInput},
 			TaskQueue: "task-queue",
 		},
+		// A run still going when the next is due is skipped, and runs missed while
+		// Temporal was unavailable are not replayed after a few minutes.
+		Overlap:       enumspb.SCHEDULE_OVERLAP_POLICY_SKIP,
+		CatchupWindow: scheduleCatchupWindow,
+		// The owner, so sweeps of the schedules do not need the database.
+		Memo: map[string]interface{}{"user_id": userID},
 	}
 
 	log.Info("creating temporal schedule",
@@ -233,6 +254,10 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 			UserID: userID,
 		})
 		return nil, fmt.Errorf("failed to update task status: %w", err)
+	}
+
+	if err := s.queries.RecordTaskCreation(ctx, pgdb.RecordTaskCreationParams{UserID: userID, TaskID: taskID}); err != nil {
+		log.Error("failed to record task creation", slog.String("error", err.Error()), slog.String("task_id", taskID))
 	}
 
 	task := &Task{
