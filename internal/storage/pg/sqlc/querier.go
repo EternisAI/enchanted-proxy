@@ -17,6 +17,7 @@ type Querier interface {
 	CompleteDeepResearchRun(ctx context.Context, arg CompleteDeepResearchRunParams) error
 	CountInviteCodesByRedeemedBy(ctx context.Context, redeemedBy *string) (int64, error)
 	CountProblemReportsByUserID(ctx context.Context, userID string) (int64, error)
+	CountTaskCreationsSince(ctx context.Context, arg CountTaskCreationsSinceParams) (int64, error)
 	CreateDeepResearchRun(ctx context.Context, arg CreateDeepResearchRunParams) (int64, error)
 	CreateFaiPaymentIntent(ctx context.Context, arg CreateFaiPaymentIntentParams) error
 	CreateInviteCode(ctx context.Context, arg CreateInviteCodeParams) (InviteCode, error)
@@ -75,9 +76,12 @@ type Querier interface {
 	GetZcashInvoiceForUser(ctx context.Context, arg GetZcashInvoiceForUserParams) (ZcashInvoice, error)
 	GetZcashInvoicesByUserAndStatus(ctx context.Context, arg GetZcashInvoicesByUserAndStatusParams) ([]ZcashInvoice, error)
 	HasActiveDeepResearchRun(ctx context.Context, userID string) (bool, error)
+	// Tasks that may still run, for the limit checks: the caller's quota group.
+	ListOpenTasksForUsers(ctx context.Context, userIds []string) ([]ListOpenTasksForUsersRow, error)
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
 	MarkAllMessagesAsSent(ctx context.Context, sessionID string) error
 	MarkMessageAsSent(ctx context.Context, id string) error
+	RecordTaskCreation(ctx context.Context, arg RecordTaskCreationParams) error
 	ResetInviteCode(ctx context.Context, codeHash string) error
 	SoftDeleteInviteCode(ctx context.Context, id int64) error
 	UpdateDeepResearchRunTokens(ctx context.Context, arg UpdateDeepResearchRunTokensParams) error

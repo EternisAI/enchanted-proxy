@@ -128,6 +128,13 @@ type Task struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+type TaskCreation struct {
+	ID        int64     `json:"id"`
+	UserID    string    `json:"userId"`
+	TaskID    string    `json:"taskId"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 type TelegramChat struct {
 	ID        int64     `json:"id"`
 	ChatID    int64     `json:"chatId"`
