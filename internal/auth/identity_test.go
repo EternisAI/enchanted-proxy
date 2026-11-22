@@ -166,3 +166,23 @@ func TestIdentityLogValueOmitsEmail(t *testing.T) {
 		t.Errorf("log line lacks the non-personal facts: %s", out)
 	}
 }
+
+func TestIdentityLogValueOmitsEmailUsedAsUserID(t *testing.T) {
+	v, err := NewTokenValidator("") // development mode
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := v.ExtractIdentity(signedTestToken(t, jwt.MapClaims{"email": "only@example.com"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.UserID != "only@example.com" {
+		t.Fatalf("UserID = %q, want the email (sub, user_id, email order)", id.UserID)
+	}
+
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("caller", slog.Any("identity", id))
+	if out := buf.String(); strings.Contains(out, "only@example.com") || strings.Contains(out, "@") {
+		t.Errorf("log line contains the email: %s", out)
+	}
+}

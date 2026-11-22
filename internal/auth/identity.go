@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"slices"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -53,10 +54,16 @@ func (i Identity) VerifiedEmail() (string, bool) {
 	return i.Email, true
 }
 
-// LogValue keeps the email address out of logs when an Identity is logged.
+// LogValue keeps the email address out of logs when an Identity is logged. A
+// token with no sub or user_id claim uses the email as the user ID, so a user ID
+// that looks like an email is left out too.
 func (i Identity) LogValue() slog.Value {
+	userID := i.UserID
+	if strings.Contains(userID, "@") || (i.Email != "" && userID == i.Email) {
+		userID = "[email]"
+	}
 	return slog.GroupValue(
-		slog.String("user_id", i.UserID),
+		slog.String("user_id", userID),
 		slog.String("sign_in_provider", i.SignInProvider),
 		slog.Bool("has_email", i.Email != ""),
 		slog.Bool("email_verified", i.EmailVerified),
