@@ -51,6 +51,14 @@ type Config struct {
 	DeepResearchTokenCap          int `json:"deep_research_token_cap"`           // Per-run token cap (GLM-4.6 tokens)
 	DeepResearchMaxActiveSessions int `json:"deep_research_max_active_sessions"` // Max concurrent deep research jobs
 
+	// Scheduled task limits, counted over the account's quota group. Paused
+	// tasks do not count. Values sit at or above what real users have used.
+	TaskMaxActiveRecurring int           `json:"task_max_active_recurring"` // Active recurring tasks
+	TaskMinInterval        time.Duration `json:"task_min_interval"`         // Shortest gap between two runs of one task
+	TaskMaxRunsPerDay      int           `json:"task_max_runs_per_day"`     // Scheduled runs per day across all recurring tasks
+	TaskMaxPendingOneTime  int           `json:"task_max_pending_one_time"` // One-time tasks that have not run yet
+	TaskMaxCreatedPerDay   int           `json:"task_max_created_per_day"`  // Tasks created in any 24 hours, deleted ones included
+
 	// Allowed features (features available for this tier, empty = all allowed)
 	AllowedFeatures []Feature `json:"allowed_features"` // Features allowed for this tier (empty = all allowed)
 }
@@ -89,6 +97,11 @@ var Configs = map[Tier]Config{
 		DeepResearchLifetimeRuns:      1, // 1 lifetime run
 		DeepResearchTokenCap:          8_000,
 		DeepResearchMaxActiveSessions: 1,
+		TaskMaxActiveRecurring:        10,
+		TaskMinInterval:               time.Hour,
+		TaskMaxRunsPerDay:             25,
+		TaskMaxPendingOneTime:         20,
+		TaskMaxCreatedPerDay:          40,
 		// Free tier does NOT have document upload feature
 		AllowedFeatures: []Feature{}, // No special features
 	},
@@ -105,6 +118,11 @@ var Configs = map[Tier]Config{
 		DeepResearchLifetimeRuns:      0,          // Check daily only
 		DeepResearchTokenCap:          10_000,
 		DeepResearchMaxActiveSessions: 0, // Unlimited concurrent
+		TaskMaxActiveRecurring:        25,
+		TaskMinInterval:               15 * time.Minute,
+		TaskMaxRunsPerDay:             100,
+		TaskMaxPendingOneTime:         20,
+		TaskMaxCreatedPerDay:          40,
 		AllowedFeatures:               []Feature{},
 	},
 	TierPro: {
@@ -120,6 +138,11 @@ var Configs = map[Tier]Config{
 		DeepResearchLifetimeRuns:      0, // Check daily only
 		DeepResearchTokenCap:          10_000,
 		DeepResearchMaxActiveSessions: 0, // 0 = unlimited concurrent sessions
+		TaskMaxActiveRecurring:        50,
+		TaskMinInterval:               5 * time.Minute,
+		TaskMaxRunsPerDay:             200,
+		TaskMaxPendingOneTime:         50,
+		TaskMaxCreatedPerDay:          40,
 		AllowedFeatures:               []Feature{FeatureDocumentUpload},
 	},
 }
