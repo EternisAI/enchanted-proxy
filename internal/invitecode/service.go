@@ -58,32 +58,6 @@ func (s *Service) GetInviteCodeByCode(code string) (*pgdb.InviteCode, error) {
 func (s *Service) UseInviteCode(code string, userID string) error {
 	ctx := context.Background()
 
-	// Check if invite code ends with "-eternis" for special whitelisting
-	isEternisCode := len(code) > 8 && code[len(code)-8:] == "-eternis"
-
-	if isEternisCode {
-		// Create a special eternis code
-		generatedCode, codeHash, err := SetCodeAndHash()
-		if err != nil {
-			return err
-		}
-
-		now := time.Now()
-		_, err = s.CreateInviteCode(
-			generatedCode, // Use the generated code, not the original
-			codeHash,
-			nil,     // bound_email
-			0,       // created_by
-			true,    // is_used
-			&userID, // redeemed_by
-			&now,    // redeemed_at
-			nil,     // expires_at
-			true,    // is_active
-		)
-		return err
-	}
-
-	// For regular codes, follow normal flow
 	inviteCode, err := s.GetInviteCodeByCode(code)
 	if err != nil {
 		return err
@@ -119,11 +93,6 @@ func (s *Service) UseInviteCode(code string, userID string) error {
 	return s.queries.UpdateInviteCodeUsage(ctx, params)
 }
 
-func (s *Service) DeleteInviteCode(id int64) error {
-	ctx := context.Background()
-	return s.queries.SoftDeleteInviteCode(ctx, id)
-}
-
 func (s *Service) IsUserWhitelisted(userID string) (bool, error) {
 	ctx := context.Background()
 
@@ -133,10 +102,4 @@ func (s *Service) IsUserWhitelisted(userID string) (bool, error) {
 	}
 
 	return count > 0, nil
-}
-
-func (s *Service) ResetInviteCode(code string) error {
-	ctx := context.Background()
-	codeHash := HashCode(code)
-	return s.queries.ResetInviteCode(ctx, codeHash)
 }

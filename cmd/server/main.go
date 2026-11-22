@@ -755,8 +755,6 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		{
 			invites.GET("/:userID/whitelist", input.inviteCodeHandler.CheckUserWhitelist)
 			invites.POST("/:code/redeem", input.inviteCodeHandler.RedeemInviteCode)
-			invites.GET("/reset/:code", input.inviteCodeHandler.ResetInviteCode)
-			invites.DELETE("/:id", input.inviteCodeHandler.DeleteInviteCode)
 		}
 
 		// Rate limiting routes (protected)
