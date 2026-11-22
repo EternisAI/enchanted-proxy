@@ -1,0 +1,183 @@
+name: GitOps deploy
+description: >
+  Pick the target environment from the triggering ref, dispatch the
+  enchanted-proxy deploy pipeline in gitops-apps for one component, then BLOCK
+  until that run completes and mirror its conclusion. The calling job succeeds
+  only if the downstream deploy (commit the pin, package the tenant OCI
+  artifact, Flux reconcile) succeeded.
+
+  Environments: branch main -> dev, staging -> staging, production ->
+  production, and a vX.Y.Z tag -> production. Any other ref deploys nothing
+  (the step succeeds with a notice). gitops-apps checks the same mapping on its
+  side.
+
+  CORRELATION. `gh workflow run` does not return the id of the run it starts,
+  so this finds it by its run-name, which embeds the environment, the component
+  and the commit-unique tag ("Deploy enchanted-proxy/dev server (sha-abc1234)
+  from main by @user"), among workflow_dispatch runs newer than the newest run
+  that existed before the dispatch. If the run-name format changes, correlation
+  fails loudly at the find timeout rather than passing silently.
+
+  Adapted from axion_marketplace's .github/actions/gitops-dispatch.
+
+inputs:
+  github-token:
+    description: >
+      Token with Actions read and write on `repo`: dispatches the workflow, then
+      lists and reads the resulting run.
+    required: true
+  component:
+    description: Component to pin (server or llm-prober); also the run-name label.
+    required: true
+  tag:
+    description: Image tag to deploy (sha-<short> or vX.Y.Z).
+    required: true
+  digest:
+    description: Image digest to deploy (sha256:...).
+    required: true
+  repo:
+    description: owner/name of the gitops repository hosting the deploy workflow.
+    required: false
+    default: EternisAI/gitops-apps
+  workflow:
+    description: Workflow file (basename) in `repo` to dispatch and watch.
+    required: false
+    default: enchanted-proxy.yaml
+  ref:
+    description: Branch of `repo` to dispatch on (and to filter runs by).
+    required: false
+    default: main
+  find-timeout:
+    description: Seconds to wait for the dispatched run to appear.
+    required: false
+    default: "180"
+  run-timeout:
+    description: >
+      Seconds to wait for the dispatched run to complete. Generous: pin commits
+      are serialized across gitops-apps, and each Flux reconcile may take up to
+      10 minutes.
+    required: false
+    default: "2400"
+
+runs:
+  using: composite
+  steps:
+  - name: Dispatch and watch
+    shell: bash
+    env:
+      GH_TOKEN: ${{ inputs.github-token }}
+      REPO: ${{ inputs.repo }}
+      WORKFLOW: ${{ inputs.workflow }}
+      REF: ${{ inputs.ref }}
+      COMPONENT: ${{ inputs.component }}
+      TAG: ${{ inputs.tag }}
+      DIGEST: ${{ inputs.digest }}
+      ACTOR: ${{ github.actor }}
+      ACTOR_ID: ${{ github.actor_id }}
+      REF_TYPE: ${{ github.ref_type }}
+      REF_NAME: ${{ github.ref_name }}
+      FIND_TIMEOUT: ${{ inputs.find-timeout }}
+      RUN_TIMEOUT: ${{ inputs.run-timeout }}
+    run: |
+      set -euo pipefail
+
+      environment=""
+      case "${REF_TYPE}:${REF_NAME}" in
+        branch:main) environment=dev ;;
+        branch:staging) environment=staging ;;
+        branch:production) environment=production ;;
+        tag:*) [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && environment=production ;;
+      esac
+      if [ -z "$environment" ]; then
+        echo "::notice::No environment deploys from ${REF_TYPE} '${REF_NAME}'; nothing was deployed."
+        exit 0
+      fi
+
+      if [ -z "$GH_TOKEN" ]; then
+        echo "::error::No token for ${REPO}; nothing was deployed."; exit 1
+      fi
+
+      # Bound every gh call so a hung request fails inside the deadline checks.
+      # err_file keeps each call's stderr so a permission or repository error is
+      # reported, distinct from a run that has not appeared yet.
+      GH_CALL_TIMEOUT=60
+      err_file="$(mktemp)"
+
+      MATCH="enchanted-proxy/${environment} ${COMPONENT} (${TAG})"
+
+      # The newest existing run id, taken BEFORE dispatching: the dispatched run
+      # gets a larger one. This excludes an earlier run of the same tag (a
+      # re-run of this commit), and unlike a timestamp it is immune to clock
+      # skew. A failed list stops here, before anything is dispatched.
+      if ! before_id="$(timeout "$GH_CALL_TIMEOUT" gh run list --repo "$REPO" --workflow "$WORKFLOW" \
+          --event workflow_dispatch --branch "$REF" --limit 60 \
+          --json databaseId --jq 'map(.databaseId) | max // 0' 2>"$err_file")" \
+          || ! [[ "$before_id" =~ ^[0-9]+$ ]]; then
+        echo "::error::Could not list ${WORKFLOW} runs in ${REPO}, so nothing was dispatched."
+        [ -s "$err_file" ] && echo "::error::gh error: $(cat "$err_file")"
+        exit 1
+      fi
+
+      echo "Dispatching ${WORKFLOW} in ${REPO} (${MATCH})…"
+      timeout "$GH_CALL_TIMEOUT" gh workflow run "$WORKFLOW" \
+        --repo "$REPO" --ref "$REF" \
+        --field environment="$environment" \
+        --field components="${COMPONENT} ${TAG} ${DIGEST}" \
+        --field label="$COMPONENT" \
+        --field tag="$TAG" \
+        --field actor="$ACTOR" \
+        --field actor_id="$ACTOR_ID" \
+        --field ref_type="$REF_TYPE" \
+        --field ref_name="$REF_NAME"
+
+      echo "Looking for the dispatched run (run-name containing '${MATCH}')…"
+      run_id=""; last_err=""
+      find_deadline=$(( $(date +%s) + FIND_TIMEOUT ))
+      while :; do
+        if runs="$(timeout "$GH_CALL_TIMEOUT" gh run list --repo "$REPO" --workflow "$WORKFLOW" \
+            --event workflow_dispatch --branch "$REF" --limit 60 \
+            --json databaseId,displayTitle 2>"$err_file")"; then
+          last_err=""
+          run_id="$(jq -r --argjson before_id "$before_id" --arg match "$MATCH" \
+            '[.[] | select(.databaseId > $before_id) | select(.displayTitle | contains($match))]
+             | sort_by(.databaseId) | last | .databaseId // empty' <<<"$runs")"
+          [ -n "$run_id" ] && break
+        else
+          last_err="$(cat "$err_file")"
+        fi
+        if [ "$(date +%s)" -ge "$find_deadline" ]; then
+          echo "::error::Could not find the dispatched ${WORKFLOW} run within ${FIND_TIMEOUT}s (no workflow_dispatch run newer than run ${before_id} with a run-name containing '${MATCH}')."
+          [ -n "$last_err" ] && echo "::error::last gh error: ${last_err}"
+          exit 1
+        fi
+        sleep 5
+      done
+
+      run_url="$(timeout "$GH_CALL_TIMEOUT" gh run view "$run_id" --repo "$REPO" --json url --jq '.url' 2>/dev/null || true)"
+      echo "Dispatched run: ${run_url:-run ${run_id}}; waiting for it to complete (up to ${RUN_TIMEOUT}s)."
+
+      run_deadline=$(( $(date +%s) + RUN_TIMEOUT ))
+      status=""; conclusion=""; last_err=""
+      while :; do
+        if view="$(timeout "$GH_CALL_TIMEOUT" gh run view "$run_id" --repo "$REPO" --json status,conclusion 2>"$err_file")"; then
+          last_err=""
+          status="$(jq -r '.status // ""' <<<"$view")"
+          conclusion="$(jq -r '.conclusion // ""' <<<"$view")"
+          if [ "$status" = completed ]; then
+            if [ "$conclusion" = success ]; then
+              echo "Deploy to ${environment} succeeded (${run_url:-run ${run_id}})."
+              exit 0
+            fi
+            echo "::error::Deploy to ${environment} concluded '${conclusion}': see ${run_url:-run ${run_id}}."
+            exit 1
+          fi
+        else
+          last_err="$(cat "$err_file")"
+        fi
+        if [ "$(date +%s)" -ge "$run_deadline" ]; then
+          echo "::error::Timed out after ${RUN_TIMEOUT}s waiting for the deploy (last status: ${status:-unknown}). It may still be running: see ${run_url:-run ${run_id}}."
+          [ -n "$last_err" ] && echo "::error::last gh error: ${last_err}"
+          exit 1
+        fi
+        sleep 15
+      done

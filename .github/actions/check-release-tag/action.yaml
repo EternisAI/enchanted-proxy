@@ -1,0 +1,52 @@
+name: Check release tag
+description: >
+  Fail unless the checked-out tag is a release tag (vX.Y.Z) whose commit is
+  already on the production branch. A release tag deploys to production, so it
+  may only name (or roll back to) something that has been on production;
+  otherwise a tag on an unreviewed commit would be built and deployed.
+
+# Needs the tag checked out in the workspace and a token that can read the
+# repository's contents (the job's GITHUB_TOKEN with contents: read).
+
+inputs:
+  github-token:
+    description: Token with contents:read on this repository.
+    required: true
+  production-branch:
+    description: Branch the tagged commit must be on.
+    required: false
+    default: production
+
+runs:
+  using: composite
+  steps:
+  - name: Check release tag
+    shell: bash
+    env:
+      GH_TOKEN: ${{ inputs.github-token }}
+      REF_TYPE: ${{ github.ref_type }}
+      REF_NAME: ${{ github.ref_name }}
+      BRANCH: ${{ inputs.production-branch }}
+    run: |
+      set -euo pipefail
+      if [ "$REF_TYPE" != tag ]; then
+        echo "::error::not a tag run (${REF_TYPE} '${REF_NAME}')"; exit 1
+      fi
+      if [[ ! "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "::error::'${REF_NAME}' is not a release tag (expected vX.Y.Z)"; exit 1
+      fi
+
+      # The commit the tag points to, as checked out (this also peels an
+      # annotated tag).
+      commit="$(git rev-parse HEAD)"
+
+      # compare/<commit>...<branch> reports "identical" or "ahead" exactly when
+      # the commit is an ancestor of the branch tip.
+      status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${commit}...${BRANCH}" --jq .status)"
+      case "$status" in
+        identical|ahead)
+          echo "${REF_NAME} (${commit}) is on ${BRANCH}" ;;
+        *)
+          echo "::error::${REF_NAME} points to ${commit}, which is not on ${BRANCH} (compare status: ${status:-unknown})"
+          exit 1 ;;
+      esac
