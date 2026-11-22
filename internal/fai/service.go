@@ -99,8 +99,8 @@ const (
 	replayBatchBlocks            = 500
 	settlementRetryCheckInterval = time.Minute
 
-	// paymentIntentLifetime matches the expiry worker's query: a pending intent
-	// older than this is marked expired.
+	// paymentIntentLifetime matches the expiry worker's query and the claim
+	// query: a payment is accepted only within this long of the intent's creation.
 	paymentIntentLifetime = 24 * time.Hour
 )
 
@@ -507,30 +507,29 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 		return retryable(fmt.Errorf("failed to query payment intent: %w", err))
 	}
 
-	// An intent can be settled while pending, or after the expiry worker retired it
-	// if the payment was made before the deadline: settlement may lag the payment
-	// (retries, listener downtime), and a payment made in time is owed. A payment
-	// made after the deadline is not credited, since the price was locked at creation.
-	allowExpired := false
-	switch intent.Status {
-	case "pending":
-	case "expired":
-		paidAt, err := s.blockTime(ctx, vLog.BlockNumber)
-		if err != nil {
-			return retryable(fmt.Errorf("failed to read payment block time: %w", err))
-		}
-		deadline := intent.CreatedAt.Add(paymentIntentLifetime)
-		if !paidAt.Before(deadline) {
-			s.logger.Warn("payment made after its intent expired; not credited",
-				"payment_id", paymentIDHex, "paid_at", paidAt, "deadline", deadline, "tx_hash", vLog.TxHash.Hex())
-			return fmt.Errorf("payment %s made after its intent expired", paymentIDHex)
-		}
-		s.logger.Warn("settling an expired intent whose payment was made in time",
-			"payment_id", paymentIDHex, "paid_at", paidAt, "deadline", deadline)
-		allowExpired = true
-	default:
+	if intent.Status != "pending" && intent.Status != "expired" {
 		s.logger.Info("payment intent already settled, skipping", "payment_id", paymentIDHex, "status", intent.Status)
 		return nil
+	}
+
+	// A payment is credited when it was made while its intent was open, whatever
+	// the intent's status is now: settlement can lag the payment (retries, listener
+	// downtime) and the expiry worker may have retired the intent meanwhile. A
+	// payment made after the deadline is not credited, since the price was locked
+	// at creation. The claim below enforces the same rule in the database.
+	paidAt, err := s.blockTime(ctx, vLog.BlockNumber)
+	if err != nil {
+		return retryable(fmt.Errorf("failed to read payment block time: %w", err))
+	}
+	deadline := intent.CreatedAt.Add(paymentIntentLifetime)
+	if !paidAt.Before(deadline) {
+		s.logger.Warn("payment made after its intent expired; not credited",
+			"payment_id", paymentIDHex, "paid_at", paidAt, "deadline", deadline, "tx_hash", vLog.TxHash.Hex())
+		return fmt.Errorf("payment %s made after its intent expired", paymentIDHex)
+	}
+	if intent.Status == "expired" {
+		s.logger.Warn("settling an expired intent whose payment was made in time",
+			"payment_id", paymentIDHex, "paid_at", paidAt, "deadline", deadline)
 	}
 
 	tokenConfig, exists := s.tokenConfigs[tokenAddress.Hex()]
@@ -591,7 +590,7 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 		TokenAmount:  sql.NullFloat64{Float64: tokenAmountFloat, Valid: true},
 		PaidBlock:    sql.NullInt64{Int64: int64(vLog.BlockNumber), Valid: true},
 		TxHash:       &txHash,
-		AllowExpired: allowExpired,
+		PaymentTime:  paidAt,
 	})
 	if err != nil {
 		return retryable(err)

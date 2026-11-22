@@ -89,6 +89,7 @@ func claimParams(intent pgdb.FaiPaymentIntent) pgdb.UpdateFaiPaymentIntentToComp
 		TokenAmount:  sql.NullFloat64{Float64: 499, Valid: true},
 		PaidBlock:    sql.NullInt64{Int64: 1, Valid: true},
 		TxHash:       &tx,
+		PaymentTime:  intent.CreatedAt.Add(time.Minute),
 	}
 }
 
@@ -253,6 +254,7 @@ func paymentEvent(t *testing.T, svc *Service) (types.Log, string) {
 	copy(data[44:64], token.Bytes())
 	amount := new(big.Int).Mul(big.NewInt(500), new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil))
 	amount.FillBytes(data[64:96])
+	svc.chain = &fakeChain{blockTimes: map[uint64]time.Time{1: time.Now()}}
 	return types.Log{
 		Topics:      []common.Hash{svc.eventSignature},
 		Data:        data,
@@ -315,23 +317,30 @@ func TestUnderpaymentIsNotRetried(t *testing.T) {
 	}
 }
 
-// An intent the expiry worker retired is still settled when its payment was made
-// before the deadline, and refused when it was made after.
-func TestExpiredIntentSettlesOnlyIfPaidInTime(t *testing.T) {
+// A payment is credited when it was made before its intent's deadline and refused
+// when made after, whether the expiry worker has already retired the intent or not.
+func TestPaymentDeadlineAppliesWhateverTheIntentStatus(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
+		status   string
 		paidLate bool
-	}{{"paid in time", false}, {"paid late", true}} {
-		t.Run(tc.name, func(t *testing.T) {
+	}{
+		{"pending", false}, {"pending", true},
+		{"expired", false}, {"expired", true},
+	} {
+		name := tc.status + "/in time"
+		if tc.paidLate {
+			name = tc.status + "/late"
+		}
+		t.Run(name, func(t *testing.T) {
 			svc, db := newTestService(t)
 			ctx := context.Background()
-			userID := "fai-expired-" + uuid.NewString()
+			userID := "fai-deadline-" + uuid.NewString()
 			vLog, paymentID := paymentEvent(t, svc)
 			seedIntentWithPaymentID(t, db, userID, paymentID)
 
 			createdAt := time.Now().Add(-25 * time.Hour).Truncate(time.Second)
-			if _, err := db.Exec(`UPDATE fai_payment_intents SET status = 'expired', created_at = $2 WHERE payment_id = $1`,
-				paymentID, createdAt); err != nil {
+			if _, err := db.Exec(`UPDATE fai_payment_intents SET status = $2, created_at = $3 WHERE payment_id = $1`,
+				paymentID, tc.status, createdAt); err != nil {
 				t.Fatal(err)
 			}
 			paidAt := createdAt.Add(23 * time.Hour)
@@ -345,8 +354,8 @@ func TestExpiredIntentSettlesOnlyIfPaidInTime(t *testing.T) {
 			_, granted := readExpiry(t, db, userID)
 			status := readStatus(t, db, paymentID)
 			if tc.paidLate {
-				if granted || status != "expired" {
-					t.Fatalf("late payment: granted=%v status=%q, want no grant and expired", granted, status)
+				if granted || status != tc.status {
+					t.Fatalf("late payment: granted=%v status=%q, want no grant and %s", granted, status, tc.status)
 				}
 			} else if !granted || status != "completed" {
 				t.Fatalf("payment in time: granted=%v status=%q, want a grant and completed", granted, status)
@@ -355,5 +364,46 @@ func TestExpiredIntentSettlesOnlyIfPaidInTime(t *testing.T) {
 				t.Fatalf("queued retries = %d, want 0", svc.retries.len())
 			}
 		})
+	}
+}
+
+// The expiry worker can retire the intent between the handler's read and its claim.
+// The claim does not depend on the status that was read, so the payment still settles.
+func TestClaimSucceedsWhenIntentExpiresAfterItWasRead(t *testing.T) {
+	svc, db := newTestService(t)
+	ctx := context.Background()
+	userID := "fai-raced-" + uuid.NewString()
+	intent := seedIntent(t, db, userID) // read while pending
+	if _, err := db.Exec(`UPDATE fai_payment_intents SET status = 'expired' WHERE payment_id = $1`, intent.PaymentID); err != nil {
+		t.Fatal(err)
+	}
+
+	claimed, err := svc.settlePayment(ctx, intent, svc.GetProduct(ProductWeeklyPro), claimParams(intent))
+	if err != nil || !claimed {
+		t.Fatalf("claimed=%v err=%v, want true, nil", claimed, err)
+	}
+	if s := readStatus(t, db, intent.PaymentID); s != "completed" {
+		t.Fatalf("status = %q, want completed", s)
+	}
+	if _, ok := readExpiry(t, db, userID); !ok {
+		t.Fatal("no entitlement")
+	}
+}
+
+// The database refuses a claim for a payment made after the deadline, even if the
+// caller did not check.
+func TestClaimRefusesPaymentAfterDeadline(t *testing.T) {
+	svc, db := newTestService(t)
+	userID := "fai-lateclaim-" + uuid.NewString()
+	intent := seedIntent(t, db, userID)
+	params := claimParams(intent)
+	params.PaymentTime = intent.CreatedAt.Add(24*time.Hour + time.Second)
+
+	claimed, err := svc.settlePayment(context.Background(), intent, svc.GetProduct(ProductWeeklyPro), params)
+	if err != nil || claimed {
+		t.Fatalf("claimed=%v err=%v, want false, nil", claimed, err)
+	}
+	if _, ok := readExpiry(t, db, userID); ok {
+		t.Fatal("entitlement granted for a late payment")
 	}
 }

@@ -8,6 +8,7 @@ package pgdb
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 const createFaiPaymentIntent = `-- name: CreateFaiPaymentIntent :exec
@@ -150,7 +151,8 @@ SET status = 'completed',
     paid_at = NOW(),
     updated_at = NOW()
 WHERE payment_id = $5
-  AND (status = 'pending' OR (status = 'expired' AND $6::bool))
+  AND status IN ('pending', 'expired')
+  AND created_at > $6::timestamptz - INTERVAL '24 hours'
 `
 
 type UpdateFaiPaymentIntentToCompletedParams struct {
@@ -159,13 +161,16 @@ type UpdateFaiPaymentIntentToCompletedParams struct {
 	PaidBlock    sql.NullInt64   `json:"paidBlock"`
 	TxHash       *string         `json:"txHash"`
 	PaymentID    string          `json:"paymentId"`
-	AllowExpired bool            `json:"allowExpired"`
+	PaymentTime  time.Time       `json:"paymentTime"`
 }
 
-// Claims an intent. Each payment event is delivered to every replica and again by
-// the historical sync, so the caller grants only when this changed a row. An
-// expired intent is claimed only when allow_expired is set, which the caller does
-// after checking that the payment was made before the intent expired.
+// Claims an intent for a payment made at payment_time (its block time). Each
+// payment event is delivered to every replica and again by the historical sync,
+// so the caller grants only when this changed a row.
+// The intent must still be open for that payment: made within 24 hours of the
+// intent's creation, the lifetime the expiry query below enforces. Its status may
+// be pending or, if the expiry worker got there first, expired; checking both here
+// keeps the claim correct whatever the status was when the caller read it.
 func (q *Queries) UpdateFaiPaymentIntentToCompleted(ctx context.Context, arg UpdateFaiPaymentIntentToCompletedParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateFaiPaymentIntentToCompleted,
 		arg.TokenAddress,
@@ -173,7 +178,7 @@ func (q *Queries) UpdateFaiPaymentIntentToCompleted(ctx context.Context, arg Upd
 		arg.PaidBlock,
 		arg.TxHash,
 		arg.PaymentID,
-		arg.AllowExpired,
+		arg.PaymentTime,
 	)
 	if err != nil {
 		return 0, err

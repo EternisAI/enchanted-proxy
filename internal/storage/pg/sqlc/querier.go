@@ -81,10 +81,13 @@ type Querier interface {
 	ResetInviteCode(ctx context.Context, codeHash string) error
 	SoftDeleteInviteCode(ctx context.Context, id int64) error
 	UpdateDeepResearchRunTokens(ctx context.Context, arg UpdateDeepResearchRunTokensParams) error
-	// Claims an intent. Each payment event is delivered to every replica and again by
-	// the historical sync, so the caller grants only when this changed a row. An
-	// expired intent is claimed only when allow_expired is set, which the caller does
-	// after checking that the payment was made before the intent expired.
+	// Claims an intent for a payment made at payment_time (its block time). Each
+	// payment event is delivered to every replica and again by the historical sync,
+	// so the caller grants only when this changed a row.
+	// The intent must still be open for that payment: made within 24 hours of the
+	// intent's creation, the lifetime the expiry query below enforces. Its status may
+	// be pending or, if the expiry worker got there first, expired; checking both here
+	// keeps the claim correct whatever the status was when the caller read it.
 	UpdateFaiPaymentIntentToCompleted(ctx context.Context, arg UpdateFaiPaymentIntentToCompletedParams) (int64, error)
 	UpdateFaiPaymentIntentToExpired(ctx context.Context, id string) error
 	UpdateInviteCodeActive(ctx context.Context, arg UpdateInviteCodeActiveParams) error
