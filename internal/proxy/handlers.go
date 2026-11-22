@@ -558,8 +558,10 @@ func handleStreamingDirect(
 		log.Warn("X-Message-ID missing, generated fallback", slog.String("message_id", messageID))
 	}
 
-	// Extract user ID and encryption settings
+	// Extract user ID, identity and encryption settings. Read them here, not in the
+	// upstream goroutine below: it can outlive the handler, after which gin reuses c.
 	userID, _ := auth.GetUserID(c)
+	identity, hasIdentity := auth.GetIdentity(c)
 	var encryptionEnabled *bool
 	if val, exists := c.Get("encryptionEnabled"); exists {
 		if boolPtr, ok := val.(*bool); ok {
@@ -703,7 +705,7 @@ func handleStreamingDirect(
 		if userID != "" {
 			session.SetUserID(userID)
 		}
-		if identity, ok := auth.GetIdentity(c); ok {
+		if hasIdentity {
 			session.SetIdentity(identity)
 		}
 
