@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 )
 
@@ -65,8 +66,9 @@ type StreamSession struct {
 	// Identifiers
 	chatID    string
 	messageID string
-	userID    string // User ID for authentication (used by tools)
-	userIDMu  sync.RWMutex
+	userID    string        // User ID for authentication (used by tools)
+	identity  auth.Identity // Verified sign-in facts (used by tools)
+	userIDMu  sync.RWMutex  // Guards userID and identity
 
 	// Timing
 	startTime       time.Time
@@ -239,6 +241,15 @@ func (s *StreamSession) SetUserID(userID string) {
 	s.userID = userID
 }
 
+// SetIdentity stores the caller's verified Identity so tools can apply rules
+// that depend on how the account signed in.
+// Must be called before Start() for tools to see it.
+func (s *StreamSession) SetIdentity(identity auth.Identity) {
+	s.userIDMu.Lock()
+	defer s.userIDMu.Unlock()
+	s.identity = identity
+}
+
 // SetModel stores the model name for model-specific content filtering.
 // Must be called before Start() if GLM content filtering is desired.
 func (s *StreamSession) SetModel(model string) {
@@ -255,11 +266,13 @@ func (s *StreamSession) isGLMModel() bool {
 	return strings.Contains(model, "glm")
 }
 
-// getContextWithUserID returns a context derived from stopCtx with userID and chatID added.
+// getContextWithUserID returns a context derived from stopCtx with userID, the caller's
+// Identity and chatID added.
 // This is used internally for tool execution to provide authentication and session context.
 func (s *StreamSession) getContextWithUserID() context.Context {
 	s.userIDMu.RLock()
 	userID := s.userID
+	identity := s.identity
 	s.userIDMu.RUnlock()
 
 	ctx := s.stopCtx
@@ -267,6 +280,11 @@ func (s *StreamSession) getContextWithUserID() context.Context {
 	// Add userID to context for tool authentication
 	if userID != "" {
 		ctx = logger.WithUserID(ctx, userID)
+	}
+
+	// Add the verified sign-in facts for tools that depend on them
+	if identity.UserID != "" {
+		ctx = auth.WithIdentity(ctx, identity)
 	}
 
 	// Add chatID to context for tool session awareness

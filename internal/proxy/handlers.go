@@ -703,6 +703,9 @@ func handleStreamingDirect(
 		if userID != "" {
 			session.SetUserID(userID)
 		}
+		if identity, ok := auth.GetIdentity(c); ok {
+			session.SetIdentity(identity)
+		}
 
 		// CRITICAL: Stream directly, do NOT buffer with io.ReadAll
 		// Session reads from resp.Body in real-time and broadcasts chunks immediately
