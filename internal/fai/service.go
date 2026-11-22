@@ -370,7 +370,11 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to logs: %w", err)
 	}
-	defer func() { sub.Unsubscribe() }()
+	defer func() {
+		if sub != nil {
+			sub.Unsubscribe()
+		}
+	}()
 	s.logger.Info("subscribed to PaymentReceived events")
 
 	// The first start in this process replays the last 24 hours: settlement is
@@ -392,10 +396,12 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 		select {
 		case err := <-sub.Err():
 			s.logger.Error("subscription error, resubscribing", "error", err)
-			sub, err = s.subscribe(ctx, logs)
+			sub.Unsubscribe() // release the failed one; safe to repeat
+			next, err := s.subscribe(ctx, logs)
 			if err != nil {
 				return fmt.Errorf("failed to resubscribe: %w", err)
 			}
+			sub = next
 			s.logger.Info("resubscribed to PaymentReceived events")
 			if err := s.catchUp(ctx, resubscribeSyncBlocks); err != nil {
 				return err

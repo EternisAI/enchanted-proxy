@@ -2,19 +2,21 @@ package fai
 
 import (
 	"context"
-	"errors"
-	"log/slog"
 	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
 	"math/big"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/eternisai/enchanted-proxy/internal/logger"
+	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/eternisai/enchanted-proxy/internal/logger"
-	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 )
 
 func testLog(index uint) types.Log {
@@ -93,27 +95,45 @@ func TestHandlerClassifiesFailures(t *testing.T) {
 
 // fakeChain serves logs and block times; FilterLogs fails for the ranges listed in failFrom.
 type fakeChain struct {
-	mu         sync.Mutex
-	failFrom   map[uint64]bool
-	queried    []blockRange
-	blockTimes map[uint64]time.Time
-	head       uint64
-	calls      []string        // "subscribe" and "head", in order
-	live       chan<- types.Log // the listener's subscription channel
-	onFilter   func()           // runs at the start of each FilterLogs call
+	mu            sync.Mutex
+	failFrom      map[uint64]bool
+	queried       []blockRange
+	blockTimes    map[uint64]time.Time
+	head          uint64
+	calls         []string         // "subscribe" and "head", in order
+	live          chan<- types.Log // the listener's subscription channel
+	onFilter      func()           // runs at the start of each FilterLogs call
+	subs          []*fakeSubscription
+	subscribeErrs map[int]error // by subscribe call, from 0
 }
 
-type fakeSubscription struct{ errs chan error }
+type fakeSubscription struct {
+	errs         chan error
+	mu           sync.Mutex
+	unsubscribed int
+}
 
-func (f *fakeSubscription) Unsubscribe()      {}
+func (f *fakeSubscription) Unsubscribe() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.unsubscribed++
+}
+
 func (f *fakeSubscription) Err() <-chan error { return f.errs }
 
 func (f *fakeChain) SubscribeFilterLogs(_ context.Context, _ ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	n := len(f.subs)
 	f.calls = append(f.calls, "subscribe")
+	if err := f.subscribeErrs[n]; err != nil {
+		f.subs = append(f.subs, nil)
+		return nil, err // go-ethereum returns a nil subscription on failure
+	}
+	sub := &fakeSubscription{errs: make(chan error, 1)}
+	f.subs = append(f.subs, sub)
 	f.live = ch
-	return &fakeSubscription{errs: make(chan error)}, nil
+	return sub, nil
 }
 
 func (f *fakeChain) BlockNumber(context.Context) (uint64, error) {
@@ -229,5 +249,53 @@ func TestListenerSubscribesBeforeReplay(t *testing.T) {
 	defer chain.mu.Unlock()
 	if len(chain.calls) < 2 || chain.calls[0] != "subscribe" || chain.calls[1] != "head" {
 		t.Fatalf("calls = %v, want subscribe before head", chain.calls)
+	}
+}
+
+// When the subscription fails and resubscribing fails too, the listener returns
+// the error (main restarts it) instead of panicking, and releases the failed
+// subscription.
+func TestListenerReturnsErrorWhenResubscribeFails(t *testing.T) {
+	s := NewService(nil, nil, logger.New(logger.Config{Level: slog.LevelError + 4}))
+	s.eventSignature = common.HexToHash("0x01")
+	chain := &fakeChain{head: 10, subscribeErrs: map[int]error{1: errors.New("websocket closed")}}
+	s.chain = chain
+
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("panic: %v", r)
+			}
+		}()
+		done <- s.StartEventListener(context.Background())
+	}()
+
+	var first *fakeSubscription
+	for i := 0; i < 500 && first == nil; i++ {
+		chain.mu.Lock()
+		if len(chain.subs) > 0 {
+			first = chain.subs[0]
+		}
+		chain.mu.Unlock()
+		time.Sleep(time.Millisecond)
+	}
+	if first == nil {
+		t.Fatal("listener did not subscribe")
+	}
+	first.errs <- errors.New("connection lost")
+
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "failed to resubscribe") {
+			t.Fatalf("listener returned %v, want the resubscribe error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener did not return")
+	}
+	first.mu.Lock()
+	defer first.mu.Unlock()
+	if first.unsubscribed == 0 {
+		t.Fatal("the failed subscription was not released")
 	}
 }
