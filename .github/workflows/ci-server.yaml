@@ -93,6 +93,22 @@ jobs:
     - name: Checkout
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+    # The nitro-cli image used by enclaver bundles a linuxkit build that pins
+    # Docker API 1.30. Docker 29 (ubuntu-latest since the move to Ubuntu 26.04)
+    # refuses clients older than API 1.40, and linuxkit then tries to pull the
+    # intermediate image from Docker Hub instead, which fails. Lower the
+    # daemon's minimum API version before anything else uses Docker; the EIF
+    # and its PCRs come out the same as with Docker 28.
+    - name: Accept Docker API 1.30
+      run: |
+        sudo mkdir -p /etc/systemd/system/docker.service.d
+        printf '[Service]\nEnvironment=DOCKER_MIN_API_VERSION=1.30\n' \
+          | sudo tee /etc/systemd/system/docker.service.d/zz-min-api-version.conf
+        sudo systemctl daemon-reload
+        sudo systemctl restart docker
+        docker version --format 'Docker {{.Server.Version}}, minimum API {{.Server.MinAPIVersion}}'
+        test "$(docker version --format '{{.Server.MinAPIVersion}}')" = "1.30"
+
     - name: Get App Image Ref
       id: app-image
       run: |
