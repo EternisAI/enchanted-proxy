@@ -160,17 +160,27 @@ jobs:
         echo "digest=$DIGEST" | tee -a "$GITHUB_OUTPUT"
 
   deploy:
-    name: Trigger Deployment
+    name: Deploy
     runs-on: ubuntu-latest
     needs:
     - check
     - build
     - repush
     if: ${{ !cancelled() && (needs.build.result == 'success' || needs.repush.result == 'success' || (needs.check.outputs.digest && needs.build.result == 'skipped')) }}
+    permissions:
+      contents: read
+    # Waits for the gitops-apps run it dispatches (see the action's run-timeout).
+    timeout-minutes: 45
+    # One llm-prober deploy per target environment at a time; a newer one waits.
+    concurrency:
+      group: deploy-llm-prober-${{ github.ref_type == 'tag' && 'production' || github.ref_name }}
+      cancel-in-progress: false
     steps:
-    - name: Authenticate
-      run: >-
-        echo "${{ secrets.DEPLOYMENT_PAT }}" | gh auth login --with-token
+    - name: Checkout
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        sparse-checkout: .github/actions
+        persist-credentials: false
 
     - name: Get Image Meta
       id: meta
@@ -188,16 +198,10 @@ jobs:
         echo "tag=$tag" | tee -a "$GITHUB_OUTPUT"
         echo "digest=$digest" | tee -a "$GITHUB_OUTPUT"
 
-    - name: Trigger Deployment Workflow
-      run: >-
-        gh workflow run
-        enchanted-proxy.yaml
-        --repo ${{ github.repository_owner }}/gitops-apps
-        --ref main
-        --field component=llm-prober
-        --field actor="${{ github.actor }}"
-        --field actor_id=${{ github.actor_id }}
-        --field ref_type=${{ github.ref_type }}
-        --field ref_name=${{ github.ref_name }}
-        --field tag="${{ steps.meta.outputs.tag }}"
-        --field digest="${{ steps.meta.outputs.digest }}"
+    - name: Dispatch and Watch Deployment
+      uses: ./.github/actions/gitops-deploy
+      with:
+        github-token: ${{ secrets.DEPLOYMENT_PAT }}
+        component: llm-prober
+        tag: ${{ steps.meta.outputs.tag }}
+        digest: ${{ steps.meta.outputs.digest }}
