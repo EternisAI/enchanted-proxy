@@ -140,7 +140,7 @@ func (q *Queries) GetFaiPaymentIntentForUser(ctx context.Context, arg GetFaiPaym
 	return i, err
 }
 
-const updateFaiPaymentIntentToCompleted = `-- name: UpdateFaiPaymentIntentToCompleted :exec
+const updateFaiPaymentIntentToCompleted = `-- name: UpdateFaiPaymentIntentToCompleted :execrows
 UPDATE fai_payment_intents
 SET status = 'completed',
     token_address = $2,
@@ -160,15 +160,20 @@ type UpdateFaiPaymentIntentToCompletedParams struct {
 	TxHash       *string         `json:"txHash"`
 }
 
-func (q *Queries) UpdateFaiPaymentIntentToCompleted(ctx context.Context, arg UpdateFaiPaymentIntentToCompletedParams) error {
-	_, err := q.db.ExecContext(ctx, updateFaiPaymentIntentToCompleted,
+// Claims a pending intent. Each payment event is delivered to every replica and
+// again by the historical sync, so the caller grants only when this changed a row.
+func (q *Queries) UpdateFaiPaymentIntentToCompleted(ctx context.Context, arg UpdateFaiPaymentIntentToCompletedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateFaiPaymentIntentToCompleted,
 		arg.PaymentID,
 		arg.TokenAddress,
 		arg.TokenAmount,
 		arg.PaidBlock,
 		arg.TxHash,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateFaiPaymentIntentToExpired = `-- name: UpdateFaiPaymentIntentToExpired :exec

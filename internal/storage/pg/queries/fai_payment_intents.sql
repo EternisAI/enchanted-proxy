@@ -9,7 +9,9 @@ SELECT * FROM fai_payment_intents WHERE payment_id = $1;
 -- name: GetFaiPaymentIntentForUser :one
 SELECT * FROM fai_payment_intents WHERE payment_id = $1 AND user_id = $2;
 
--- name: UpdateFaiPaymentIntentToCompleted :exec
+-- name: UpdateFaiPaymentIntentToCompleted :execrows
+-- Claims a pending intent. Each payment event is delivered to every replica and
+-- again by the historical sync, so the caller grants only when this changed a row.
 UPDATE fai_payment_intents
 SET status = 'completed',
     token_address = $2,

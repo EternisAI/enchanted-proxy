@@ -471,7 +471,7 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 
 	txHash := vLog.TxHash.Hex()
 	tokenAddr := tokenAddress.Hex()
-	err = s.queries.UpdateFaiPaymentIntentToCompleted(ctx, pgdb.UpdateFaiPaymentIntentToCompletedParams{
+	_, err = s.queries.UpdateFaiPaymentIntentToCompleted(ctx, pgdb.UpdateFaiPaymentIntentToCompletedParams{
 		PaymentID:    paymentIDHex,
 		TokenAddress: &tokenAddr,
 		TokenAmount:  sql.NullFloat64{Float64: tokenAmountFloat, Valid: true},
