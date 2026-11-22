@@ -3,16 +3,21 @@ package task
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/eternisai/enchanted-proxy/internal/ids"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 	"go.temporal.io/sdk/client"
 )
+
+// ErrInvalidChatID is returned when a task's chat ID is malformed.
+var ErrInvalidChatID = errors.New("invalid chat_id")
 
 // Service handles task scheduling operations.
 type Service struct {
@@ -81,6 +86,11 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 		slog.String("user_id", userID),
 		slog.String("task_type", req.Type),
 		slog.String("task_name", req.TaskName))
+
+	if !ids.Valid(req.ChatID) {
+		log.Warn("refusing task with malformed chat_id")
+		return nil, ErrInvalidChatID
+	}
 
 	// Validate task type
 	log.Info("validating task type", slog.String("type", req.Type))

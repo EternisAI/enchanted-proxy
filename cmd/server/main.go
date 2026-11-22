@@ -28,6 +28,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/fallback"
 	"github.com/eternisai/enchanted-proxy/internal/health"
 	"github.com/eternisai/enchanted-proxy/internal/iap"
+	"github.com/eternisai/enchanted-proxy/internal/ids"
 	"github.com/eternisai/enchanted-proxy/internal/invitecode"
 	"github.com/eternisai/enchanted-proxy/internal/keyshare"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
@@ -741,6 +742,9 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 
 	// All routes use Firebase/JWT auth
 	router.Use(input.firebaseAuth.RequireAuth())
+
+	// Refuse malformed chat and message IDs in headers and route parameters
+	router.Use(ids.Middleware())
 
 	router.Any("/mcp", input.mcpHandler.HandleMCPAny)
 

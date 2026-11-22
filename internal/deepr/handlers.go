@@ -11,6 +11,7 @@ import (
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/errors"
+	"github.com/eternisai/enchanted-proxy/internal/ids"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
@@ -87,6 +88,15 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			c.JSON(http.StatusBadRequest, StartDeepResearchResponse{
 				Success: false,
 				Error:   "Invalid request body: " + err.Error(),
+			})
+			return
+		}
+
+		if msg := invalidIDsMessage(req.ChatID, req.UserMessageID); msg != "" {
+			log.Warn("refusing deep research start with malformed IDs")
+			c.JSON(http.StatusBadRequest, StartDeepResearchResponse{
+				Success: false,
+				Error:   msg,
 			})
 			return
 		}
@@ -223,6 +233,15 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			slog.String("chat_id", req.ChatID),
 			slog.Int64("run_id", runID))
 
+		// Until handleBackendMessages takes the run over, every exit marks it failed,
+		// so a refused or broken start does not leave the run active forever.
+		runHandedOff := false
+		defer func() {
+			if !runHandedOff {
+				service.markRunFailed(runID)
+			}
+		}()
+
 		// Connect to deep research backend
 		deepResearchHost := os.Getenv("DEEP_RESEARCH_WS")
 		if deepResearchHost == "" {
@@ -237,11 +256,7 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			deepResearchScheme = "ws"
 		}
 
-		wsURL := url.URL{
-			Scheme: deepResearchScheme,
-			Host:   deepResearchHost,
-			Path:   "/deep_research/" + userID + "/" + req.ChatID + "/",
-		}
+		wsURL := backendSessionURL(deepResearchScheme, deepResearchHost, userID, req.ChatID)
 
 		log.Info("connecting to deep research backend",
 			slog.String("user_id", userID),
@@ -339,7 +354,8 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			}
 		}
 
-		// Start goroutine to handle backend messages
+		// Start goroutine to handle backend messages; from here on it completes the run
+		runHandedOff = true
 		go service.handleBackendMessages(sessionCtx, session, userID, req.ChatID)
 
 		c.JSON(http.StatusOK, StartDeepResearchResponse{
@@ -381,6 +397,15 @@ func ClarifyDeepResearchHandler(logger *logger.Logger, trackingService *request_
 			c.JSON(http.StatusBadRequest, ClarifyDeepResearchResponse{
 				Success: false,
 				Error:   "Invalid request body: " + err.Error(),
+			})
+			return
+		}
+
+		if msg := invalidIDsMessage(req.ChatID, req.UserMessageID); msg != "" {
+			log.Warn("refusing clarification with malformed IDs")
+			c.JSON(http.StatusBadRequest, ClarifyDeepResearchResponse{
+				Success: false,
+				Error:   msg,
 			})
 			return
 		}
@@ -497,6 +522,11 @@ func DeepResearchHandler(logger *logger.Logger, trackingService *request_trackin
 			c.JSON(http.StatusBadRequest, gin.H{"error": "chat_id parameter is required"})
 			return
 		}
+		if !ids.Valid(chatID) {
+			log.Warn("refusing websocket connection with malformed chat_id")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid chat_id"})
+			return
+		}
 
 		log.Info("session parameters validated",
 			slog.String("user_id", userID),
@@ -526,5 +556,28 @@ func DeepResearchHandler(logger *logger.Logger, trackingService *request_trackin
 
 		// Handle the WebSocket connection
 		service.HandleConnection(c.Request.Context(), conn, userID, chatID)
+	}
+}
+
+// invalidIDsMessage returns a user-facing error when the chat ID or the optional
+// user message ID is malformed, or "" when both are acceptable.
+func invalidIDsMessage(chatID, userMessageID string) string {
+	if !ids.Valid(chatID) {
+		return "Invalid chat_id"
+	}
+	if !ids.ValidOptional(userMessageID) {
+		return "Invalid user_message_id"
+	}
+	return ""
+}
+
+// backendSessionURL builds the deep research backend's WebSocket URL for one chat.
+// IDs are validated before this point; escaping them is a second line of defence.
+func backendSessionURL(scheme, host, userID, chatID string) url.URL {
+	return url.URL{
+		Scheme:  scheme,
+		Host:    host,
+		Path:    "/deep_research/" + userID + "/" + chatID + "/",
+		RawPath: "/deep_research/" + url.PathEscape(userID) + "/" + url.PathEscape(chatID) + "/",
 	}
 }

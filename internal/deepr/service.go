@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -161,6 +160,25 @@ func (s *Service) checkDeepResearchQuota(ctx context.Context, userID string, tie
 		slog.String("user_id", userID),
 		slog.String("tier", tierConfig.Name))
 	return nil
+}
+
+// markRunFailed marks a run failed. It is used when a start fails after the run
+// row was created, so the row does not stay active. A fresh context is used so
+// the write is not lost to a cancelled request.
+func (s *Service) markRunFailed(runID int64) {
+	if s.queries == nil || runID <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.queries.CompleteDeepResearchRun(ctx, pgdb.CompleteDeepResearchRunParams{
+		ID:     runID,
+		Status: "failed",
+	}); err != nil {
+		s.logger.Error("failed to mark deep research run as failed",
+			slog.Int64("run_id", runID),
+			slog.String("error", err.Error()))
+	}
 }
 
 // trackDeepResearchTokens updates run token usage and enforces per-run cap.
@@ -1048,11 +1066,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 		deepResearchScheme = "ws"
 	}
 
-	wsURL := url.URL{
-		Scheme: deepResearchScheme,
-		Host:   deepResearchHost,
-		Path:   "/deep_research/" + userID + "/" + chatID + "/",
-	}
+	wsURL := backendSessionURL(deepResearchScheme, deepResearchHost, userID, chatID)
 
 	log.Info("connecting to backend websocket",
 		slog.String("user_id", userID),
