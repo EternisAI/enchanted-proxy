@@ -30,6 +30,7 @@ var (
 
 // Service handles FAI crypto payments via the Payment Router contract on Base.
 type Service struct {
+	db              *sql.DB
 	queries         pgdb.Querier
 	logger          *logger.Logger
 	coingecko       *CoinGeckoService
@@ -83,8 +84,9 @@ const (
 	PriceLifetimePlusUSD = 500
 )
 
-func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
+func NewService(db *sql.DB, queries pgdb.Querier, logger *logger.Logger) *Service {
 	return &Service{
+		db:        db,
 		queries:   queries,
 		logger:    logger,
 		coingecko: NewCoinGeckoService(logger),
@@ -465,13 +467,9 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 		return fmt.Errorf("payment insufficient: received $%.2f, expected $%.2f", usdValue, intent.PriceUsd)
 	}
 
-	if err := s.grantEntitlement(ctx, intent, product); err != nil {
-		return fmt.Errorf("failed to grant entitlement: %w", err)
-	}
-
 	txHash := vLog.TxHash.Hex()
 	tokenAddr := tokenAddress.Hex()
-	_, err = s.queries.UpdateFaiPaymentIntentToCompleted(ctx, pgdb.UpdateFaiPaymentIntentToCompletedParams{
+	claimed, err := s.settlePayment(ctx, intent, product, pgdb.UpdateFaiPaymentIntentToCompletedParams{
 		PaymentID:    paymentIDHex,
 		TokenAddress: &tokenAddr,
 		TokenAmount:  sql.NullFloat64{Float64: tokenAmountFloat, Valid: true},
@@ -479,8 +477,11 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 		TxHash:       &txHash,
 	})
 	if err != nil {
-		s.logger.Error("failed to update payment intent status", "error", err.Error(), "payment_id", paymentIDHex)
-		// Don't return error — entitlement was already granted
+		return err
+	}
+	if !claimed {
+		s.logger.Info("payment intent already settled, skipping", "payment_id", paymentIDHex)
+		return nil
 	}
 
 	s.logger.Info("payment processed successfully",
@@ -494,10 +495,46 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 	return nil
 }
 
+// settlePayment claims the pending intent and grants the entitlement in one
+// transaction, and reports whether this call did it.
+//
+// The same PaymentReceived event reaches every replica's subscription and the
+// historical sync. Granting before marking the intent completed, with nothing
+// tying the two together, let each delivery grant another period. Claiming
+// first serializes the deliveries on the row: the first one's UPDATE matches
+// the pending row, the others wait for it to commit and then match nothing.
+// If the grant fails, the rollback releases the claim for a later delivery.
+func (s *Service) settlePayment(ctx context.Context, intent pgdb.FaiPaymentIntent, product *Product, claim pgdb.UpdateFaiPaymentIntentToCompletedParams) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	qtx := pgdb.New(tx)
+
+	claimed, err := qtx.UpdateFaiPaymentIntentToCompleted(ctx, claim)
+	if err != nil {
+		return false, fmt.Errorf("failed to claim payment intent: %w", err)
+	}
+	if claimed == 0 {
+		return false, nil
+	}
+
+	if err := s.grantEntitlement(ctx, qtx, intent, product); err != nil {
+		return false, fmt.Errorf("failed to grant entitlement: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("failed to commit payment: %w", err)
+	}
+	return true, nil
+}
+
 // grantEntitlement grants the user a subscription based on the product purchased.
-func (s *Service) grantEntitlement(ctx context.Context, intent pgdb.FaiPaymentIntent, product *Product) error {
+func (s *Service) grantEntitlement(ctx context.Context, q pgdb.Querier, intent pgdb.FaiPaymentIntent, product *Product) error {
 	if product.IsLifetime {
-		err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
+		err := q.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
 			UserID:           intent.UserID,
 			SubscriptionTier: product.Tier,
 			SubscriptionExpiresAt: sql.NullTime{
@@ -531,7 +568,7 @@ func (s *Service) grantEntitlement(ctx context.Context, intent pgdb.FaiPaymentIn
 		baseTime = intent.PaidAt.Time
 	}
 
-	err := s.queries.UpsertEntitlementWithExtension(ctx, pgdb.UpsertEntitlementWithExtensionParams{
+	err := q.UpsertEntitlementWithExtension(ctx, pgdb.UpsertEntitlementWithExtensionParams{
 		UserID:               intent.UserID,
 		SubscriptionTier:     product.Tier,
 		BaseTime:             baseTime,

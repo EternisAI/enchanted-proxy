@@ -156,7 +156,7 @@ func main() {
 	zcashService := zcash.NewService(db.DB, db.Queries, zcashFirestoreClient, logger.WithComponent("zcash"))
 
 	// Initialize FAI payment service
-	faiService := fai.NewService(db.Queries, logger.WithComponent("fai"))
+	faiService := fai.NewService(db.DB, db.Queries, logger.WithComponent("fai"))
 	faiReady := false
 	if config.AppConfig.FaiEnabled && config.AppConfig.FaiWsRpcURL != "" && config.AppConfig.FaiPaymentContract != "" {
 		if err := faiService.InitBlockchain(config.AppConfig.FaiWsRpcURL, config.AppConfig.FaiPaymentContract); err != nil {
