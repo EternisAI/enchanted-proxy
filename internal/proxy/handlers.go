@@ -22,6 +22,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/background"
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/errors"
+	"github.com/eternisai/enchanted-proxy/internal/ids"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/metrics"
@@ -107,9 +108,17 @@ func ProxyHandler(
 			var reqBody map[string]interface{}
 			if err := json.Unmarshal(requestBody, &reqBody); err == nil {
 				if chatID, ok := reqBody["chatId"].(string); ok && chatID != "" {
+					if !ids.Valid(chatID) {
+						errors.BadRequest(c, "Invalid chatId", nil)
+						return
+					}
 					c.Set("bodyChatId", chatID)
 				}
 				if messageID, ok := reqBody["messageId"].(string); ok && messageID != "" {
+					if !ids.Valid(messageID) {
+						errors.BadRequest(c, "Invalid messageId", nil)
+						return
+					}
 					c.Set("bodyMessageId", messageID)
 				}
 				// Check if this is a streaming request
