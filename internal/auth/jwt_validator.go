@@ -55,47 +55,39 @@ func (v *JWTTokenValidator) RefreshKeys() error {
 	return nil
 }
 
-func (v *JWTTokenValidator) ExtractUserID(tokenString string) (string, error) {
+// ExtractIdentity validates the token (or, in development mode, only parses it)
+// and returns the Identity from its claims.
+func (v *JWTTokenValidator) ExtractIdentity(tokenString string) (Identity, error) {
 	// In development mode, extract user ID without validation
 	if v.devMode {
 		// Parse without verification
 		token, _, err := new(jwt.Parser).ParseUnverified(tokenString, &StandardClaims{})
 		if err != nil {
-			return "", fmt.Errorf("%w: %v", ErrInvalidToken, err)
+			return Identity{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 		}
 
 		if claims, ok := token.Claims.(*StandardClaims); ok {
-			// Prioritize sub, then user_id, then email as fallback.
-			if claims.Sub != "" {
-				return claims.Sub, nil
-			}
-			if claims.UserId != "" {
-				return claims.UserId, nil
-			}
-			if claims.Email != "" {
-				return claims.Email, nil
-			}
-			return "", fmt.Errorf("%w: no sub, user_id, or email found in token claims", ErrInvalidToken)
+			return claims.identity()
 		}
 
-		return "", ErrInvalidToken
+		return Identity{}, ErrInvalidToken
 	}
 
 	// In production mode, validate the token first
 	if v.keySet == nil {
-		return "", ErrNoJWKS
+		return Identity{}, ErrNoJWKS
 	}
 
 	// First, parse the token header to get the key ID without validation
 	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, &StandardClaims{})
 	if err != nil {
-		return "", fmt.Errorf("%w: failed to parse token header: %v", ErrInvalidToken, err)
+		return Identity{}, fmt.Errorf("%w: failed to parse token header: %v", ErrInvalidToken, err)
 	}
 
 	// Get the key ID from the token header
 	kid, ok := token.Header["kid"].(string)
 	if !ok {
-		return "", fmt.Errorf("%w: token header missing kid", ErrInvalidToken)
+		return Identity{}, fmt.Errorf("%w: token header missing kid", ErrInvalidToken)
 	}
 
 	// Find the key with the matching ID
@@ -103,7 +95,7 @@ func (v *JWTTokenValidator) ExtractUserID(tokenString string) (string, error) {
 	if !found {
 		// Try refreshing the keys
 		if err := v.RefreshKeys(); err != nil {
-			return "", fmt.Errorf("%w: key with ID %s not found and failed to refresh keys: %v", ErrInvalidToken, kid, err)
+			return Identity{}, fmt.Errorf("%w: key with ID %s not found and failed to refresh keys: %v", ErrInvalidToken, kid, err)
 		}
 
 		// Try again after refresh
@@ -115,14 +107,14 @@ func (v *JWTTokenValidator) ExtractUserID(tokenString string) (string, error) {
 				k, _ := v.keySet.Get(i)
 				availableKeys = append(availableKeys, k.KeyID())
 			}
-			return "", fmt.Errorf("%w: key with ID %s not found, available keys: %v", ErrInvalidToken, kid, availableKeys)
+			return Identity{}, fmt.Errorf("%w: key with ID %s not found, available keys: %v", ErrInvalidToken, kid, availableKeys)
 		}
 	}
 
 	// Get the raw key
 	var rawKey interface{}
 	if err := key.Raw(&rawKey); err != nil {
-		return "", fmt.Errorf("%w: failed to get raw key: %v", ErrInvalidToken, err)
+		return Identity{}, fmt.Errorf("%w: failed to get raw key: %v", ErrInvalidToken, err)
 	}
 
 	// Now validate the token with the found key
@@ -134,31 +126,18 @@ func (v *JWTTokenValidator) ExtractUserID(tokenString string) (string, error) {
 		},
 	)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInvalidToken, err)
+		return Identity{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 	}
 
 	claims, ok := validatedToken.Claims.(*StandardClaims)
 	if !ok || !validatedToken.Valid {
-		return "", ErrInvalidToken
+		return Identity{}, ErrInvalidToken
 	}
 
 	// Check if token is expired
 	if !claims.VerifyExpiresAt(time.Now(), true) {
-		return "", ErrExpiredToken
+		return Identity{}, ErrExpiredToken
 	}
 
-	// Prioritize sub, then user_id, then email as fallback.
-	if claims.Sub != "" {
-		return claims.Sub, nil
-	}
-
-	if claims.UserId != "" {
-		return claims.UserId, nil
-	}
-
-	if claims.Email != "" {
-		return claims.Email, nil
-	}
-
-	return "", fmt.Errorf("%w: no sub, user_id, or email found in token claims", ErrInvalidToken)
+	return claims.identity()
 }

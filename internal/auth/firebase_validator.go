@@ -30,20 +30,32 @@ func NewFirebaseTokenValidator(ctx context.Context, credJSON string) (*FirebaseT
 	}, nil
 }
 
-// Checks that this user's auth token is valid and extracts + returns the user's Firebase ID
-// from "sub" - which according to Firebase docs should always be present: https://firebase.google.com/docs/auth/admin/verify-id-tokens#go
-func (f *FirebaseTokenValidator) ExtractUserID(tokenString string) (string, error) {
-	ctx := context.Background()
-
-	token, err := f.authClient.VerifyIDToken(ctx, tokenString)
+// ExtractIdentity checks that the ID token is valid and returns the holder's Firebase UID
+// from "sub" (which according to Firebase docs is always present:
+// https://firebase.google.com/docs/auth/admin/verify-id-tokens#go), with the sign-in
+// provider, email and email-verified flag from the same token.
+func (f *FirebaseTokenValidator) ExtractIdentity(tokenString string) (Identity, error) {
+	token, err := f.authClient.VerifyIDToken(context.Background(), tokenString)
 	if err != nil {
-		return "", err
+		return Identity{}, err
 	}
-
-	sub := token.Subject
-	if sub != "" {
-		return sub, nil
+	if token.Subject == "" {
+		return Identity{}, fmt.Errorf("no Firebase UID (sub claim) found in token")
 	}
+	return identityFromFirebaseToken(token), nil
+}
 
-	return "", fmt.Errorf("no Firebase UID (sub claim) found in token")
+// identityFromFirebaseToken reads the Identity out of a verified Firebase token.
+func identityFromFirebaseToken(token *auth.Token) Identity {
+	id := Identity{
+		UserID:         token.Subject,
+		SignInProvider: token.Firebase.SignInProvider,
+	}
+	if email, ok := token.Claims["email"].(string); ok {
+		id.Email = email
+	}
+	if verified, ok := token.Claims["email_verified"].(bool); ok {
+		id.EmailVerified = verified
+	}
+	return id
 }
