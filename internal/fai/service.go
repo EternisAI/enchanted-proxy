@@ -28,8 +28,22 @@ var (
 	ErrInvalidProduct  = errors.New("invalid product")
 )
 
+// chainReader is the part of the chain client the listener uses: subscribing to
+// events, replaying them and dating payments. *ethclient.Client implements it;
+// tests use a fake.
+type chainReader interface {
+	BlockNumber(ctx context.Context) (uint64, error)
+	FilterLogs(ctx context.Context, q ethereum.FilterQuery) ([]types.Log, error)
+	HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error)
+	SubscribeFilterLogs(ctx context.Context, q ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error)
+}
+
+// blockRange is an inclusive range of blocks.
+type blockRange struct{ from, to uint64 }
+
 // Service handles FAI crypto payments via the Payment Router contract on Base.
 type Service struct {
+	db              *sql.DB
 	queries         pgdb.Querier
 	logger          *logger.Logger
 	coingecko       *CoinGeckoService
@@ -38,6 +52,15 @@ type Service struct {
 	eventSignature  common.Hash
 	tokenConfigs    map[string]TokenConfig
 	chainID         uint64
+	retries         *settlementRetries
+
+	// chain reads blocks and logs; it is ethClient outside tests.
+	chain chainReader
+	// pendingReplay is a block range whose replay failed and is retried by the
+	// listener; initialReplayDone records that the 24-hour startup replay was
+	// attempted in this process. Both are used only by the listener goroutine.
+	pendingReplay     *blockRange
+	initialReplayDone bool
 }
 
 // Product represents a purchasable subscription product.
@@ -71,6 +94,20 @@ type ConfigResponse struct {
 	ChainID                uint64 `json:"chain_id"`
 }
 
+// Blocks on Base come about every 2 seconds.
+const (
+	startupSyncBlocks            = 43_200 // ~24 hours, the lifetime of a payment intent
+	resubscribeSyncBlocks        = 1_800  // ~1 hour
+	replayBatchBlocks            = 500
+	settlementRetryCheckInterval = time.Minute
+	// Live events arriving while a replay runs wait here (the client buffers more).
+	liveLogBuffer = 1024
+
+	// paymentIntentLifetime matches the expiry worker's query and the claim
+	// query: a payment is accepted only within this long of the intent's creation.
+	paymentIntentLifetime = 24 * time.Hour
+)
+
 const (
 	ProductWeeklyPro    = "silo.pro.weekly"
 	ProductMonthlyPro   = "silo.pro.monthly"
@@ -83,11 +120,13 @@ const (
 	PriceLifetimePlusUSD = 500
 )
 
-func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
+func NewService(db *sql.DB, queries pgdb.Querier, logger *logger.Logger) *Service {
 	return &Service{
+		db:        db,
 		queries:   queries,
 		logger:    logger,
 		coingecko: NewCoinGeckoService(logger),
+		retries:   newSettlementRetries(),
 	}
 }
 
@@ -117,6 +156,7 @@ func (s *Service) InitBlockchain(wsRpcURL, contractAddress string) (err error) {
 	}
 
 	s.ethClient = ethClient
+	s.chain = ethClient
 	s.contractAddress = contractAddr
 	s.eventSignature = eventSig
 	s.chainID = chainID.Uint64()
@@ -311,8 +351,13 @@ func (s *Service) GetPaymentStatus(ctx context.Context, paymentID, userID string
 
 // StartEventListener subscribes to PaymentReceived events from the Payment Router contract.
 // This should be run as a goroutine.
+//
+// It subscribes before it reads the chain head and replays up to it, so every
+// event lands in the replay, the subscription, or both. Live events that arrive
+// during the replay wait in the channel. Overlap is harmless: an intent is
+// claimed once.
 func (s *Service) StartEventListener(ctx context.Context) error {
-	if s.ethClient == nil {
+	if s.chain == nil {
 		return fmt.Errorf("blockchain not initialized - call InitBlockchain first")
 	}
 
@@ -320,55 +365,128 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 		"contract_address", s.contractAddress.Hex(),
 		"event_signature", s.eventSignature.Hex())
 
-	blockNumber, err := s.syncHistoricalBlocks(ctx)
-	if err != nil {
-		s.logger.Warn("failed to sync historical blocks, starting from current block", "error", err.Error())
-		blockNumber, err = s.ethClient.BlockNumber(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to get current block number: %w", err)
-		}
-	}
-
-	query := ethereum.FilterQuery{
-		Addresses: []common.Address{s.contractAddress},
-		Topics:    [][]common.Hash{{s.eventSignature}},
-		FromBlock: big.NewInt(int64(blockNumber)),
-	}
-
-	logs := make(chan types.Log)
-	sub, err := s.ethClient.SubscribeFilterLogs(ctx, query, logs)
+	logs := make(chan types.Log, liveLogBuffer)
+	sub, err := s.subscribe(ctx, logs)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to logs: %w", err)
 	}
-
+	defer func() {
+		if sub != nil {
+			sub.Unsubscribe()
+		}
+	}()
 	s.logger.Info("subscribed to PaymentReceived events")
+
+	// The first start in this process replays the last 24 hours: settlement is
+	// idempotent, and this picks up any event whose settlement failed before a
+	// restart. Later restarts of the listener replay an hour, like resubscribes.
+	lookback := uint64(resubscribeSyncBlocks)
+	if !s.initialReplayDone {
+		lookback = startupSyncBlocks
+	}
+	if err := s.catchUp(ctx, lookback); err != nil {
+		return err
+	}
+	s.initialReplayDone = true
+
+	retryTicker := time.NewTicker(settlementRetryCheckInterval)
+	defer retryTicker.Stop()
 
 	for {
 		select {
 		case err := <-sub.Err():
 			s.logger.Error("subscription error, resubscribing", "error", err)
-			blockNumber, syncErr := s.syncHistoricalBlocks(ctx)
-			if syncErr != nil {
-				s.logger.Error("failed to sync historical blocks after error", "error", syncErr.Error())
-				return fmt.Errorf("failed to sync historical blocks: %w", syncErr)
-			}
-			query.FromBlock = big.NewInt(int64(blockNumber))
-			sub, err = s.ethClient.SubscribeFilterLogs(ctx, query, logs)
+			sub.Unsubscribe() // release the failed one; safe to repeat
+			next, err := s.subscribe(ctx, logs)
 			if err != nil {
 				return fmt.Errorf("failed to resubscribe: %w", err)
 			}
+			sub = next
 			s.logger.Info("resubscribed to PaymentReceived events")
+			if err := s.catchUp(ctx, resubscribeSyncBlocks); err != nil {
+				return err
+			}
 
 		case vLog := <-logs:
 			s.logger.Info("received log", "block_number", vLog.BlockNumber, "tx_hash", vLog.TxHash.Hex())
-			if err := s.handlePaymentReceivedEvent(ctx, vLog); err != nil {
-				s.logger.Error("failed to handle payment event", "error", err.Error())
-			}
+			s.handleEvent(ctx, vLog)
+
+		case <-retryTicker.C:
+			s.retryPendingReplay(ctx)
+			s.retryFailedSettlements(ctx, time.Now())
 
 		case <-ctx.Done():
 			s.logger.Info("stopping event listener")
-			sub.Unsubscribe()
 			return ctx.Err()
+		}
+	}
+}
+
+// subscribe starts a live subscription to PaymentReceived events.
+func (s *Service) subscribe(ctx context.Context, logs chan<- types.Log) (ethereum.Subscription, error) {
+	return s.chain.SubscribeFilterLogs(ctx, ethereum.FilterQuery{
+		Addresses: []common.Address{s.contractAddress},
+		Topics:    [][]common.Hash{{s.eventSignature}},
+	}, logs)
+}
+
+// catchUp replays the last lookback blocks up to the current head. Call it after
+// subscribing. A failed replay is kept pending and retried by the listener.
+func (s *Service) catchUp(ctx context.Context, lookback uint64) error {
+	head, err := s.chain.BlockNumber(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get current block number: %w", err)
+	}
+	if err := s.replay(ctx, lookbackRange(head, lookback)); err != nil {
+		s.logger.Warn("historical replay failed; retrying it while listening", "error", err.Error())
+	}
+	return nil
+}
+
+// blockTime returns when a block was mined.
+func (s *Service) blockTime(ctx context.Context, blockNumber uint64) (time.Time, error) {
+	if s.chain == nil {
+		return time.Time{}, fmt.Errorf("blockchain not initialized")
+	}
+	header, err := s.chain.HeaderByNumber(ctx, new(big.Int).SetUint64(blockNumber))
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Unix(int64(header.Time), 0), nil
+}
+
+// handleEvent processes one payment event and queues it for another attempt when
+// it failed for a transient reason.
+func (s *Service) handleEvent(ctx context.Context, vLog types.Log) {
+	err := s.handlePaymentReceivedEvent(ctx, vLog)
+	if err == nil {
+		return
+	}
+	s.logger.Error("failed to handle payment event",
+		"error", err.Error(),
+		"block", vLog.BlockNumber,
+		"tx_hash", vLog.TxHash.Hex(),
+		"will_retry", isRetryable(err))
+	if isRetryable(err) {
+		s.retries.add(vLog, time.Now())
+	}
+}
+
+// retryFailedSettlements tries again every queued event that is due.
+func (s *Service) retryFailedSettlements(ctx context.Context, now time.Time) {
+	for _, vLog := range s.retries.due(now) {
+		err := s.handlePaymentReceivedEvent(ctx, vLog)
+		if gaveUp := s.retries.result(vLog, err, now); gaveUp {
+			s.logger.Error("giving up on settling a payment event; settle it by hand",
+				"error", err.Error(), "block", vLog.BlockNumber, "tx_hash", vLog.TxHash.Hex())
+			continue
+		}
+		if err != nil {
+			s.logger.Warn("payment settlement retry failed",
+				"error", err.Error(), "block", vLog.BlockNumber, "tx_hash", vLog.TxHash.Hex(),
+				"will_retry", isRetryable(err))
+		} else {
+			s.logger.Info("payment settlement retry succeeded", "block", vLog.BlockNumber, "tx_hash", vLog.TxHash.Hex())
 		}
 	}
 }
@@ -406,13 +524,32 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("failed to query payment intent: %w", err)
+		return retryable(fmt.Errorf("failed to query payment intent: %w", err))
 	}
 
-	// Idempotency: skip if not pending (already completed or expired)
-	if intent.Status != "pending" {
-		s.logger.Info("payment intent not pending, skipping", "payment_id", paymentIDHex, "status", intent.Status)
+	if intent.Status != "pending" && intent.Status != "expired" {
+		s.logger.Info("payment intent already settled, skipping", "payment_id", paymentIDHex, "status", intent.Status)
 		return nil
+	}
+
+	// A payment is credited when it was made while its intent was open, whatever
+	// the intent's status is now: settlement can lag the payment (retries, listener
+	// downtime) and the expiry worker may have retired the intent meanwhile. A
+	// payment made after the deadline is not credited, since the price was locked
+	// at creation. The claim below enforces the same rule in the database.
+	paidAt, err := s.blockTime(ctx, vLog.BlockNumber)
+	if err != nil {
+		return retryable(fmt.Errorf("failed to read payment block time: %w", err))
+	}
+	deadline := intent.CreatedAt.Add(paymentIntentLifetime)
+	if !paidAt.Before(deadline) {
+		s.logger.Warn("payment made after its intent expired; not credited",
+			"payment_id", paymentIDHex, "paid_at", paidAt, "deadline", deadline, "tx_hash", vLog.TxHash.Hex())
+		return fmt.Errorf("payment %s made after its intent expired", paymentIDHex)
+	}
+	if intent.Status == "expired" {
+		s.logger.Warn("settling an expired intent whose payment was made in time",
+			"payment_id", paymentIDHex, "paid_at", paidAt, "deadline", deadline)
 	}
 
 	tokenConfig, exists := s.tokenConfigs[tokenAddress.Hex()]
@@ -437,7 +574,7 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 	} else {
 		tokenPriceUSD, err = s.coingecko.GetTokenPrice(ctx, tokenConfig.CoingeckoID)
 		if err != nil {
-			return fmt.Errorf("failed to get token price: %w", err)
+			return retryable(fmt.Errorf("failed to get token price: %w", err))
 		}
 	}
 
@@ -465,22 +602,22 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 		return fmt.Errorf("payment insufficient: received $%.2f, expected $%.2f", usdValue, intent.PriceUsd)
 	}
 
-	if err := s.grantEntitlement(ctx, intent, product); err != nil {
-		return fmt.Errorf("failed to grant entitlement: %w", err)
-	}
-
 	txHash := vLog.TxHash.Hex()
 	tokenAddr := tokenAddress.Hex()
-	err = s.queries.UpdateFaiPaymentIntentToCompleted(ctx, pgdb.UpdateFaiPaymentIntentToCompletedParams{
+	claimed, err := s.settlePayment(ctx, intent, product, pgdb.UpdateFaiPaymentIntentToCompletedParams{
 		PaymentID:    paymentIDHex,
 		TokenAddress: &tokenAddr,
 		TokenAmount:  sql.NullFloat64{Float64: tokenAmountFloat, Valid: true},
 		PaidBlock:    sql.NullInt64{Int64: int64(vLog.BlockNumber), Valid: true},
 		TxHash:       &txHash,
+		PaymentTime:  paidAt,
 	})
 	if err != nil {
-		s.logger.Error("failed to update payment intent status", "error", err.Error(), "payment_id", paymentIDHex)
-		// Don't return error — entitlement was already granted
+		return retryable(err)
+	}
+	if !claimed {
+		s.logger.Info("payment intent already settled, skipping", "payment_id", paymentIDHex)
+		return nil
 	}
 
 	s.logger.Info("payment processed successfully",
@@ -494,10 +631,46 @@ func (s *Service) handlePaymentReceivedEvent(ctx context.Context, vLog types.Log
 	return nil
 }
 
+// settlePayment claims the pending intent and grants the entitlement in one
+// transaction, and reports whether this call did it.
+//
+// The same PaymentReceived event reaches every replica's subscription and the
+// historical sync. Granting before marking the intent completed, with nothing
+// tying the two together, let each delivery grant another period. Claiming
+// first serializes the deliveries on the row: the first one's UPDATE matches
+// the pending row, the others wait for it to commit and then match nothing.
+// If the grant fails, the rollback releases the claim for a later delivery.
+func (s *Service) settlePayment(ctx context.Context, intent pgdb.FaiPaymentIntent, product *Product, claim pgdb.UpdateFaiPaymentIntentToCompletedParams) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	qtx := pgdb.New(tx)
+
+	claimed, err := qtx.UpdateFaiPaymentIntentToCompleted(ctx, claim)
+	if err != nil {
+		return false, fmt.Errorf("failed to claim payment intent: %w", err)
+	}
+	if claimed == 0 {
+		return false, nil
+	}
+
+	if err := s.grantEntitlement(ctx, qtx, intent, product); err != nil {
+		return false, fmt.Errorf("failed to grant entitlement: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("failed to commit payment: %w", err)
+	}
+	return true, nil
+}
+
 // grantEntitlement grants the user a subscription based on the product purchased.
-func (s *Service) grantEntitlement(ctx context.Context, intent pgdb.FaiPaymentIntent, product *Product) error {
+func (s *Service) grantEntitlement(ctx context.Context, q pgdb.Querier, intent pgdb.FaiPaymentIntent, product *Product) error {
 	if product.IsLifetime {
-		err := s.queries.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
+		err := q.UpsertEntitlementWithTier(ctx, pgdb.UpsertEntitlementWithTierParams{
 			UserID:           intent.UserID,
 			SubscriptionTier: product.Tier,
 			SubscriptionExpiresAt: sql.NullTime{
@@ -531,7 +704,7 @@ func (s *Service) grantEntitlement(ctx context.Context, intent pgdb.FaiPaymentIn
 		baseTime = intent.PaidAt.Time
 	}
 
-	err := s.queries.UpsertEntitlementWithExtension(ctx, pgdb.UpsertEntitlementWithExtensionParams{
+	err := q.UpsertEntitlementWithExtension(ctx, pgdb.UpsertEntitlementWithExtensionParams{
 		UserID:               intent.UserID,
 		SubscriptionTier:     product.Tier,
 		BaseTime:             baseTime,
@@ -551,49 +724,62 @@ func (s *Service) grantEntitlement(ctx context.Context, intent pgdb.FaiPaymentIn
 	return nil
 }
 
-// syncHistoricalBlocks catches up on any missed PaymentReceived events.
-func (s *Service) syncHistoricalBlocks(ctx context.Context) (uint64, error) {
-	currentBlock, err := s.ethClient.BlockNumber(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get current block number: %w", err)
+// lookbackRange is the range of the last lookback blocks up to current.
+func lookbackRange(current, lookback uint64) blockRange {
+	from := uint64(0)
+	if current > lookback {
+		from = current - lookback
 	}
+	return blockRange{from: from, to: current}
+}
 
-	// Look back ~1 hour on Base (≈ 1800 blocks)
-	fromBlock := currentBlock
-	if currentBlock > 1800 {
-		fromBlock = currentBlock - 1800
-	}
+// replay handles the PaymentReceived events in r. If reading logs fails, the
+// unread part of r is kept as pending and retried by the listener, so a failed
+// replay is never mistaken for a completed one.
+func (s *Service) replay(ctx context.Context, r blockRange) error {
+	s.logger.Info("replaying payment events", "from_block", r.from, "to_block", r.to)
 
-	s.logger.Info("syncing historical blocks", "from_block", fromBlock, "to_block", currentBlock)
+	for start := r.from; start <= r.to; start += replayBatchBlocks {
+		end := min(start+replayBatchBlocks-1, r.to)
 
-	const batchSize = uint64(500)
-	for start := fromBlock; start <= currentBlock; start += batchSize {
-		end := start + batchSize - 1
-		if end > currentBlock {
-			end = currentBlock
-		}
-
-		query := ethereum.FilterQuery{
-			FromBlock: big.NewInt(int64(start)),
-			ToBlock:   big.NewInt(int64(end)),
+		logs, err := s.chain.FilterLogs(ctx, ethereum.FilterQuery{
+			FromBlock: new(big.Int).SetUint64(start),
+			ToBlock:   new(big.Int).SetUint64(end),
 			Addresses: []common.Address{s.contractAddress},
 			Topics:    [][]common.Hash{{s.eventSignature}},
-		}
-
-		historicalLogs, err := s.ethClient.FilterLogs(ctx, query)
+		})
 		if err != nil {
-			return 0, fmt.Errorf("failed to filter logs: %w", err)
+			s.addPendingReplay(blockRange{from: start, to: r.to})
+			return fmt.Errorf("failed to filter logs from block %d: %w", start, err)
 		}
 
-		for _, vLog := range historicalLogs {
-			if err := s.handlePaymentReceivedEvent(ctx, vLog); err != nil {
-				s.logger.Error("failed to handle historical event", "error", err.Error(), "block", vLog.BlockNumber)
-			}
+		for _, vLog := range logs {
+			s.handleEvent(ctx, vLog)
 		}
 	}
 
-	s.logger.Info("historical block sync completed", "synced_to_block", currentBlock)
-	return currentBlock, nil
+	s.logger.Info("payment event replay completed", "to_block", r.to)
+	return nil
+}
+
+// addPendingReplay records a range still to replay, merged with any already pending.
+func (s *Service) addPendingReplay(r blockRange) {
+	if p := s.pendingReplay; p != nil {
+		r = blockRange{from: min(p.from, r.from), to: max(p.to, r.to)}
+	}
+	s.pendingReplay = &r
+}
+
+// retryPendingReplay replays the pending range, if any.
+func (s *Service) retryPendingReplay(ctx context.Context) {
+	if s.pendingReplay == nil {
+		return
+	}
+	r := *s.pendingReplay
+	s.pendingReplay = nil
+	if err := s.replay(ctx, r); err != nil {
+		s.logger.Warn("historical replay retry failed", "error", err.Error())
+	}
 }
 
 // Close cleans up the blockchain connection.
