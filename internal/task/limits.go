@@ -32,10 +32,6 @@ const (
 // computed from what this parser understands, so anything else is refused.
 var strictParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
-// lenientParser reads schedules created before the strict rule, so they still
-// count toward the limits.
-var lenientParser = cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
-
 // ValidationError is a malformed request; the REST endpoint answers 400.
 type ValidationError struct{ Message string }
 
@@ -84,6 +80,9 @@ type dailyProfile struct {
 }
 
 func profileSchedule(s cron.Schedule, from time.Time) dailyProfile {
+	if interval, ok := s.(intervalSchedule); ok && interval.every < 24*time.Hour {
+		return interval.profile(from)
+	}
 	end := from.Add(scheduleHorizon)
 	var p dailyProfile
 	for t := s.Next(from); !t.IsZero() && t.Before(end) && len(p.days) <= maxFiringDays; {
@@ -163,6 +162,9 @@ type openTasks struct {
 	recurring      []cron.Schedule
 	recurringCount int
 	pendingOneTime int
+	// Recurring tasks whose stored schedule cannot be read, so their runs
+	// cannot be counted.
+	unreadableRecurring int
 }
 
 func summarizeOpenTasks(rows []pgdb.ListOpenTasksForUsersRow, now time.Time) openTasks {
@@ -171,17 +173,20 @@ func summarizeOpenTasks(rows []pgdb.ListOpenTasksForUsersRow, now time.Time) ope
 		switch r.Type {
 		case string(TaskTypeRecurring):
 			o.recurringCount++
-			if s, err := lenientParser.Parse(r.Time); err == nil {
+			if s, err := parseStoredSchedule(r.Time); err == nil {
 				o.recurring = append(o.recurring, s)
+			} else {
+				o.unreadableRecurring++
 			}
 		case string(TaskTypeOneTime):
 			// A one-time task runs at its first fire time after creation. Rows are
 			// not marked completed afterwards, so whether it is still pending is
-			// worked out from the schedule.
-			if s, err := lenientParser.Parse(r.Time); err == nil {
-				if next := s.Next(r.CreatedAt); !next.IsZero() && next.After(now) {
-					o.pendingOneTime++
-				}
+			// worked out from the schedule. One whose schedule cannot be read
+			// is counted as pending.
+			if s, err := parseStoredSchedule(r.Time); err != nil {
+				o.pendingOneTime++
+			} else if next := s.Next(r.CreatedAt); !next.IsZero() && next.After(now) {
+				o.pendingOneTime++
 			}
 		}
 	}
@@ -309,6 +314,9 @@ func checkCreationLimits(ctx context.Context, q pgdb.Querier, tier tiers.Config,
 		return &LimitError{Reason: "active_recurring_tasks", Tier: tier.Name, Message: fmt.Sprintf(
 			"The limit of %d active recurring tasks on the %s plan has been reached.",
 			tier.TaskMaxActiveRecurring, tier.DisplayName)}
+	}
+	if open.unreadableRecurring > 0 {
+		return &LimitError{Reason: "unreadable_schedule", Tier: tier.Name, Message: "An existing recurring task has a schedule that cannot be checked against the plan's limits. Delete that task before adding another recurring task."}
 	}
 	if gap := minInterval(schedule, now); gap > 0 && gap < tier.TaskMinInterval {
 		return &LimitError{Reason: "min_interval", Tier: tier.Name, Message: fmt.Sprintf(
