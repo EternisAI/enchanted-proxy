@@ -11,6 +11,7 @@ package deepr
 import (
 	"context"
 	"database/sql"
+	"net/url"
 	"os"
 	"sync"
 	"testing"
@@ -41,6 +42,29 @@ func openTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
+// openTestDBInZone opens the test database with the session time zone set.
+func openTestDBInZone(t *testing.T, zone string) *sql.DB {
+	t.Helper()
+	openTestDB(t) // skips without a database, and migrates
+	u, err := url.Parse(os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := u.Query()
+	params.Set("timezone", zone)
+	u.RawQuery = params.Encode()
+	db, err := sql.Open("postgres", u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	var got string
+	if err := db.QueryRow(`SELECT current_setting('TimeZone')`).Scan(&got); err != nil || got != zone {
+		t.Fatalf("session time zone = %q, %v; want %s", got, err, zone)
+	}
+	return db
+}
+
 // insertRun adds a run that started daysAgo days ago, lasting dur, in status.
 func insertRun(t *testing.T, db *sql.DB, userID, status string, daysAgo int, dur time.Duration) {
 	t.Helper()
@@ -50,7 +74,7 @@ func insertRun(t *testing.T, db *sql.DB, userID, status string, daysAgo int, dur
 		completed = started.Add(dur)
 	}
 	if _, err := db.Exec(`INSERT INTO deep_research_runs (user_id, chat_id, run_date, status, started_at, completed_at)
-		VALUES ($1, $2, (CURRENT_DATE - $3::int), $4, $5, $6)`,
+		VALUES ($1, $2, ((NOW() AT TIME ZONE 'UTC')::date - $3::int), $4, $5, $6)`,
 		userID, uuid.NewString(), daysAgo, status, started, completed); err != nil {
 		t.Fatal(err)
 	}
@@ -192,5 +216,40 @@ func TestParallelStartsAreAdmittedOneAtATime(t *testing.T) {
 	prefix := "dr-pro-" + uuid.NewString() + "-"
 	if got := startInParallel(t, s, 30, tiers.TierPro, func(i int) string { return prefix + string(rune('a'+i)) }); got != 5 {
 		t.Errorf("30 accounts with room for 5 more runs: %d admitted, want 5", got)
+	}
+}
+
+// Runs are dated and counted by the UTC date, whatever the session's time zone.
+// At any time of day, one of these two zones has a date other than UTC's.
+func TestRunDatesAreUTC(t *testing.T) {
+	for _, zone := range []string{"Pacific/Kiritimati", "Pacific/Pago_Pago"} { // UTC+14, UTC-11
+		t.Run(zone, func(t *testing.T) {
+			db := openTestDBInZone(t, zone)
+			q := pgdb.New(db)
+			ctx := context.Background()
+			user := "dr-utc-" + uuid.NewString()
+			id, err := q.CreateDeepResearchRun(ctx, pgdb.CreateDeepResearchRunParams{UserID: user, ChatID: uuid.NewString()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var runDate string
+			if err := db.QueryRow(`SELECT run_date::text FROM deep_research_runs WHERE id = $1`, id).Scan(&runDate); err != nil {
+				t.Fatal(err)
+			}
+			if today := time.Now().UTC().Format("2006-01-02"); runDate != today {
+				t.Errorf("run_date = %s, want the UTC date %s", runDate, today)
+			}
+			for name, count := range map[string]func(context.Context, []string) (int64, error){
+				"today":     q.GetUserDeepResearchRunsToday,
+				"this week": q.GetUserDeepResearchRunsThisWeek,
+			} {
+				if n, err := count(ctx, []string{user}); err != nil || n != 1 {
+					t.Errorf("%s = %d, %v; want 1", name, n, err)
+				}
+			}
+			if n, err := q.CountDeepResearchRunsToday(ctx); err != nil || n < 1 {
+				t.Errorf("service-wide today = %d, %v; want at least 1", n, err)
+			}
+		})
 	}
 }

@@ -32,7 +32,7 @@ func (q *Queries) CompleteDeepResearchRun(ctx context.Context, arg CompleteDeepR
 const countDeepResearchRunsToday = `-- name: CountDeepResearchRunsToday :one
 SELECT COUNT(*) as run_count
 FROM deep_research_runs
-WHERE run_date = CURRENT_DATE
+WHERE run_date = (NOW() AT TIME ZONE 'UTC')::date
   AND NOT (status = 'failed' AND completed_at IS NOT NULL AND completed_at < started_at + INTERVAL '60 seconds')
 `
 
@@ -46,7 +46,7 @@ func (q *Queries) CountDeepResearchRunsToday(ctx context.Context) (int64, error)
 
 const createDeepResearchRun = `-- name: CreateDeepResearchRun :one
 INSERT INTO deep_research_runs (user_id, chat_id, run_date, status, tier)
-VALUES ($1, $2, CURRENT_DATE, 'active', $3)
+VALUES ($1, $2, (NOW() AT TIME ZONE 'UTC')::date, 'active', $3)
 RETURNING id
 `
 
@@ -56,6 +56,8 @@ type CreateDeepResearchRunParams struct {
 	Tier   *string `json:"tier"`
 }
 
+// run_date is the UTC date, whatever the session's time zone; the counts below
+// use the same.
 func (q *Queries) CreateDeepResearchRun(ctx context.Context, arg CreateDeepResearchRunParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, createDeepResearchRun, arg.UserID, arg.ChatID, arg.Tier)
 	var id int64
@@ -145,7 +147,7 @@ const getUserDeepResearchRunsThisWeek = `-- name: GetUserDeepResearchRunsThisWee
 SELECT COUNT(*) as run_count
 FROM deep_research_runs
 WHERE user_id = ANY($1::text[])
-  AND run_date >= DATE_TRUNC('week', CURRENT_DATE)::date
+  AND run_date >= DATE_TRUNC('week', NOW() AT TIME ZONE 'UTC')::date
   AND NOT (status = 'failed' AND completed_at IS NOT NULL AND completed_at < started_at + INTERVAL '60 seconds')
 `
 
@@ -161,7 +163,7 @@ const getUserDeepResearchRunsToday = `-- name: GetUserDeepResearchRunsToday :one
 SELECT COUNT(*) as run_count
 FROM deep_research_runs
 WHERE user_id = ANY($1::text[])
-  AND run_date = CURRENT_DATE
+  AND run_date = (NOW() AT TIME ZONE 'UTC')::date
   AND NOT (status = 'failed' AND completed_at IS NOT NULL AND completed_at < started_at + INTERVAL '60 seconds')
 `
 

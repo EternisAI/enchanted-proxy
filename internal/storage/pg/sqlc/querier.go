@@ -21,6 +21,8 @@ type Querier interface {
 	CountInviteCodesByRedeemedBy(ctx context.Context, redeemedBy *string) (int64, error)
 	CountProblemReportsByUserID(ctx context.Context, userID string) (int64, error)
 	CountTaskCreationsSince(ctx context.Context, arg CountTaskCreationsSinceParams) (int64, error)
+	// run_date is the UTC date, whatever the session's time zone; the counts below
+	// use the same.
 	CreateDeepResearchRun(ctx context.Context, arg CreateDeepResearchRunParams) (int64, error)
 	CreateFaiPaymentIntent(ctx context.Context, arg CreateFaiPaymentIntentParams) error
 	CreateInviteCode(ctx context.Context, arg CreateInviteCodeParams) (InviteCode, error)
