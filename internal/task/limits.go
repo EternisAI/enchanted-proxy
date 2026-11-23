@@ -2,7 +2,9 @@ package task
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -186,33 +188,96 @@ func summarizeOpenTasks(rows []pgdb.ListOpenTasksForUsersRow, now time.Time) ope
 	return o
 }
 
-// checkCreationLimits applies the caller's plan limits to a new task. It returns
-// a *ValidationError, a *LimitError, or another error when a lookup failed.
-func (s *Service) checkCreationLimits(ctx context.Context, userID string, req *CreateTaskRequest, now time.Time) error {
+// admissionTx runs fn in a database transaction that holds the admission locks
+// of userIDs, so checking the limits and recording a new task cannot interleave
+// with another admission for the same quota group, on any server instance.
+type admissionTx func(ctx context.Context, userIDs []string, fn func(q pgdb.Querier) error) error
+
+// lockedAdmission is the admissionTx backed by Postgres advisory locks.
+func lockedAdmission(db *sql.DB) admissionTx {
+	return func(ctx context.Context, userIDs []string, fn func(q pgdb.Querier) error) error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to begin task admission: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+
+		q := pgdb.New(tx)
+		// One lock per account, taken in a fixed order, so admissions for
+		// overlapping groups cannot deadlock.
+		keys := slices.Clone(userIDs)
+		slices.Sort(keys)
+		for _, id := range slices.Compact(keys) {
+			if err := q.LockTaskAdmission(ctx, id); err != nil {
+				return fmt.Errorf("failed to lock task admission: %w", err)
+			}
+		}
+		if err := fn(q); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+}
+
+// admitTask applies the caller's plan limits to a new task and, if it fits,
+// inserts it as pending and records its creation in the same locked
+// transaction. Concurrent requests are admitted one at a time, and a task is
+// never active without its creation counted. It returns a *ValidationError, a
+// *LimitError, or another error when a lookup or write failed.
+func (s *Service) admitTask(ctx context.Context, userID, taskID string, req *CreateTaskRequest, now time.Time) (pgdb.Task, error) {
 	if utf8.RuneCountInString(req.TaskName) > maxTaskNameRunes {
-		return &ValidationError{Message: fmt.Sprintf("The task name can be at most %d characters.", maxTaskNameRunes)}
+		return pgdb.Task{}, &ValidationError{Message: fmt.Sprintf("The task name can be at most %d characters.", maxTaskNameRunes)}
 	}
 	if utf8.RuneCountInString(req.TaskText) > maxTaskTextRunes {
-		return &ValidationError{Message: fmt.Sprintf("The task text can be at most %d characters.", maxTaskTextRunes)}
+		return pgdb.Task{}, &ValidationError{Message: fmt.Sprintf("The task text can be at most %d characters.", maxTaskTextRunes)}
 	}
 	schedule, err := parseStrictSchedule(req.Time)
 	if err != nil {
-		return err
+		return pgdb.Task{}, err
 	}
 
-	if s.tierLookup == nil || s.groups == nil {
-		return fmt.Errorf("task limits are not configured")
+	if s.tierLookup == nil || s.groups == nil || s.admission == nil {
+		return pgdb.Task{}, fmt.Errorf("task limits are not configured")
 	}
 	tier, _, err := s.tierLookup.GetUserTierConfig(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("failed to look up plan: %w", err)
+		return pgdb.Task{}, fmt.Errorf("failed to look up plan: %w", err)
 	}
 	userIDs, err := s.groups.UserIDs(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("failed to look up quota group: %w", err)
+		return pgdb.Task{}, fmt.Errorf("failed to look up quota group: %w", err)
 	}
 
-	created, err := s.queries.CountTaskCreationsSince(ctx, pgdb.CountTaskCreationsSinceParams{
+	var dbTask pgdb.Task
+	err = s.admission(ctx, userIDs, func(q pgdb.Querier) error {
+		if err := checkCreationLimits(ctx, q, tier, userIDs, req, schedule, now); err != nil {
+			return err
+		}
+		dbTask, err = q.CreateTask(ctx, pgdb.CreateTaskParams{
+			TaskID:   taskID,
+			UserID:   userID,
+			ChatID:   req.ChatID,
+			TaskName: req.TaskName,
+			TaskText: req.TaskText,
+			Type:     req.Type,
+			Time:     req.Time,
+			Status:   string(TaskStatusPending),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create task: %w", err)
+		}
+		if err := q.RecordTaskCreation(ctx, pgdb.RecordTaskCreationParams{UserID: userID, TaskID: taskID}); err != nil {
+			return fmt.Errorf("failed to record task creation: %w", err)
+		}
+		return nil
+	})
+	return dbTask, err
+}
+
+// checkCreationLimits applies the plan limits to a new task, counting over the
+// quota group. It must run under the group's admission lock.
+func checkCreationLimits(ctx context.Context, q pgdb.Querier, tier tiers.Config, userIDs []string, req *CreateTaskRequest, schedule cron.Schedule, now time.Time) error {
+	created, err := q.CountTaskCreationsSince(ctx, pgdb.CountTaskCreationsSinceParams{
 		UserIds: userIDs,
 		Since:   now.Add(-24 * time.Hour),
 	})
@@ -225,7 +290,7 @@ func (s *Service) checkCreationLimits(ctx context.Context, userID string, req *C
 			tier.TaskMaxCreatedPerDay, tier.DisplayName)}
 	}
 
-	rows, err := s.queries.ListOpenTasksForUsers(ctx, userIDs)
+	rows, err := q.ListOpenTasksForUsers(ctx, userIDs)
 	if err != nil {
 		return fmt.Errorf("failed to list tasks: %w", err)
 	}

@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,11 +33,13 @@ type Service struct {
 	namespace      string
 	tierLookup     TierLookup
 	groups         GroupLookup
+	admission      admissionTx
 }
 
 // NewService creates a new task service. tierLookup and groups supply the plan
-// limits applied when a task is created.
-func NewService(endpoint, namespace, apiKey string, queries pgdb.Querier, tierLookup TierLookup, groups GroupLookup, logger *logger.Logger) (*Service, error) {
+// limits applied when a task is created; db serializes the admission of new
+// tasks per quota group.
+func NewService(endpoint, namespace, apiKey string, db *sql.DB, queries pgdb.Querier, tierLookup TierLookup, groups GroupLookup, logger *logger.Logger) (*Service, error) {
 	log := logger.WithComponent("task-service")
 
 	if endpoint == "" || namespace == "" || apiKey == "" {
@@ -78,6 +81,7 @@ func NewService(endpoint, namespace, apiKey string, queries pgdb.Querier, tierLo
 		namespace:      namespace,
 		tierLookup:     tierLookup,
 		groups:         groups,
+		admission:      lockedAdmission(db),
 	}, nil
 }
 
@@ -85,6 +89,21 @@ func NewService(endpoint, namespace, apiKey string, queries pgdb.Querier, tierLo
 func (s *Service) Close() {
 	if s.temporalClient != nil {
 		s.temporalClient.Close()
+	}
+}
+
+// releaseTask removes a task that was admitted but could not be scheduled,
+// together with its recorded creation, so the attempt does not count toward
+// the owner's limits. A failure here leaves the rows in place, which counts
+// the attempt rather than losing it.
+func (s *Service) releaseTask(ctx context.Context, taskID, userID string) {
+	log := s.logger.WithContext(ctx).WithComponent("task-service")
+	if _, err := s.queries.DeleteTask(ctx, pgdb.DeleteTaskParams{TaskID: taskID, UserID: userID}); err != nil {
+		log.Error("failed to delete unscheduled task", slog.String("error", err.Error()), slog.String("task_id", taskID))
+		return
+	}
+	if err := s.queries.DeleteTaskCreation(ctx, taskID); err != nil {
+		log.Error("failed to release task creation", slog.String("error", err.Error()), slog.String("task_id", taskID))
 	}
 }
 
@@ -117,32 +136,22 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 		return nil, fmt.Errorf("time cannot be empty")
 	}
 
-	if err := s.checkCreationLimits(ctx, userID, req, time.Now()); err != nil {
-		log.Warn("refusing task", slog.String("error", err.Error()))
-		return nil, err
-	}
-
 	// Generate a unique task ID
 	taskID := uuid.New().String()
 	log.Info("generated task ID", slog.String("task_id", taskID))
 
-	// Create task in database
-	log.Info("creating task in database")
-	dbTask, err := s.queries.CreateTask(ctx, pgdb.CreateTaskParams{
-		TaskID:   taskID,
-		UserID:   userID,
-		ChatID:   req.ChatID,
-		TaskName: req.TaskName,
-		TaskText: req.TaskText,
-		Type:     req.Type,
-		Time:     req.Time,
-		Status:   string(TaskStatusPending),
-	})
+	// Check the plan limits, insert the task as pending and record its creation,
+	// under the quota group's admission lock.
+	dbTask, err := s.admitTask(ctx, userID, taskID, req, time.Now())
 	if err != nil {
-		log.Error("failed to create task in database",
-			slog.String("error", err.Error()),
-			slog.String("user_id", userID))
-		return nil, fmt.Errorf("failed to create task: %w", err)
+		var limitErr *LimitError
+		var validationErr *ValidationError
+		if errors.As(err, &limitErr) || errors.As(err, &validationErr) {
+			log.Warn("refusing task", slog.String("error", err.Error()))
+		} else {
+			log.Error("failed to admit task", slog.String("error", err.Error()), slog.String("user_id", userID))
+		}
+		return nil, err
 	}
 	log.Info("task created in database successfully", slog.String("task_id", taskID))
 
@@ -177,11 +186,7 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 			log.Error("invalid cron expression for one-time task",
 				slog.String("error", err.Error()),
 				slog.String("cron_expression", req.Time))
-			// Clean up the database entry
-			_, _ = s.queries.DeleteTask(ctx, pgdb.DeleteTaskParams{
-				TaskID: taskID,
-				UserID: userID,
-			})
+			s.releaseTask(ctx, taskID, userID)
 			return nil, fmt.Errorf("invalid cron expression: %w", err)
 		}
 		nextRun := schedule.Next(time.Now())
@@ -219,12 +224,8 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 		log.Error("failed to create temporal schedule",
 			slog.String("error", err.Error()),
 			slog.String("task_id", taskID))
-		// Clean up the database entry
 		log.Info("cleaning up database entry due to schedule creation failure")
-		_, _ = s.queries.DeleteTask(ctx, pgdb.DeleteTaskParams{
-			TaskID: taskID,
-			UserID: userID,
-		})
+		s.releaseTask(ctx, taskID, userID)
 		return nil, fmt.Errorf("failed to create schedule: %w", err)
 	}
 
@@ -245,19 +246,14 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 			slog.String("task_id", taskID))
 		// Status update failed - try to clean up the schedule
 		if delErr := scheduleHandle.Delete(ctx); delErr != nil {
+			// The schedule may still run, so its rows stay and keep it counted.
 			log.Error("failed to delete schedule during cleanup",
 				slog.String("error", delErr.Error()),
 				slog.String("task_id", taskID))
+			return nil, fmt.Errorf("failed to update task status: %w", err)
 		}
-		_, _ = s.queries.DeleteTask(ctx, pgdb.DeleteTaskParams{
-			TaskID: taskID,
-			UserID: userID,
-		})
+		s.releaseTask(ctx, taskID, userID)
 		return nil, fmt.Errorf("failed to update task status: %w", err)
-	}
-
-	if err := s.queries.RecordTaskCreation(ctx, pgdb.RecordTaskCreationParams{UserID: userID, TaskID: taskID}); err != nil {
-		log.Error("failed to record task creation", slog.String("error", err.Error()), slog.String("task_id", taskID))
 	}
 
 	task := &Task{

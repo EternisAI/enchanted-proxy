@@ -178,6 +178,7 @@ func main() {
 			config.AppConfig.TemporalEndpoint,
 			config.AppConfig.TemporalNamespace,
 			config.AppConfig.TemporalAPIKey,
+			db.DB,
 			db.Queries,
 			requestTrackingService,
 			quota.NewGroups(),

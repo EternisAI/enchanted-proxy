@@ -2,6 +2,8 @@ package task
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	stderrors "errors"
 	"log/slog"
 	"net/http"
@@ -97,12 +99,45 @@ func TestExceedsRunsPerDay(t *testing.T) {
 	}
 }
 
-// limitQuerier answers the limit checks from canned rows.
+// limitQuerier answers the limit checks from canned rows and records writes.
 type limitQuerier struct {
 	pgdb.Querier
 	created int64
 	rows    []pgdb.ListOpenTasksForUsersRow
 	userIDs []string
+
+	inAdmission      bool     // set by the admission runner while fn runs
+	writes           []string // in order; "@" marks a write made under the admission lock
+	lockedFor        []string // the user IDs the admission locked
+	deletedTasks     []string
+	releasedCreation []string
+}
+
+func (q *limitQuerier) write(name string) {
+	if q.inAdmission {
+		name = "@" + name
+	}
+	q.writes = append(q.writes, name)
+}
+
+func (q *limitQuerier) CreateTask(_ context.Context, arg pgdb.CreateTaskParams) (pgdb.Task, error) {
+	q.write("task")
+	return pgdb.Task{TaskID: arg.TaskID, UserID: arg.UserID, ChatID: arg.ChatID, Type: arg.Type, Time: arg.Time, Status: arg.Status}, nil
+}
+
+func (q *limitQuerier) RecordTaskCreation(context.Context, pgdb.RecordTaskCreationParams) error {
+	q.write("creation")
+	return nil
+}
+
+func (q *limitQuerier) DeleteTask(_ context.Context, arg pgdb.DeleteTaskParams) (sql.Result, error) {
+	q.deletedTasks = append(q.deletedTasks, arg.TaskID)
+	return driver.RowsAffected(1), nil
+}
+
+func (q *limitQuerier) DeleteTaskCreation(_ context.Context, taskID string) error {
+	q.releasedCreation = append(q.releasedCreation, taskID)
+	return nil
 }
 
 func (q *limitQuerier) CountTaskCreationsSince(_ context.Context, arg pgdb.CountTaskCreationsSinceParams) (int64, error) {
@@ -132,7 +167,19 @@ func newLimitService(tier tiers.Tier, q *limitQuerier) *Service {
 		queries:    q,
 		tierLookup: fixedTier{tier: tier},
 		groups:     twoMemberGroup{},
+		admission: func(_ context.Context, userIDs []string, fn func(pgdb.Querier) error) error {
+			q.lockedFor = userIDs
+			q.inAdmission = true
+			defer func() { q.inAdmission = false }()
+			return fn(q)
+		},
 	}
+}
+
+// admitErr runs the admission of one task and returns only its error.
+func (s *Service) admitErr(ctx context.Context, userID string, req *CreateTaskRequest, now time.Time) error {
+	_, err := s.admitTask(ctx, userID, "task-1", req, now)
+	return err
 }
 
 func recurringRows(exprs ...string) []pgdb.ListOpenTasksForUsersRow {
@@ -188,7 +235,7 @@ func TestCreationLimits(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := newLimitService(tt.tier, tt.q).checkCreationLimits(context.Background(), "user-1", tt.req, now)
+			err := newLimitService(tt.tier, tt.q).admitErr(context.Background(), "user-1", tt.req, now)
 			if got := limitReason(err); got != tt.reason {
 				t.Fatalf("reason = %q (err %v), want %q", got, err, tt.reason)
 			}
@@ -201,14 +248,14 @@ func TestCreationLimits(t *testing.T) {
 
 func TestCreationLimitsCountTheWholeGroup(t *testing.T) {
 	q := &limitQuerier{}
-	_ = newLimitService(tiers.TierFree, q).checkCreationLimits(context.Background(), "user-1", request("recurring", "0 9 * * *"), now)
+	_ = newLimitService(tiers.TierFree, q).admitErr(context.Background(), "user-1", request("recurring", "0 9 * * *"), now)
 	if strings.Join(q.userIDs, ",") != "user-1,other-account" {
 		t.Fatalf("counted user IDs %v, want the caller's group", q.userIDs)
 	}
 }
 
 func TestLimitMessagesNameThePlanAndLimit(t *testing.T) {
-	err := newLimitService(tiers.TierFree, &limitQuerier{}).checkCreationLimits(context.Background(), "user-1", request("recurring", "* * * * *"), now)
+	err := newLimitService(tiers.TierFree, &limitQuerier{}).admitErr(context.Background(), "user-1", request("recurring", "* * * * *"), now)
 	if err == nil || !strings.Contains(err.Error(), "Free plan") || !strings.Contains(err.Error(), "once an hour") {
 		t.Fatalf("message %q lacks the plan or the limit", err)
 	}
@@ -219,12 +266,12 @@ func TestTextBounds(t *testing.T) {
 	long := request("recurring", "0 9 * * *")
 	long.TaskName = strings.Repeat("é", 101)
 	var v *ValidationError
-	if err := s.checkCreationLimits(context.Background(), "user-1", long, now); !stderrors.As(err, &v) {
+	if err := s.admitErr(context.Background(), "user-1", long, now); !stderrors.As(err, &v) {
 		t.Errorf("101-character name: err = %v, want ValidationError", err)
 	}
 	long = request("recurring", "0 9 * * *")
 	long.TaskText = strings.Repeat("a", 2001)
-	if err := s.checkCreationLimits(context.Background(), "user-1", long, now); !stderrors.As(err, &v) {
+	if err := s.admitErr(context.Background(), "user-1", long, now); !stderrors.As(err, &v) {
 		t.Errorf("2001-character text: err = %v, want ValidationError", err)
 	}
 }

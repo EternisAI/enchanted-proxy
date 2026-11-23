@@ -89,6 +89,16 @@ func (q *Queries) DeleteTask(ctx context.Context, arg DeleteTaskParams) (sql.Res
 	return q.db.ExecContext(ctx, deleteTask, arg.TaskID, arg.UserID)
 }
 
+const deleteTaskCreation = `-- name: DeleteTaskCreation :exec
+DELETE FROM task_creations WHERE task_id = $1
+`
+
+// Releases the creation recorded for a task whose schedule could not be set up.
+func (q *Queries) DeleteTaskCreation(ctx context.Context, taskID string) error {
+	_, err := q.db.ExecContext(ctx, deleteTaskCreation, taskID)
+	return err
+}
+
 const getAllActiveTasks = `-- name: GetAllActiveTasks :many
 SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at FROM tasks
 WHERE status = 'active'
@@ -275,6 +285,18 @@ func (q *Queries) ListOpenTasksForUsers(ctx context.Context, userIds []string) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockTaskAdmission = `-- name: LockTaskAdmission :exec
+SELECT pg_advisory_xact_lock(hashtextextended('task_admission:' || $1::text, 0))
+`
+
+// Holds an account's task admission lock until the transaction ends, so the
+// limit checks and the new task's rows cannot interleave with another
+// admission for the same account.
+func (q *Queries) LockTaskAdmission(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, lockTaskAdmission, userID)
+	return err
 }
 
 const recordTaskCreation = `-- name: RecordTaskCreation :exec
