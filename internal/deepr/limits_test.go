@@ -30,6 +30,7 @@ type runCountQuerier struct {
 	userIDs                            []string
 	created                            int
 	reapedBefore                       time.Time
+	reapHasDeadline                    bool
 	mu                                 sync.Mutex
 }
 
@@ -62,10 +63,11 @@ func (q *runCountQuerier) CreateDeepResearchRun(context.Context, pgdb.CreateDeep
 	q.created++
 	return 1, nil
 }
-func (q *runCountQuerier) FailStaleDeepResearchRuns(_ context.Context, before time.Time) (int64, error) {
+func (q *runCountQuerier) FailStaleDeepResearchRuns(ctx context.Context, before time.Time) (int64, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.reapedBefore = before
+	_, q.reapHasDeadline = ctx.Deadline()
 	return 0, nil
 }
 
@@ -332,6 +334,19 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 }
 
+// A negative setting gives the default: a negative ceiling must not switch the
+// ceiling off. 0 still does.
+func TestLoadConfigIgnoresNegativeValues(t *testing.T) {
+	t.Setenv("DEEP_RESEARCH_MAX_RUNS_PER_DAY", "-1")
+	if got := LoadConfig(nil).MaxRunsPerDay; got != 25 {
+		t.Errorf("ceiling from -1 = %d, want the default 25", got)
+	}
+	t.Setenv("DEEP_RESEARCH_MAX_RUNS_PER_DAY", "0")
+	if got := LoadConfig(nil).MaxRunsPerDay; got != 0 {
+		t.Errorf("ceiling from 0 = %d, want 0 (off)", got)
+	}
+}
+
 func TestNextMonday(t *testing.T) {
 	for in, want := range map[string]string{
 		"2026-11-22T10:00:00Z": "2026-11-23", // Sunday
@@ -353,11 +368,14 @@ func TestRunReaperCutoff(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		q.mu.Lock()
-		before := q.reapedBefore
+		before, hasDeadline := q.reapedBefore, q.reapHasDeadline
 		q.mu.Unlock()
 		if !before.IsZero() {
 			if age := time.Since(before); age < 89*time.Minute || age > 91*time.Minute {
 				t.Errorf("reaped runs older than %v, want 1h30m (run length plus margin)", age)
+			}
+			if !hasDeadline {
+				t.Error("the sweep has no deadline")
 			}
 			break
 		}

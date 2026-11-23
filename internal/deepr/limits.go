@@ -54,7 +54,9 @@ type Config struct {
 	// Admission serializes starts; without it, limited starts are refused.
 	Admission Admission
 
-	// MaxRunsPerDay is the service-wide ceiling on runs started per UTC day; 0 disables it.
+	// MaxRunsPerDay is the service-wide ceiling on runs per UTC day, counted as
+	// the allowances count them: a run that failed within 60 seconds of starting
+	// does not count. 0 disables it.
 	MaxRunsPerDay int
 	// FreeRunProviders are the sign-in providers whose accounts may use the free run.
 	FreeRunProviders []string
@@ -75,6 +77,10 @@ const (
 // staleRunMargin is how long past the longest possible run an active run is
 // left before the reaper marks it failed.
 const staleRunMargin = 30 * time.Minute
+
+// reapTimeout bounds one reaper sweep, so a sweep blocked on a lock does not
+// hold up the ones after it.
+const reapTimeout = time.Minute
 
 // LoadConfig reads the settings from the environment, with defaults that sit just
 // above the largest measured normal run.
@@ -98,8 +104,10 @@ func LoadConfig(groups GroupLookup) *Config {
 	}
 }
 
+// envInt reads a whole number of at least 0; anything else gives def, so a
+// negative ceiling cannot switch the ceiling off.
 func envInt(name string, def int) int {
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name))); err == nil {
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name))); err == nil && v >= 0 {
 		return v
 	}
 	return def
@@ -271,7 +279,9 @@ func RunReaper(ctx context.Context, queries pgdb.Querier, cfg *Config, log *logg
 	}
 	reap := func() {
 		cutoff := time.Now().Add(-(maxRun + staleRunMargin))
-		n, err := queries.FailStaleDeepResearchRuns(ctx, cutoff)
+		sweepCtx, cancel := context.WithTimeout(ctx, reapTimeout)
+		defer cancel()
+		n, err := queries.FailStaleDeepResearchRuns(sweepCtx, cutoff)
 		if err != nil {
 			log.Error("failed to reap stale deep research runs", slog.String("error", err.Error()))
 			return
