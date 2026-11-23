@@ -45,3 +45,13 @@ INSERT INTO task_creations (user_id, task_id) VALUES ($1, $2);
 SELECT COUNT(*) FROM task_creations
 WHERE user_id = ANY(sqlc.arg(user_ids)::text[])
   AND created_at > sqlc.arg(since);
+
+-- name: LockTaskAdmission :exec
+-- Holds an account's task admission lock until the transaction ends, so the
+-- limit checks and the new task's rows cannot interleave with another
+-- admission for the same account.
+SELECT pg_advisory_xact_lock(hashtextextended('task_admission:' || sqlc.arg(user_id)::text, 0));
+
+-- name: DeleteTaskCreation :exec
+-- Releases the creation recorded for a task whose schedule could not be set up.
+DELETE FROM task_creations WHERE task_id = $1;

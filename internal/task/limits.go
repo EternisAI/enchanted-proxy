@@ -2,7 +2,9 @@ package task
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -16,12 +18,14 @@ const (
 	maxTaskNameRunes = 100
 	maxTaskTextRunes = 2000
 
-	// Schedules are examined over the next year, which covers every
-	// month, day-of-month and weekday combination a cron can express.
-	scheduleHorizon = 366 * 24 * time.Hour
+	// Schedules are examined over the next five years. A schedule restricted
+	// by both day-of-month and day-of-week runs only on days matching both,
+	// as in Temporal, and such a day (Monday, January 1) can be years away.
+	// Five years is also as far ahead as robfig/cron looks for a run.
+	scheduleHorizon = 5 * 366 * 24 * time.Hour
 	// Bounds on the work per schedule: firing days in the horizon, and runs in one
 	// day (a minute-level schedule runs 1,440 times a day; one with seconds more).
-	maxFiringDays       = 400
+	maxFiringDays       = 5*366 + 1
 	maxRunsPerDayWalked = 100_000
 )
 
@@ -29,10 +33,6 @@ const (
 // descriptors such as @every or @daily. Temporal accepts more, but limits are
 // computed from what this parser understands, so anything else is refused.
 var strictParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-
-// lenientParser reads schedules created before the strict rule, so they still
-// count toward the limits.
-var lenientParser = cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
 // ValidationError is a malformed request; the REST endpoint answers 400.
 type ValidationError struct{ Message string }
@@ -59,29 +59,33 @@ type GroupLookup interface {
 	UserIDs(ctx context.Context, userID string) ([]string, error)
 }
 
-// parseStrictSchedule parses a schedule for a new task.
+// parseStrictSchedule parses a schedule for a new task. Like Temporal with no
+// time zone set, it reads the schedule in UTC, not the server's local zone.
 func parseStrictSchedule(expr string) (cron.Schedule, error) {
 	trimmed := strings.TrimSpace(expr)
 	if strings.HasPrefix(trimmed, "@") || strings.Contains(trimmed, "TZ=") || len(strings.Fields(trimmed)) != 5 {
 		return nil, &ValidationError{Message: "The schedule must be a standard five-field cron expression: minute hour day-of-month month day-of-week."}
 	}
-	s, err := strictParser.Parse(trimmed)
+	s, err := strictParser.Parse("CRON_TZ=UTC " + trimmed)
 	if err != nil {
 		return nil, &ValidationError{Message: "The schedule is not a valid cron expression: " + err.Error()}
 	}
-	return s, nil
+	return withTemporalDays(s), nil
 }
 
 // dailyProfile describes when a schedule runs within the horizon. Cron fields
 // multiply out, so on every day a schedule fires it fires at the same times of
 // day; the profile keeps those times and the list of firing days, which avoids
-// walking every single run.
+// walking every single run. Schedules are read in UTC, so days are UTC days.
 type dailyProfile struct {
 	timesOfDay []time.Duration // offsets from midnight UTC, ascending
 	days       []time.Time     // UTC midnights of the firing days, ascending
 }
 
 func profileSchedule(s cron.Schedule, from time.Time) dailyProfile {
+	if interval, ok := s.(intervalSchedule); ok && interval.every < 24*time.Hour {
+		return interval.profile(from)
+	}
 	end := from.Add(scheduleHorizon)
 	var p dailyProfile
 	for t := s.Next(from); !t.IsZero() && t.Before(end) && len(p.days) <= maxFiringDays; {
@@ -129,12 +133,12 @@ func minInterval(s cron.Schedule, from time.Time) time.Duration {
 // exceedsRunsPerDay reports whether the schedules together run more than limit
 // times on any UTC day within the horizon.
 func exceedsRunsPerDay(schedules []cron.Schedule, from time.Time, limit int) bool {
-	perDay := map[time.Time]int{}
+	perDay := map[int64]int{} // runs per UTC day, keyed by the day's Unix time
 	for _, s := range schedules {
 		p := profileSchedule(s, from)
 		for _, day := range p.days {
-			perDay[day] += len(p.timesOfDay)
-			if perDay[day] > limit {
+			perDay[day.Unix()] += len(p.timesOfDay)
+			if perDay[day.Unix()] > limit {
 				return true
 			}
 		}
@@ -161,6 +165,9 @@ type openTasks struct {
 	recurring      []cron.Schedule
 	recurringCount int
 	pendingOneTime int
+	// Recurring tasks whose stored schedule cannot be read, so their runs
+	// cannot be counted.
+	unreadableRecurring int
 }
 
 func summarizeOpenTasks(rows []pgdb.ListOpenTasksForUsersRow, now time.Time) openTasks {
@@ -169,50 +176,128 @@ func summarizeOpenTasks(rows []pgdb.ListOpenTasksForUsersRow, now time.Time) ope
 		switch r.Type {
 		case string(TaskTypeRecurring):
 			o.recurringCount++
-			if s, err := lenientParser.Parse(r.Time); err == nil {
+			if s, err := parseStoredSchedule(r.Time); err == nil {
 				o.recurring = append(o.recurring, s)
+			} else {
+				o.unreadableRecurring++
 			}
 		case string(TaskTypeOneTime):
 			// A one-time task runs at its first fire time after creation. Rows are
 			// not marked completed afterwards, so whether it is still pending is
-			// worked out from the schedule.
-			if s, err := lenientParser.Parse(r.Time); err == nil {
-				if next := s.Next(r.CreatedAt); !next.IsZero() && next.After(now) {
-					o.pendingOneTime++
-				}
+			// worked out from the schedule. One whose schedule cannot be read
+			// is counted as pending.
+			if s, err := parseStoredSchedule(r.Time); err != nil {
+				o.pendingOneTime++
+			} else if next := s.Next(r.CreatedAt); !next.IsZero() && next.After(now) {
+				o.pendingOneTime++
 			}
 		}
 	}
 	return o
 }
 
-// checkCreationLimits applies the caller's plan limits to a new task. It returns
-// a *ValidationError, a *LimitError, or another error when a lookup failed.
-func (s *Service) checkCreationLimits(ctx context.Context, userID string, req *CreateTaskRequest, now time.Time) error {
+// admissionTx runs fn in a database transaction that holds the admission locks
+// of userIDs, so checking the limits and recording a new task cannot interleave
+// with another admission for the same quota group, on any server instance.
+type admissionTx func(ctx context.Context, userIDs []string, fn func(q pgdb.Querier) error) error
+
+// lockedAdmission is the admissionTx backed by Postgres advisory locks.
+func lockedAdmission(db *sql.DB) admissionTx {
+	return func(ctx context.Context, userIDs []string, fn func(q pgdb.Querier) error) error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to begin task admission: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+
+		q := pgdb.New(tx)
+		// One lock per account, taken in a fixed order, so admissions for
+		// overlapping groups cannot deadlock.
+		keys := slices.Clone(userIDs)
+		slices.Sort(keys)
+		for _, id := range slices.Compact(keys) {
+			if err := q.LockTaskAdmission(ctx, id); err != nil {
+				return fmt.Errorf("failed to lock task admission: %w", err)
+			}
+		}
+		if err := fn(q); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+}
+
+// admitTask applies the caller's plan limits to a new task and, if it fits,
+// inserts it as pending and records its creation in the same locked
+// transaction. Concurrent requests are admitted one at a time, and a task is
+// never active without its creation counted. It returns a *ValidationError, a
+// *LimitError, or another error when a lookup or write failed.
+func (s *Service) admitTask(ctx context.Context, userID, taskID string, req *CreateTaskRequest, now time.Time) (pgdb.Task, error) {
 	if utf8.RuneCountInString(req.TaskName) > maxTaskNameRunes {
-		return &ValidationError{Message: fmt.Sprintf("The task name can be at most %d characters.", maxTaskNameRunes)}
+		return pgdb.Task{}, &ValidationError{Message: fmt.Sprintf("The task name can be at most %d characters.", maxTaskNameRunes)}
 	}
 	if utf8.RuneCountInString(req.TaskText) > maxTaskTextRunes {
-		return &ValidationError{Message: fmt.Sprintf("The task text can be at most %d characters.", maxTaskTextRunes)}
+		return pgdb.Task{}, &ValidationError{Message: fmt.Sprintf("The task text can be at most %d characters.", maxTaskTextRunes)}
 	}
 	schedule, err := parseStrictSchedule(req.Time)
 	if err != nil {
-		return err
+		return pgdb.Task{}, err
+	}
+	// The limits are checked over the horizon; a schedule whose first run lies
+	// beyond it cannot be checked, and a task that far off serves no one.
+	if next := schedule.Next(now); next.IsZero() || !next.Before(now.Add(scheduleHorizon)) {
+		return pgdb.Task{}, &ValidationError{Message: "The schedule does not run within the next five years."}
+	}
+	// A one-time expression with runs minutes apart names several times, not
+	// one; it is refused so that one is chosen.
+	if req.Type == string(TaskTypeOneTime) {
+		if gap := minInterval(schedule, now); gap > 0 && gap <= oneTimeWindow {
+			return pgdb.Task{}, &ValidationError{Message: "A one-time task needs a schedule that runs at a single time; this one runs again within five minutes."}
+		}
 	}
 
-	if s.tierLookup == nil || s.groups == nil {
-		return fmt.Errorf("task limits are not configured")
+	if s.tierLookup == nil || s.groups == nil || s.admission == nil {
+		return pgdb.Task{}, fmt.Errorf("task limits are not configured")
 	}
 	tier, _, err := s.tierLookup.GetUserTierConfig(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("failed to look up plan: %w", err)
+		return pgdb.Task{}, fmt.Errorf("failed to look up plan: %w", err)
 	}
 	userIDs, err := s.groups.UserIDs(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("failed to look up quota group: %w", err)
+		return pgdb.Task{}, fmt.Errorf("failed to look up quota group: %w", err)
 	}
 
-	created, err := s.queries.CountTaskCreationsSince(ctx, pgdb.CountTaskCreationsSinceParams{
+	var dbTask pgdb.Task
+	err = s.admission(ctx, userIDs, func(q pgdb.Querier) error {
+		if err := checkCreationLimits(ctx, q, tier, userIDs, req, schedule, now); err != nil {
+			return err
+		}
+		dbTask, err = q.CreateTask(ctx, pgdb.CreateTaskParams{
+			TaskID:   taskID,
+			UserID:   userID,
+			ChatID:   req.ChatID,
+			TaskName: req.TaskName,
+			TaskText: req.TaskText,
+			Type:     req.Type,
+			Time:     req.Time,
+			Status:   string(TaskStatusPending),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create task: %w", err)
+		}
+		if err := q.RecordTaskCreation(ctx, pgdb.RecordTaskCreationParams{UserID: userID, TaskID: taskID}); err != nil {
+			return fmt.Errorf("failed to record task creation: %w", err)
+		}
+		return nil
+	})
+	return dbTask, err
+}
+
+// checkCreationLimits applies the plan limits to a new task, counting over the
+// quota group. It must run under the group's admission lock.
+func checkCreationLimits(ctx context.Context, q pgdb.Querier, tier tiers.Config, userIDs []string, req *CreateTaskRequest, schedule cron.Schedule, now time.Time) error {
+	created, err := q.CountTaskCreationsSince(ctx, pgdb.CountTaskCreationsSinceParams{
 		UserIds: userIDs,
 		Since:   now.Add(-24 * time.Hour),
 	})
@@ -225,7 +310,7 @@ func (s *Service) checkCreationLimits(ctx context.Context, userID string, req *C
 			tier.TaskMaxCreatedPerDay, tier.DisplayName)}
 	}
 
-	rows, err := s.queries.ListOpenTasksForUsers(ctx, userIDs)
+	rows, err := q.ListOpenTasksForUsers(ctx, userIDs)
 	if err != nil {
 		return fmt.Errorf("failed to list tasks: %w", err)
 	}
@@ -244,6 +329,9 @@ func (s *Service) checkCreationLimits(ctx context.Context, userID string, req *C
 		return &LimitError{Reason: "active_recurring_tasks", Tier: tier.Name, Message: fmt.Sprintf(
 			"The limit of %d active recurring tasks on the %s plan has been reached.",
 			tier.TaskMaxActiveRecurring, tier.DisplayName)}
+	}
+	if open.unreadableRecurring > 0 {
+		return &LimitError{Reason: "unreadable_schedule", Tier: tier.Name, Message: "An existing recurring task has a schedule that cannot be checked against the plan's limits. Delete that task before adding another recurring task."}
 	}
 	if gap := minInterval(schedule, now); gap > 0 && gap < tier.TaskMinInterval {
 		return &LimitError{Reason: "min_interval", Tier: tier.Name, Message: fmt.Sprintf(
