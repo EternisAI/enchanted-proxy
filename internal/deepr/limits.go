@@ -30,8 +30,6 @@ type Config struct {
 	// FreeRunProviders are the sign-in providers whose accounts may use the free run.
 	FreeRunProviders []string
 
-	// BackendSecret authenticates the proxy to the deep research backend.
-	BackendSecret string
 	// Per-run budget sent to the backend, which clamps it to its own maxima.
 	RunMaxLLMCalls int
 	RunMaxTokens   int
@@ -40,7 +38,6 @@ type Config struct {
 
 // Headers the backend reads on the WebSocket handshake.
 const (
-	headerBackendSecret = "X-Deep-Research-Secret"
 	headerRunMaxCalls   = "X-Run-Max-LLM-Calls"
 	headerRunMaxTokens  = "X-Run-Max-Tokens"
 	headerRunMaxSeconds = "X-Run-Max-Seconds"
@@ -66,7 +63,6 @@ func LoadConfig(groups GroupLookup) *Config {
 		Groups:           groups,
 		MaxRunsPerDay:    envInt("DEEP_RESEARCH_MAX_RUNS_PER_DAY", 25),
 		FreeRunProviders: providers,
-		BackendSecret:    os.Getenv("DEEP_RESEARCH_SHARED_SECRET"),
 		RunMaxLLMCalls:   envInt("DEEP_RESEARCH_RUN_MAX_LLM_CALLS", 300),
 		RunMaxTokens:     envInt("DEEP_RESEARCH_RUN_MAX_TOKENS", 6_500_000),
 		RunMaxSeconds:    envInt("DEEP_RESEARCH_RUN_MAX_SECONDS", 12_600),
@@ -80,14 +76,11 @@ func envInt(name string, def int) int {
 	return def
 }
 
-// backendHeaders are sent when connecting to the backend: the shared secret and the run's budget.
+// backendHeaders carry the run's budget to the backend on the WebSocket handshake.
 func (c *Config) backendHeaders() http.Header {
 	h := http.Header{}
 	if c == nil {
 		return h
-	}
-	if c.BackendSecret != "" {
-		h.Set(headerBackendSecret, c.BackendSecret)
 	}
 	h.Set(headerRunMaxCalls, strconv.Itoa(c.RunMaxLLMCalls))
 	h.Set(headerRunMaxTokens, strconv.Itoa(c.RunMaxTokens))

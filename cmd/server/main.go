@@ -199,9 +199,6 @@ func main() {
 	deeprStorage := deepr.NewDBStorage(logger.WithComponent("deepr-storage"), db.DB)
 	deeprSessionManager := deepr.NewSessionManager(logger.WithComponent("deepr-session"))
 	deeprConfig := deepr.LoadConfig(quotaGroups)
-	if deeprConfig.BackendSecret == "" {
-		log.Warn("DEEP_RESEARCH_SHARED_SECRET is not set: the deep research backend will refuse connections that require it")
-	}
 
 	// Mark runs failed that stayed active past any possible run length.
 	deeprReaperCtx, deeprReaperCancel := context.WithCancel(context.Background())

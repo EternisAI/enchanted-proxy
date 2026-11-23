@@ -184,19 +184,19 @@ func TestClientInputGating(t *testing.T) {
 }
 
 func TestBackendHeaders(t *testing.T) {
-	h := (&Config{BackendSecret: "s3cret", RunMaxLLMCalls: 300, RunMaxTokens: 6_500_000, RunMaxSeconds: 12_600}).backendHeaders()
-	for k, want := range map[string]string{
-		"X-Deep-Research-Secret": "s3cret",
-		"X-Run-Max-LLM-Calls":    "300",
-		"X-Run-Max-Tokens":       "6500000",
-		"X-Run-Max-Seconds":      "12600",
-	} {
-		if got := h.Get(k); got != want {
-			t.Errorf("%s = %q, want %q", k, got, want)
+	h := (&Config{RunMaxLLMCalls: 300, RunMaxTokens: 6_500_000, RunMaxSeconds: 12_600}).backendHeaders()
+	want := map[string]string{
+		"X-Run-Max-LLM-Calls": "300",
+		"X-Run-Max-Tokens":    "6500000",
+		"X-Run-Max-Seconds":   "12600",
+	}
+	for k, v := range want {
+		if got := h.Get(k); got != v {
+			t.Errorf("%s = %q, want %q", k, got, v)
 		}
 	}
-	if h := (&Config{}).backendHeaders(); h.Get("X-Deep-Research-Secret") != "" {
-		t.Error("an empty secret was sent")
+	if len(h) != len(want) {
+		t.Errorf("sent headers %v, want only the run budget", h)
 	}
 }
 
