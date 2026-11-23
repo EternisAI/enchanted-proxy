@@ -2,11 +2,11 @@ package task
 
 import (
 	"context"
-	stderrors "errors"
 	"slices"
 	"testing"
 
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 )
 
@@ -45,27 +45,114 @@ func TestAdmissionLocksTheWholeGroup(t *testing.T) {
 	}
 }
 
-// fakeTemporal is a Temporal client whose schedule creation fails.
-type fakeTemporal struct{ client.Client }
+// scriptedTemporal is a Temporal client whose schedule calls have set outcomes.
+type scriptedTemporal struct {
+	client.Client
+	schedules *scriptedSchedules
+}
 
-func (fakeTemporal) ScheduleClient() client.ScheduleClient { return failingSchedules{} }
+func (c scriptedTemporal) ScheduleClient() client.ScheduleClient { return c.schedules }
 
-type failingSchedules struct{ client.ScheduleClient }
+type scriptedSchedules struct {
+	client.ScheduleClient
+	createErr   error // returned by Create
+	describeErr error // returned by Describe; nil means the schedule exists
 
-func (failingSchedules) Create(context.Context, client.ScheduleOptions) (client.ScheduleHandle, error) {
-	return nil, stderrors.New("temporal unavailable")
+	options      client.ScheduleOptions // what Create was asked for
+	createCtxErr error                  // the context's state when Create was called
+	deleted      bool
+}
+
+func (s *scriptedSchedules) Create(ctx context.Context, o client.ScheduleOptions) (client.ScheduleHandle, error) {
+	s.options, s.createCtxErr = o, ctx.Err()
+	if s.createErr != nil {
+		return nil, s.createErr
+	}
+	return &scriptedHandle{schedules: s, id: o.ID}, nil
+}
+
+func (s *scriptedSchedules) GetHandle(_ context.Context, id string) client.ScheduleHandle {
+	return &scriptedHandle{schedules: s, id: id}
+}
+
+type scriptedHandle struct {
+	client.ScheduleHandle
+	schedules *scriptedSchedules
+	id        string
+}
+
+func (h *scriptedHandle) GetID() string { return h.id }
+
+func (h *scriptedHandle) Describe(context.Context) (*client.ScheduleDescription, error) {
+	if h.schedules.describeErr != nil {
+		return nil, h.schedules.describeErr
+	}
+	return &client.ScheduleDescription{}, nil
+}
+
+func (h *scriptedHandle) Delete(context.Context) error {
+	h.schedules.deleted = true
+	return nil
+}
+
+func scriptedService(q *limitQuerier, schedules *scriptedSchedules) *Service {
+	s := newLimitService(tiers.TierFree, q)
+	s.temporalClient = scriptedTemporal{schedules: schedules}
+	return s
 }
 
 func TestCreateTaskReleasesAnUnscheduledTask(t *testing.T) {
 	for _, kind := range []string{"recurring", "one_time"} {
 		q := &limitQuerier{}
-		s := newLimitService(tiers.TierFree, q)
-		s.temporalClient = fakeTemporal{}
-		if _, err := s.CreateTask(context.Background(), "user-1", request(kind, "0 9 24 12 *")); err == nil {
+		schedules := &scriptedSchedules{createErr: serviceerror.NewUnavailable("down"), describeErr: serviceerror.NewNotFound("no schedule")}
+		if _, err := scriptedService(q, schedules).CreateTask(context.Background(), "user-1", request(kind, "0 9 24 12 *")); err == nil {
 			t.Fatalf("%s: CreateTask succeeded with Temporal down", kind)
 		}
 		if len(q.deletedTasks) != 1 || !slices.Equal(q.deletedTasks, q.releasedCreation) {
 			t.Fatalf("%s: deleted tasks %v, released creations %v; want the admitted task released", kind, q.deletedTasks, q.releasedCreation)
 		}
+	}
+}
+
+// A failed call does not prove that Temporal did not create the schedule.
+func TestCreateTaskKeepsAScheduleCreatedDespiteAnError(t *testing.T) {
+	q := &limitQuerier{}
+	schedules := &scriptedSchedules{createErr: serviceerror.NewDeadlineExceeded("late")}
+	task, err := scriptedService(q, schedules).CreateTask(context.Background(), "user-1", request("recurring", "0 9 * * *"))
+	if err != nil {
+		t.Fatalf("CreateTask failed although the schedule exists: %v", err)
+	}
+	if task.Status != string(TaskStatusActive) || !slices.Equal(q.statusUpdates, []string{string(TaskStatusActive)}) {
+		t.Fatalf("task %+v, status updates %v; want it active", task, q.statusUpdates)
+	}
+	if len(q.deletedTasks) != 0 || len(q.releasedCreation) != 0 {
+		t.Fatalf("released a task whose schedule exists: %v %v", q.deletedTasks, q.releasedCreation)
+	}
+}
+
+func TestCreateTaskKeepsTheTaskCountedWhenTheOutcomeIsUnknown(t *testing.T) {
+	q := &limitQuerier{}
+	schedules := &scriptedSchedules{createErr: serviceerror.NewDeadlineExceeded("late"), describeErr: serviceerror.NewUnavailable("down")}
+	if _, err := scriptedService(q, schedules).CreateTask(context.Background(), "user-1", request("recurring", "0 9 * * *")); err == nil {
+		t.Fatal("CreateTask succeeded with the schedule's state unknown")
+	}
+	if len(q.deletedTasks) != 0 || len(q.releasedCreation) != 0 {
+		t.Fatalf("released a task whose schedule may exist: %v %v", q.deletedTasks, q.releasedCreation)
+	}
+}
+
+// A client that disconnects after admission interrupts neither the scheduling
+// nor the cleanup.
+func TestCreateTaskIgnoresAClientThatLeaves(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	q := &limitQuerier{}
+	schedules := &scriptedSchedules{createErr: serviceerror.NewUnavailable("down"), describeErr: serviceerror.NewNotFound("no schedule")}
+	_, _ = scriptedService(q, schedules).CreateTask(ctx, "user-1", request("recurring", "0 9 * * *"))
+	if schedules.createCtxErr != nil {
+		t.Errorf("Create ran on a cancelled context: %v", schedules.createCtxErr)
+	}
+	if q.deleteCtxErr != nil || len(q.releasedCreation) != 1 {
+		t.Errorf("cleanup context error %v, released %v; want the task released", q.deleteCtxErr, q.releasedCreation)
 	}
 }

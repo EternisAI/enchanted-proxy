@@ -115,6 +115,8 @@ type limitQuerier struct {
 	lockedFor        []string // the user IDs the admission locked
 	deletedTasks     []string
 	releasedCreation []string
+	deleteCtxErr     error // the context's state when the task row was deleted
+	statusUpdates    []string
 }
 
 func (q *limitQuerier) write(name string) {
@@ -134,7 +136,13 @@ func (q *limitQuerier) RecordTaskCreation(context.Context, pgdb.RecordTaskCreati
 	return nil
 }
 
-func (q *limitQuerier) DeleteTask(_ context.Context, arg pgdb.DeleteTaskParams) (sql.Result, error) {
+func (q *limitQuerier) UpdateTaskStatus(_ context.Context, arg pgdb.UpdateTaskStatusParams) error {
+	q.statusUpdates = append(q.statusUpdates, arg.Status)
+	return nil
+}
+
+func (q *limitQuerier) DeleteTask(ctx context.Context, arg pgdb.DeleteTaskParams) (sql.Result, error) {
+	q.deleteCtxErr = ctx.Err()
 	q.deletedTasks = append(q.deletedTasks, arg.TaskID)
 	return driver.RowsAffected(1), nil
 }

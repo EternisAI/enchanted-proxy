@@ -14,12 +14,28 @@ import (
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/google/uuid"
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 )
 
 // scheduleCatchupWindow is how late a schedule may still take an action it
 // missed while Temporal was unavailable.
 const scheduleCatchupWindow = 5 * time.Minute
+
+// After a task is admitted, the steps that schedule it or clean up after a
+// failure run on contexts that keep the request's values but not its
+// cancellation: a client that disconnects must not interrupt them halfway.
+// Each step is bounded on its own.
+const (
+	scheduleSetupTimeout = 30 * time.Second
+	cleanupTimeout       = 10 * time.Second
+)
+
+// detached returns a context with ctx's values, without its cancellation, and
+// with its own deadline.
+func detached(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
+}
 
 // ErrInvalidChatID is returned when a task's chat ID is malformed.
 var ErrInvalidChatID = errors.New("invalid chat_id")
@@ -93,16 +109,38 @@ func (s *Service) Close() {
 
 // releaseTask removes a task that was admitted but could not be scheduled,
 // together with its recorded creation, so the attempt does not count toward
-// the owner's limits. A failure here leaves the rows in place, which counts
-// the attempt rather than losing it.
+// the owner's limits. Call it only once no schedule can run. It does not stop
+// when the client disconnects. A failure here leaves the rows in place, which
+// counts the attempt rather than losing it.
 func (s *Service) releaseTask(ctx context.Context, taskID, userID string) {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
+	ctx, cancel := detached(ctx, cleanupTimeout)
+	defer cancel()
 	if _, err := s.queries.DeleteTask(ctx, pgdb.DeleteTaskParams{TaskID: taskID, UserID: userID}); err != nil {
 		log.Error("failed to delete unscheduled task", slog.String("error", err.Error()), slog.String("task_id", taskID))
 		return
 	}
 	if err := s.queries.DeleteTaskCreation(ctx, taskID); err != nil {
 		log.Error("failed to release task creation", slog.String("error", err.Error()), slog.String("task_id", taskID))
+	}
+}
+
+// scheduleExists reports whether Temporal holds a schedule. It is asked when
+// creating the schedule returned an error, because a failed call does not
+// prove that the schedule was not created. An error means the answer is
+// unknown.
+func (s *Service) scheduleExists(ctx context.Context, scheduleID string) (bool, error) {
+	ctx, cancel := detached(ctx, cleanupTimeout)
+	defer cancel()
+	_, err := s.temporalClient.ScheduleClient().GetHandle(ctx, scheduleID).Describe(ctx)
+	var notFound *serviceerror.NotFound
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.As(err, &notFound):
+		return false, nil
+	default:
+		return false, err
 	}
 }
 
@@ -217,14 +255,30 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 	log.Info("creating temporal schedule",
 		slog.String("schedule_id", taskID),
 		slog.String("task_queue", "task-queue"))
-	scheduleHandle, err := s.temporalClient.ScheduleClient().Create(ctx, scheduleOptions)
+	schedules := s.temporalClient.ScheduleClient()
+	setupCtx, cancelSetup := detached(ctx, scheduleSetupTimeout)
+	defer cancelSetup()
+	scheduleHandle, err := schedules.Create(setupCtx, scheduleOptions)
 	if err != nil {
 		log.Error("failed to create temporal schedule",
 			slog.String("error", err.Error()),
 			slog.String("task_id", taskID))
-		log.Info("cleaning up database entry due to schedule creation failure")
-		s.releaseTask(ctx, taskID, userID)
-		return nil, fmt.Errorf("failed to create schedule: %w", err)
+		// The schedule may have been created even so. Its task is released only
+		// once Temporal confirms there is no schedule.
+		exists, checkErr := s.scheduleExists(ctx, taskID)
+		switch {
+		case checkErr != nil:
+			log.Error("could not confirm whether the schedule exists; the task stays counted",
+				slog.String("error", checkErr.Error()),
+				slog.String("task_id", taskID))
+			return nil, fmt.Errorf("failed to create schedule: %w", err)
+		case !exists:
+			log.Info("cleaning up database entry due to schedule creation failure")
+			s.releaseTask(ctx, taskID, userID)
+			return nil, fmt.Errorf("failed to create schedule: %w", err)
+		}
+		log.Warn("the schedule was created despite the error; continuing", slog.String("task_id", taskID))
+		scheduleHandle = schedules.GetHandle(ctx, taskID)
 	}
 
 	log.Info("temporal schedule created successfully",
@@ -234,7 +288,9 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 
 	// Update task status to active
 	log.Info("updating task status to active")
-	err = s.queries.UpdateTaskStatus(ctx, pgdb.UpdateTaskStatusParams{
+	activateCtx, cancelActivate := detached(ctx, cleanupTimeout)
+	defer cancelActivate()
+	err = s.queries.UpdateTaskStatus(activateCtx, pgdb.UpdateTaskStatusParams{
 		TaskID: taskID,
 		Status: string(TaskStatusActive),
 	})
@@ -243,7 +299,9 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 			slog.String("error", err.Error()),
 			slog.String("task_id", taskID))
 		// Status update failed - try to clean up the schedule
-		if delErr := scheduleHandle.Delete(ctx); delErr != nil {
+		deleteCtx, cancelDelete := detached(ctx, cleanupTimeout)
+		defer cancelDelete()
+		if delErr := scheduleHandle.Delete(deleteCtx); delErr != nil {
 			// The schedule may still run, so its rows stay and keep it counted.
 			log.Error("failed to delete schedule during cleanup",
 				slog.String("error", delErr.Error()),

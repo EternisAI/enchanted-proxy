@@ -2,12 +2,10 @@ package task
 
 import (
 	"context"
-	stderrors "errors"
 	"testing"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
-	"go.temporal.io/sdk/client"
 )
 
 // Temporal runs a schedule only when every field matches; it does not have
@@ -49,31 +47,10 @@ func TestDayMatchingDoesNotOvercountRunsPerDay(t *testing.T) {
 	}
 }
 
-// capturingTemporal records the schedule CreateTask asks for, then fails it.
-type capturingTemporal struct {
-	client.Client
-	opts *client.ScheduleOptions
-}
-
-func (c capturingTemporal) ScheduleClient() client.ScheduleClient {
-	return capturingSchedules{opts: c.opts}
-}
-
-type capturingSchedules struct {
-	client.ScheduleClient
-	opts *client.ScheduleOptions
-}
-
-func (c capturingSchedules) Create(_ context.Context, o client.ScheduleOptions) (client.ScheduleHandle, error) {
-	*c.opts = o
-	return nil, stderrors.New("captured")
-}
-
 func TestOneTimeTaskEndsAfterTemporalsFirstRun(t *testing.T) {
-	var opts client.ScheduleOptions
-	s := newLimitService(tiers.TierFree, &limitQuerier{})
-	s.temporalClient = capturingTemporal{opts: &opts}
-	_, _ = s.CreateTask(context.Background(), "user-1", request("one_time", "0 9 1 * MON"))
+	schedules := &scriptedSchedules{}
+	_, _ = scriptedService(&limitQuerier{}, schedules).CreateTask(context.Background(), "user-1", request("one_time", "0 9 1 * MON"))
+	opts := schedules.options
 
 	first := time.Now().UTC()
 	for first = first.Truncate(24 * time.Hour); first.Day() != 1 || first.Weekday() != time.Monday; first = first.Add(24 * time.Hour) {
