@@ -13,7 +13,6 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/google/uuid"
-	"github.com/robfig/cron/v3"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 )
@@ -179,9 +178,8 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 	// For one-time tasks, we need to limit execution to just once
 	if req.Type == string(TaskTypeOneTime) {
 		log.Info("configuring one-time schedule with cron", slog.String("cron_expression", req.Time))
-		// Parse the cron to find next fire time, then set EndAt shortly after
-		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-		schedule, err := parser.Parse(req.Time)
+		// Find the next fire time as Temporal will, then set EndAt shortly after
+		schedule, err := parseStrictSchedule(req.Time)
 		if err != nil {
 			log.Error("invalid cron expression for one-time task",
 				slog.String("error", err.Error()),

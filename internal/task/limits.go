@@ -57,17 +57,18 @@ type GroupLookup interface {
 	UserIDs(ctx context.Context, userID string) ([]string, error)
 }
 
-// parseStrictSchedule parses a schedule for a new task.
+// parseStrictSchedule parses a schedule for a new task. Like Temporal with no
+// time zone set, it reads the schedule in UTC, not the server's local zone.
 func parseStrictSchedule(expr string) (cron.Schedule, error) {
 	trimmed := strings.TrimSpace(expr)
 	if strings.HasPrefix(trimmed, "@") || strings.Contains(trimmed, "TZ=") || len(strings.Fields(trimmed)) != 5 {
 		return nil, &ValidationError{Message: "The schedule must be a standard five-field cron expression: minute hour day-of-month month day-of-week."}
 	}
-	s, err := strictParser.Parse(trimmed)
+	s, err := strictParser.Parse("CRON_TZ=UTC " + trimmed)
 	if err != nil {
 		return nil, &ValidationError{Message: "The schedule is not a valid cron expression: " + err.Error()}
 	}
-	return s, nil
+	return withTemporalDays(s), nil
 }
 
 // dailyProfile describes when a schedule runs within the horizon. Cron fields

@@ -19,8 +19,9 @@ import (
 //   - 7 fields: second in front, year at the end
 //   - @yearly, @monthly, @weekly, @daily, @hourly
 //   - @every <interval>[/<phase>], with units s, m, h or d
-//   - an optional CRON_TZ= or TZ= prefix and a trailing # comment
+//   - an optional CRON_TZ= or TZ= prefix (UTC without one) and a trailing # comment
 //   - 7 as well as 0 for Sunday
+//   - a run only on days matching both day-of-month and day-of-week
 
 // storedFieldsParser reads the time fields once they are normalized to six,
 // seconds first; storedDescriptorParser reads the @ shorthands.
@@ -40,7 +41,7 @@ func parseStoredSchedule(expr string) (cron.Schedule, error) {
 	}
 	s = strings.TrimSpace(s)
 
-	tz := ""
+	tz := "CRON_TZ=UTC "
 	if strings.HasPrefix(s, "CRON_TZ=") || strings.HasPrefix(s, "TZ=") {
 		prefix, rest, _ := strings.Cut(s, " ")
 		_, zone, _ := strings.Cut(prefix, "=")
@@ -71,10 +72,11 @@ func parseStoredSchedule(expr string) (cron.Schedule, error) {
 	}
 	fields[4] = sundayAsZero(fields[4])
 
-	spec, err := storedFieldsParser.Parse(tz + second + " " + strings.Join(fields, " "))
+	parsed, err := storedFieldsParser.Parse(tz + second + " " + strings.Join(fields, " "))
 	if err != nil {
 		return nil, err
 	}
+	spec := withTemporalDays(parsed)
 	if year == "*" {
 		return spec, nil
 	}
@@ -219,4 +221,39 @@ func parseYearField(field string) (func(int) bool, error) {
 		}
 		return false
 	}, nil
+}
+
+// robfigStarBit marks a field written as * (robfig/cron/v3's starBit).
+const robfigStarBit uint64 = 1 << 63
+
+// bothDays applies Temporal's rule that a time matches only when every field
+// matches. robfig, like traditional cron, runs on a day that matches either the
+// day-of-month or the day-of-week when both are restricted.
+type bothDays struct{ spec *cron.SpecSchedule }
+
+func (b bothDays) Next(t time.Time) time.Time {
+	// Each pass moves to a later day; robfig itself looks five years ahead.
+	for range 5 * 366 {
+		n := b.spec.Next(t)
+		if n.IsZero() || b.matches(n) {
+			return n
+		}
+		y, m, d := n.Date()
+		t = time.Date(y, m, d+1, 0, 0, 0, 0, n.Location()).Add(-time.Nanosecond)
+	}
+	return time.Time{}
+}
+
+func (b bothDays) matches(t time.Time) bool {
+	return b.spec.Dom&(1<<uint(t.Day())) != 0 && b.spec.Dow&(1<<uint(t.Weekday())) != 0
+}
+
+// withTemporalDays gives a parsed schedule Temporal's day matching. It only
+// changes schedules whose day-of-month and day-of-week are both restricted.
+func withTemporalDays(s cron.Schedule) cron.Schedule {
+	spec, ok := s.(*cron.SpecSchedule)
+	if !ok || spec.Dom&robfigStarBit != 0 || spec.Dow&robfigStarBit != 0 {
+		return s
+	}
+	return bothDays{spec: spec}
 }
