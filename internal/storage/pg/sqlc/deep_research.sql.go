@@ -190,6 +190,19 @@ func (q *Queries) HasActiveDeepResearchRun(ctx context.Context, userIds []string
 	return has_active, err
 }
 
+const lockDeepResearchAdmission = `-- name: LockDeepResearchAdmission :exec
+SELECT pg_advisory_xact_lock(hashtextextended('deep_research_admission', 0))
+`
+
+// Holds the deep research admission lock until the transaction ends, so the
+// limit checks and the new run's row cannot interleave with another start.
+// One lock covers the whole service: starts are rare, and the service-wide
+// daily ceiling counts every account's runs.
+func (q *Queries) LockDeepResearchAdmission(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, lockDeepResearchAdmission)
+	return err
+}
+
 const updateDeepResearchRunTokens = `-- name: UpdateDeepResearchRunTokens :exec
 UPDATE deep_research_runs
 SET model_tokens_used = $2,

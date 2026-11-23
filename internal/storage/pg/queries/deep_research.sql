@@ -1,3 +1,10 @@
+-- name: LockDeepResearchAdmission :exec
+-- Holds the deep research admission lock until the transaction ends, so the
+-- limit checks and the new run's row cannot interleave with another start.
+-- One lock covers the whole service: starts are rare, and the service-wide
+-- daily ceiling counts every account's runs.
+SELECT pg_advisory_xact_lock(hashtextextended('deep_research_admission', 0));
+
 -- name: CreateDeepResearchRun :one
 INSERT INTO deep_research_runs (user_id, chat_id, run_date, status, tier)
 VALUES ($1, $2, CURRENT_DATE, 'active', $3)

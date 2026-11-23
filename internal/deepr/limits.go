@@ -2,6 +2,8 @@ package deepr
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,9 +23,36 @@ type GroupLookup interface {
 	UserIDs(ctx context.Context, userID string) ([]string, error)
 }
 
+// Admission runs fn in a database transaction that holds the deep research
+// admission lock, so checking the limits and inserting a run cannot interleave
+// with another start, on any server instance.
+type Admission func(ctx context.Context, fn func(q pgdb.Querier) error) error
+
+// LockedAdmission is the Admission backed by a Postgres advisory lock.
+func LockedAdmission(db *sql.DB) Admission {
+	return func(ctx context.Context, fn func(q pgdb.Querier) error) error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to begin deep research admission: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+
+		q := pgdb.New(tx)
+		if err := q.LockDeepResearchAdmission(ctx); err != nil {
+			return fmt.Errorf("failed to lock deep research admission: %w", err)
+		}
+		if err := fn(q); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+}
+
 // Config holds the deep research limits and backend settings, read once at startup.
 type Config struct {
 	Groups GroupLookup
+	// Admission serializes starts; without it, limited starts are refused.
+	Admission Admission
 
 	// MaxRunsPerDay is the service-wide ceiling on runs started per UTC day; 0 disables it.
 	MaxRunsPerDay int
@@ -97,15 +126,54 @@ func readable(fe *errors.ForbiddenError) *errors.ForbiddenError {
 	return fe
 }
 
-// checkRunAllowed decides whether the caller may start a new run. Every path
-// that starts a run calls it. It fails closed: a lookup error refuses the run.
-func (s *Service) checkRunAllowed(ctx context.Context, userID string, identity *auth.Identity, tier tiers.Config) *errors.ForbiddenError {
+// startRun checks the caller's limits and, if a new run is allowed, records it
+// as active. Every path that starts a run calls it. The check and the insert
+// run under the admission lock, so concurrent starts are admitted one at a
+// time and cannot all pass the same check. It returns the run's ID, or a
+// refusal, or an error when the run could not be recorded.
+func (s *Service) startRun(ctx context.Context, userID, chatID string, identity *auth.Identity, tier tiers.Config) (int64, *errors.ForbiddenError, error) {
+	create := func(q pgdb.Querier) (int64, error) {
+		return q.CreateDeepResearchRun(ctx, pgdb.CreateDeepResearchRunParams{
+			UserID: userID,
+			ChatID: chatID,
+			Tier:   &tier.Name,
+		})
+	}
+	if !s.deepResearchRateLimitEnabled {
+		runID, err := create(s.queries)
+		return runID, nil, err
+	}
+	if s.cfg == nil || s.cfg.Admission == nil {
+		s.logger.WithContext(ctx).WithComponent("deepr").Error("deep research admission is not configured")
+		return 0, readable(errors.TierValidationFailed("deep research limits are not configured")), nil
+	}
+
+	var runID int64
+	var refusal *errors.ForbiddenError
+	err := s.cfg.Admission(ctx, func(q pgdb.Querier) error {
+		if refusal = s.checkRunAllowed(ctx, q, userID, identity, tier); refusal != nil {
+			return nil
+		}
+		var err error
+		runID, err = create(q)
+		return err
+	})
+	if refusal != nil {
+		return 0, refusal, nil
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	return runID, nil, nil
+}
+
+// checkRunAllowed decides whether the caller may start a new run, reading
+// through q, which startRun gives it inside the admission lock. It fails
+// closed: a lookup error refuses the run.
+func (s *Service) checkRunAllowed(ctx context.Context, q pgdb.Querier, userID string, identity *auth.Identity, tier tiers.Config) *errors.ForbiddenError {
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
 
-	if !s.deepResearchRateLimitEnabled {
-		return nil
-	}
-	if s.cfg == nil || s.cfg.Groups == nil || s.queries == nil {
+	if s.cfg == nil || s.cfg.Groups == nil {
 		log.Error("deep research limits are not configured")
 		return readable(errors.TierValidationFailed("deep research limits are not configured"))
 	}
@@ -130,7 +198,7 @@ func (s *Service) checkRunAllowed(ctx context.Context, userID string, identity *
 		return failed("quota group", err)
 	}
 
-	active, err := s.queries.HasActiveDeepResearchRun(ctx, userIDs)
+	active, err := q.HasActiveDeepResearchRun(ctx, userIDs)
 	if err != nil {
 		return failed("active runs", err)
 	}
@@ -139,7 +207,7 @@ func (s *Service) checkRunAllowed(ctx context.Context, userID string, identity *
 	}
 
 	if tier.DeepResearchLifetimeRuns > 0 {
-		used, err := s.queries.GetUserDeepResearchRunsLifetime(ctx, userIDs)
+		used, err := q.GetUserDeepResearchRunsLifetime(ctx, userIDs)
 		if err != nil {
 			return failed("lifetime runs", err)
 		}
@@ -150,7 +218,7 @@ func (s *Service) checkRunAllowed(ctx context.Context, userID string, identity *
 
 	now := time.Now().UTC()
 	if tier.DeepResearchDailyRuns > 0 {
-		used, err := s.queries.GetUserDeepResearchRunsToday(ctx, userIDs)
+		used, err := q.GetUserDeepResearchRunsToday(ctx, userIDs)
 		if err != nil {
 			return failed("daily runs", err)
 		}
@@ -161,7 +229,7 @@ func (s *Service) checkRunAllowed(ctx context.Context, userID string, identity *
 	}
 
 	if tier.DeepResearchWeeklyRuns > 0 {
-		used, err := s.queries.GetUserDeepResearchRunsThisWeek(ctx, userIDs)
+		used, err := q.GetUserDeepResearchRunsThisWeek(ctx, userIDs)
 		if err != nil {
 			return failed("weekly runs", err)
 		}
@@ -171,7 +239,7 @@ func (s *Service) checkRunAllowed(ctx context.Context, userID string, identity *
 	}
 
 	if s.cfg.MaxRunsPerDay > 0 {
-		started, err := s.queries.CountDeepResearchRunsToday(ctx)
+		started, err := q.CountDeepResearchRunsToday(ctx)
 		if err != nil {
 			return failed("service-wide runs", err)
 		}

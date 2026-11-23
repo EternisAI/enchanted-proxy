@@ -90,6 +90,11 @@ type Querier interface {
 	// Tasks that may still run, for the limit checks: the caller's quota group.
 	ListOpenTasksForUsers(ctx context.Context, userIds []string) ([]ListOpenTasksForUsersRow, error)
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
+	// Holds the deep research admission lock until the transaction ends, so the
+	// limit checks and the new run's row cannot interleave with another start.
+	// One lock covers the whole service: starts are rare, and the service-wide
+	// daily ceiling counts every account's runs.
+	LockDeepResearchAdmission(ctx context.Context) error
 	// Holds an account's task admission lock until the transaction ends, so the
 	// limit checks and the new task's rows cannot interleave with another
 	// admission for the same account.

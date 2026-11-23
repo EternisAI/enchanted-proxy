@@ -478,13 +478,19 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 	if id, ok := auth.IdentityFromContext(ctx); ok {
 		identity = &id
 	}
-	if fe := s.checkRunAllowed(ctx, userID, identity, tierConfig); fe != nil {
+	runID, fe, err := s.startRun(ctx, userID, chatID, identity, tierConfig)
+	if fe != nil {
 		refuse(fe.Error)
+		return
+	}
+	if err != nil {
+		log.Error("failed to create run record", slog.String("error", err.Error()))
+		refuse("Failed to initialize session")
 		return
 	}
 
 	// Create new backend connection
-	s.handleNewConnection(ctx, clientConn, userID, chatID, clientID, tierConfig.Name)
+	s.handleNewConnection(ctx, clientConn, userID, chatID, clientID, runID)
 }
 
 // checkAndTrackSubscription checks user subscription and tracks usage
@@ -811,9 +817,47 @@ func (s *Service) handleClientMessages(sessionCtx context.Context, clientConn *w
 }
 
 // handleNewConnection creates a new backend connection and manages message flow.
-func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket.Conn, userID, chatID, clientID, tier string) {
+func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string, runID int64) {
 	startTime := time.Now()
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
+
+	// The run was recorded at admission. Mark it completed or failed whenever this
+	// returns, including when the backend cannot be reached. Registered first, so
+	// it runs after the session is removed. Uses a fresh context, not ctx.
+	completedSuccessfully := false
+	defer func() {
+		if s.queries == nil || runID <= 0 {
+			return
+		}
+
+		// Determine final status
+		status := "failed"
+		if completedSuccessfully {
+			status = "completed"
+		}
+
+		// Use fresh context with timeout to ensure DB write succeeds
+		completionCtx, cancelCompletion := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelCompletion()
+
+		if err := s.queries.CompleteDeepResearchRun(completionCtx, pgdb.CompleteDeepResearchRunParams{
+			ID:     runID,
+			Status: status,
+		}); err != nil {
+			log.Error("failed to mark deep research run as completed in defer",
+				slog.Int64("run_id", runID),
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("status", status),
+				slog.String("error", err.Error()))
+		} else {
+			log.Info("deep research run marked as completed in defer",
+				slog.Int64("run_id", runID),
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("status", status))
+		}
+	}()
 
 	log.Info("initiating new backend connection",
 		slog.String("user_id", userID),
@@ -886,58 +930,6 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 	// while still allowing cleanup when the session completes
 	sessionCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	// Create run record for token tracking
-	runID, err := s.queries.CreateDeepResearchRun(ctx, pgdb.CreateDeepResearchRunParams{
-		UserID: userID,
-		ChatID: chatID,
-		Tier:   &tier,
-	})
-	if err != nil {
-		log.Error("failed to create run record",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.String("error", err.Error()))
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to initialize session"}`))
-		return
-	}
-
-	// Ensure run is marked as completed when function exits (regardless of how it exits)
-	// Use background context to avoid cancellation issues
-	completedSuccessfully := false
-	defer func() {
-		if s.queries == nil || runID <= 0 {
-			return
-		}
-
-		// Determine final status
-		status := "failed"
-		if completedSuccessfully {
-			status = "completed"
-		}
-
-		// Use fresh context with timeout to ensure DB write succeeds
-		completionCtx, cancelCompletion := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancelCompletion()
-
-		if err := s.queries.CompleteDeepResearchRun(completionCtx, pgdb.CompleteDeepResearchRunParams{
-			ID:     runID,
-			Status: status,
-		}); err != nil {
-			log.Error("failed to mark deep research run as completed in defer",
-				slog.Int64("run_id", runID),
-				slog.String("user_id", userID),
-				slog.String("chat_id", chatID),
-				slog.String("status", status),
-				slog.String("error", err.Error()))
-		} else {
-			log.Info("deep research run marked as completed in defer",
-				slog.Int64("run_id", runID),
-				slog.String("user_id", userID),
-				slog.String("chat_id", chatID),
-				slog.String("status", status))
-		}
-	}()
 
 	// Create and register session with runID for token tracking
 	_ = s.sessionManager.CreateSession(userID, chatID, runID, serverConn, sessionCtx, cancel)

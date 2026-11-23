@@ -12,11 +12,14 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/eternisai/enchanted-proxy/internal/auth"
 	"github.com/eternisai/enchanted-proxy/internal/storage/pg"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
+	"github.com/eternisai/enchanted-proxy/internal/tiers"
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 )
@@ -116,5 +119,78 @@ func TestRunCountingQueries(t *testing.T) {
 	var status string
 	if err := db.QueryRow(`SELECT status FROM deep_research_runs WHERE id = $1`, id).Scan(&status); err != nil || status != "failed" {
 		t.Fatalf("status = %q, %v; want failed", status, err)
+	}
+}
+
+// soloGroup counts each account on its own.
+type soloGroup struct{}
+
+func (soloGroup) UserIDs(_ context.Context, userID string) ([]string, error) {
+	return []string{userID}, nil
+}
+
+// startInParallel starts n runs at once, the i-th for userOf(i), and returns
+// how many were admitted.
+func startInParallel(t *testing.T, s *Service, n int, tier tiers.Tier, userOf func(i int) string) int {
+	t.Helper()
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		admitted int
+	)
+	apple := &auth.Identity{SignInProvider: auth.ProviderApple}
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, fe, err := s.startRun(context.Background(), userOf(i), uuid.NewString(), apple, tiers.Configs[tier])
+			if err != nil {
+				t.Errorf("start %d: %v", i, err)
+				return
+			}
+			if fe == nil {
+				mu.Lock()
+				admitted++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	return admitted
+}
+
+// Parallel starts are admitted one at a time, so they cannot all pass the same
+// check: one account's free run, and the service-wide ceiling.
+func TestParallelStartsAreAdmittedOneAtATime(t *testing.T) {
+	db := openTestDB(t)
+	q := pgdb.New(db)
+	s := &Service{
+		logger:                       testLogger(),
+		queries:                      q,
+		deepResearchRateLimitEnabled: true,
+		cfg: &Config{
+			Groups:           soloGroup{},
+			Admission:        LockedAdmission(db),
+			FreeRunProviders: []string{auth.ProviderApple},
+		},
+	}
+
+	free := "dr-free-" + uuid.NewString()
+	if got := startInParallel(t, s, 30, tiers.TierFree, func(int) string { return free }); got != 1 {
+		t.Errorf("free account: %d of 30 parallel starts admitted, want 1", got)
+	}
+	var runs int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM deep_research_runs WHERE user_id = $1`, free).Scan(&runs); err != nil || runs != 1 {
+		t.Errorf("free account has %d runs, %v; want 1", runs, err)
+	}
+
+	before, err := q.CountDeepResearchRunsToday(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.MaxRunsPerDay = int(before) + 5
+	prefix := "dr-pro-" + uuid.NewString() + "-"
+	if got := startInParallel(t, s, 30, tiers.TierPro, func(i int) string { return prefix + string(rune('a'+i)) }); got != 5 {
+		t.Errorf("30 accounts with room for 5 more runs: %d admitted, want 5", got)
 	}
 }

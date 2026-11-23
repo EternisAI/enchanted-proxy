@@ -75,13 +75,21 @@ func (pairGroup) UserIDs(_ context.Context, userID string) ([]string, error) {
 	return []string{userID, "other-account"}, nil
 }
 
+// directAdmission runs the admission on q without a lock.
+func directAdmission(q pgdb.Querier) Admission {
+	return func(_ context.Context, fn func(pgdb.Querier) error) error { return fn(q) }
+}
+
+// limitService reads and writes runs only through its admission: its own
+// queries panic if used.
 func limitService(q *runCountQuerier) *Service {
 	return &Service{
 		logger:                       testLogger(),
-		queries:                      q,
+		queries:                      untouchedQuerier{},
 		deepResearchRateLimitEnabled: true,
 		cfg: &Config{
 			Groups:           pairGroup{},
+			Admission:        directAdmission(q),
 			MaxRunsPerDay:    25,
 			FreeRunProviders: []string{auth.ProviderApple, auth.ProviderGoogle},
 		},
@@ -92,7 +100,7 @@ func identity(provider string) *auth.Identity {
 	return &auth.Identity{UserID: "user-1", SignInProvider: provider}
 }
 
-func TestCheckRunAllowed(t *testing.T) {
+func TestStartRun(t *testing.T) {
 	apple, google, anon, email := identity(auth.ProviderApple), identity(auth.ProviderGoogle), identity(auth.ProviderAnonymous), identity(auth.ProviderPassword)
 	tests := []struct {
 		name   string
@@ -120,15 +128,24 @@ func TestCheckRunAllowed(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fe := limitService(tt.q).checkRunAllowed(context.Background(), "user-1", tt.id, tiers.Configs[tt.tier])
+			runID, fe, err := limitService(tt.q).startRun(context.Background(), "user-1", "chat-1", tt.id, tiers.Configs[tt.tier])
+			if err != nil {
+				t.Fatal(err)
+			}
 			if tt.reason == "" {
 				if fe != nil {
 					t.Fatalf("refused: %+v", fe)
+				}
+				if runID != 1 || tt.q.created != 1 {
+					t.Fatalf("run %d, runs created %d; want run 1 created once", runID, tt.q.created)
 				}
 				return
 			}
 			if fe == nil || fe.Reason != tt.reason {
 				t.Fatalf("got %+v, want reason %s", fe, tt.reason)
+			}
+			if tt.q.created != 0 {
+				t.Fatalf("refused, but %d runs created", tt.q.created)
 			}
 			if fe.Error != fe.UIMessage || fe.Error == "" {
 				t.Errorf("error %q is not the readable message %q", fe.Error, fe.UIMessage)
@@ -137,17 +154,38 @@ func TestCheckRunAllowed(t *testing.T) {
 	}
 }
 
-func TestCheckRunAllowedCountsTheGroupAndCanBeDisabled(t *testing.T) {
+func TestStartRunCountsTheGroupAndCanBeDisabled(t *testing.T) {
 	q := &runCountQuerier{}
 	s := limitService(q)
-	_ = s.checkRunAllowed(context.Background(), "user-1", identity(auth.ProviderApple), tiers.Configs[tiers.TierPro])
+	_, _, _ = s.startRun(context.Background(), "user-1", "chat-1", identity(auth.ProviderApple), tiers.Configs[tiers.TierPro])
 	if strings.Join(q.userIDs, ",") != "user-1,other-account" {
 		t.Fatalf("counted %v, want the caller's group", q.userIDs)
 	}
 
+	// With limits off, the run is recorded directly, without admission.
+	unlimited := &runCountQuerier{}
+	s.queries = unlimited
+	s.cfg.Admission = nil
 	s.deepResearchRateLimitEnabled = false
-	if fe := s.checkRunAllowed(context.Background(), "user-1", identity(auth.ProviderAnonymous), tiers.Configs[tiers.TierFree]); fe != nil {
-		t.Fatalf("limits disabled but refused: %+v", fe)
+	if _, fe, err := s.startRun(context.Background(), "user-1", "chat-1", identity(auth.ProviderAnonymous), tiers.Configs[tiers.TierFree]); fe != nil || err != nil {
+		t.Fatalf("limits disabled but refused: %+v, %v", fe, err)
+	}
+	if unlimited.created != 1 {
+		t.Fatalf("runs created = %d, want 1", unlimited.created)
+	}
+}
+
+// Without an admission, a limited start is refused rather than run unserialized.
+func TestStartRunWithoutAdmissionRefuses(t *testing.T) {
+	q := &runCountQuerier{}
+	s := limitService(q)
+	s.cfg.Admission = nil
+	_, fe, err := s.startRun(context.Background(), "user-1", "chat-1", identity(auth.ProviderApple), tiers.Configs[tiers.TierPro])
+	if err != nil || fe == nil || fe.Reason != errors.ReasonTierValidationFailed {
+		t.Fatalf("got %+v, %v; want a refusal", fe, err)
+	}
+	if q.created != 0 {
+		t.Fatalf("runs created = %d, want 0", q.created)
 	}
 }
 
@@ -262,7 +300,7 @@ func TestWebSocketStartRefusesAnonymousFreeRun(t *testing.T) {
 	tq := &runQuerier{} // free tier, no history
 	tracking := request_tracking.NewService(tq, log)
 	t.Cleanup(func() { _ = tracking.Shutdown(context.Background()) })
-	cfg := &Config{Groups: pairGroup{}, MaxRunsPerDay: 25, FreeRunProviders: []string{auth.ProviderApple, auth.ProviderGoogle}}
+	cfg := &Config{Groups: pairGroup{}, Admission: directAdmission(q), MaxRunsPerDay: 25, FreeRunProviders: []string{auth.ProviderApple, auth.ProviderGoogle}}
 
 	engine := gin.New()
 	engine.Use(func(c *gin.Context) {

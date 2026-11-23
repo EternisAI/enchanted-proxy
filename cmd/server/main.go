@@ -199,6 +199,7 @@ func main() {
 	deeprStorage := deepr.NewDBStorage(logger.WithComponent("deepr-storage"), db.DB)
 	deeprSessionManager := deepr.NewSessionManager(logger.WithComponent("deepr-session"))
 	deeprConfig := deepr.LoadConfig(quotaGroups)
+	deeprConfig.Admission = deepr.LockedAdmission(db.DB)
 
 	// Mark runs failed that stayed active past any possible run length.
 	deeprReaperCtx, deeprReaperCancel := context.WithCancel(context.Background())

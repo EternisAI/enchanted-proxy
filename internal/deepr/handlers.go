@@ -200,22 +200,16 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			return
 		}
 
-		// Check the run limits before creating the run record
+		// Check the run limits and record the run, under the admission lock
 		var identity *auth.Identity
 		if id, ok := auth.GetIdentity(c); ok {
 			identity = &id
 		}
-		if forbiddenErr := service.checkRunAllowed(c.Request.Context(), userID, identity, tierConfig); forbiddenErr != nil {
+		runID, forbiddenErr, err := service.startRun(c.Request.Context(), userID, req.ChatID, identity, tierConfig)
+		if forbiddenErr != nil {
 			errors.AbortWithForbidden(c, forbiddenErr)
 			return
 		}
-
-		// Create run record for token tracking
-		runID, err := service.queries.CreateDeepResearchRun(c.Request.Context(), pgdb.CreateDeepResearchRunParams{
-			UserID: userID,
-			ChatID: req.ChatID,
-			Tier:   &tierConfig.Name,
-		})
 		if err != nil {
 			log.Error("failed to create run record",
 				slog.String("user_id", userID),
