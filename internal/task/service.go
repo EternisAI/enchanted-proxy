@@ -235,7 +235,9 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 			s.releaseTask(ctx, taskID, userID)
 			return nil, fmt.Errorf("invalid cron expression: %w", err)
 		}
-		nextRun := schedule.Next(started)
+		// Read the clock again: a run that passed while the task was admitted is
+		// gone, as Temporal does not backfill a new schedule.
+		nextRun := schedule.Next(s.currentTime())
 		endTime := nextRun.Add(5 * time.Minute) // End shortly after the expected run
 		scheduleSpec.EndAt = endTime
 		log.Info("one-time schedule configured",

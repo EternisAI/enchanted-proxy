@@ -70,6 +70,30 @@ func TestOneTimeTaskEndsAfterTemporalsFirstRun(t *testing.T) {
 	}
 }
 
+// The one-time run is chosen after admission, so a run that passed meanwhile
+// is not picked: the schedule would end before its next run.
+func TestOneTimeRunIsChosenAfterAdmission(t *testing.T) {
+	ticks := []time.Time{
+		time.Date(2026, 11, 23, 8, 59, 59, 0, time.UTC), // when the request starts
+		time.Date(2026, 11, 23, 9, 0, 1, 0, time.UTC),   // after admission
+	}
+	schedules := &scriptedSchedules{}
+	s := scriptedService(&limitQuerier{}, schedules)
+	s.clock = func() time.Time {
+		t := ticks[0]
+		if len(ticks) > 1 {
+			ticks = ticks[1:]
+		}
+		return t
+	}
+	if _, err := s.CreateTask(context.Background(), "user-1", request("one_time", "0 9 * * *")); err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 11, 24, 9, 5, 0, 0, time.UTC); !schedules.options.Spec.EndAt.Equal(want) {
+		t.Fatalf("one-time schedule ends at %v, want %v", schedules.options.Spec.EndAt.UTC(), want)
+	}
+}
+
 // Temporal reads a schedule without a time zone in UTC, whatever the zone of
 // the server checking it.
 func TestSchedulesAreReadInUTC(t *testing.T) {
