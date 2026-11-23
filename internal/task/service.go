@@ -22,9 +22,10 @@ import (
 // missed while Temporal was unavailable.
 const scheduleCatchupWindow = 5 * time.Minute
 
-// oneTimeWindow is how long a one-time task's schedule stays open after its
-// run. Temporal's end time is inclusive, so the schedule must not have another
-// run within this window (checked at admission).
+// oneTimeWindow is the shortest gap a one-time schedule may have between runs.
+// Its Temporal schedule is pinned to a single run, so this is not what keeps it
+// from running twice: an expression with runs minutes apart names several
+// times, not one, and is refused so that one is chosen.
 const oneTimeWindow = 5 * time.Minute
 
 // After a task is admitted, the steps that schedule it or clean up after a
@@ -242,7 +243,6 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 	// For one-time tasks, we need to limit execution to just once
 	if req.Type == string(TaskTypeOneTime) {
 		log.Info("configuring one-time schedule with cron", slog.String("cron_expression", req.Time))
-		// Find the next fire time as Temporal will, then set EndAt shortly after
 		schedule, err := parseStrictSchedule(req.Time)
 		if err != nil {
 			log.Error("invalid cron expression for one-time task",
@@ -251,14 +251,22 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 			s.releaseTask(ctx, taskID, userID)
 			return nil, fmt.Errorf("invalid cron expression: %w", err)
 		}
-		// Read the clock again: a run that passed while the task was admitted is
-		// gone, as Temporal does not backfill a new schedule.
-		nextRun := schedule.Next(s.currentTime())
-		endTime := nextRun.Add(oneTimeWindow) // End shortly after the expected run
-		scheduleSpec.EndAt = endTime
-		log.Info("one-time schedule configured",
-			slog.Time("expected_run", nextRun),
-			slog.Time("end_time", endTime))
+		// The run is the first after the task row's creation time, which is
+		// also what pending accounting reads, so the two always agree.
+		nextRun := schedule.Next(dbTask.CreatedAt)
+		if !nextRun.After(s.currentTime()) {
+			// The run passed while the task was being admitted. Temporal does not
+			// backfill a new schedule, so it would never run. No schedule exists
+			// yet, so the task can be released.
+			log.Warn("one-time run passed during admission", slog.String("task_id", taskID))
+			s.releaseTask(ctx, taskID, userID)
+			return nil, &ValidationError{Message: "The scheduled time passed while the task was being created. Choose a later time."}
+		}
+		// Start and end at that run (an inclusive interval), so the schedule
+		// fires exactly once.
+		scheduleSpec.StartAt = nextRun
+		scheduleSpec.EndAt = nextRun
+		log.Info("one-time schedule configured", slog.Time("expected_run", nextRun))
 	} else {
 		log.Info("configuring recurring schedule with cron", slog.String("cron_expression", req.Time))
 	}

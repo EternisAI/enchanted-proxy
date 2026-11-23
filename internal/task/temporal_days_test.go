@@ -2,9 +2,12 @@ package task
 
 import (
 	"context"
+	stderrors "errors"
+	"strings"
 	"testing"
 	"time"
 
+	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
 )
 
@@ -46,50 +49,67 @@ func TestDayMatchingDoesNotOvercountRunsPerDay(t *testing.T) {
 	}
 }
 
-func TestOneTimeTaskEndsAfterTemporalsFirstRun(t *testing.T) {
+// A one-time task's schedule is pinned to its first run after the task row's
+// creation time: it starts and ends there, so it fires once.
+func TestOneTimeScheduleIsPinnedToItsRun(t *testing.T) {
 	for _, c := range []struct {
-		name  string
-		clock time.Time
-		want  time.Time
+		name      string
+		createdAt time.Time
+		want      time.Time
 	}{
 		// The first Monday the 1st after now is February 1, 2027.
-		{"before", now, time.Date(2027, 2, 1, 9, 5, 0, 0, time.UTC)},
+		{"before", now, time.Date(2027, 2, 1, 9, 0, 0, 0, time.UTC)},
 		// On that day after 09:00, the next one is March 1.
-		{"same day, later", time.Date(2027, 2, 1, 10, 0, 0, 0, time.UTC), time.Date(2027, 3, 1, 9, 5, 0, 0, time.UTC)},
+		{"same day, later", time.Date(2027, 2, 1, 10, 0, 0, 0, time.UTC), time.Date(2027, 3, 1, 9, 0, 0, 0, time.UTC)},
 	} {
 		schedules := &scriptedSchedules{}
-		s := scriptedService(&limitQuerier{}, schedules)
-		s.clock = func() time.Time { return c.clock }
+		s := scriptedService(&limitQuerier{createdAt: c.createdAt}, schedules)
+		s.clock = func() time.Time { return c.createdAt }
 		if _, err := s.CreateTask(context.Background(), "user-1", request("one_time", "0 9 1 * MON")); err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
-		if got := schedules.options.Spec.EndAt; !got.Equal(c.want) {
-			t.Errorf("%s: one-time schedule ends at %v, want %v", c.name, got.UTC(), c.want)
+		if spec := schedules.options.Spec; !spec.StartAt.Equal(c.want) || !spec.EndAt.Equal(c.want) {
+			t.Errorf("%s: schedule from %v to %v, want both %v", c.name, spec.StartAt.UTC(), spec.EndAt.UTC(), c.want)
 		}
 	}
 }
 
-// The one-time run is chosen after admission, so a run that passed meanwhile
-// is not picked: the schedule would end before its next run.
-func TestOneTimeRunIsChosenAfterAdmission(t *testing.T) {
-	ticks := []time.Time{
-		time.Date(2026, 11, 23, 8, 59, 59, 0, time.UTC), // when the request starts
-		time.Date(2026, 11, 23, 9, 0, 1, 0, time.UTC),   // after admission
-	}
+// The run is taken from the task row's creation time, which pending
+// accounting also reads, so the two agree. A run that passes while the task is
+// admitted cannot be scheduled; the task is released before any schedule.
+func TestOneTimeRunFollowsTheTaskRow(t *testing.T) {
+	createdAt := time.Date(2026, 11, 23, 8, 59, 59, 0, time.UTC)
+	nine := time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)
+
+	// Admitted before 09:00: the run is today's, and the row counts as pending
+	// until then, as the schedule does.
+	q := &limitQuerier{createdAt: createdAt}
 	schedules := &scriptedSchedules{}
-	s := scriptedService(&limitQuerier{}, schedules)
-	s.clock = func() time.Time {
-		t := ticks[0]
-		if len(ticks) > 1 {
-			ticks = ticks[1:]
-		}
-		return t
-	}
+	s := scriptedService(q, schedules)
+	s.clock = func() time.Time { return createdAt.Add(500 * time.Millisecond) }
 	if _, err := s.CreateTask(context.Background(), "user-1", request("one_time", "0 9 * * *")); err != nil {
 		t.Fatal(err)
 	}
-	if want := time.Date(2026, 11, 24, 9, 5, 0, 0, time.UTC); !schedules.options.Spec.EndAt.Equal(want) {
-		t.Fatalf("one-time schedule ends at %v, want %v", schedules.options.Spec.EndAt.UTC(), want)
+	if !schedules.options.Spec.StartAt.Equal(nine) {
+		t.Fatalf("scheduled run %v, want %v", schedules.options.Spec.StartAt.UTC(), nine)
+	}
+	row := []pgdb.ListOpenTasksForUsersRow{{Type: "one_time", Time: "0 9 * * *", Status: "active", CreatedAt: createdAt}}
+	if summarizeOpenTasks(row, nine.Add(-time.Second)).pendingOneTime != 1 || summarizeOpenTasks(row, nine.Add(time.Second)).pendingOneTime != 0 {
+		t.Fatal("pending accounting disagrees with the scheduled run")
+	}
+
+	// Admission ends after 09:00: refused and released, no schedule created.
+	q = &limitQuerier{createdAt: createdAt}
+	schedules = &scriptedSchedules{}
+	s = scriptedService(q, schedules)
+	s.clock = func() time.Time { return nine.Add(time.Second) }
+	_, err := s.CreateTask(context.Background(), "user-1", request("one_time", "0 9 * * *"))
+	var v *ValidationError
+	if !stderrors.As(err, &v) || !strings.Contains(err.Error(), "passed") {
+		t.Fatalf("err = %v, want a ValidationError saying the time passed", err)
+	}
+	if len(q.releasedCreation) != 1 || schedules.options.ID != "" {
+		t.Fatalf("released %v, schedule %q; want the task released and no schedule", q.releasedCreation, schedules.options.ID)
 	}
 }
 

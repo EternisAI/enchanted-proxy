@@ -16,6 +16,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/storage/pg"
@@ -113,8 +114,13 @@ func TestReleasedTaskFreesItsCreation(t *testing.T) {
 	}
 	user := "rel-" + uuid.NewString()
 	taskID := uuid.NewString()
-	if _, err := s.admitTask(context.Background(), user, taskID, request("recurring", "0 9 * * *"), now); err != nil {
+	task, err := s.admitTask(context.Background(), user, taskID, request("recurring", "0 9 * * *"), now)
+	if err != nil {
 		t.Fatal(err)
+	}
+	// A one-time run is chosen from the row's created_at, so it must come back.
+	if age := time.Since(task.CreatedAt); task.CreatedAt.IsZero() || age < 0 || age > time.Minute {
+		t.Fatalf("admitted task has created_at %v", task.CreatedAt)
 	}
 	s.releaseTask(context.Background(), taskID, user)
 	var rows int

@@ -117,6 +117,7 @@ type limitQuerier struct {
 	releasedCreation []string
 	deleteCtxErr     error // the context's state when the task row was deleted
 	statusUpdates    []string
+	createdAt        time.Time // the inserted row's created_at; the test clock's now when zero
 }
 
 func (q *limitQuerier) write(name string) {
@@ -128,7 +129,11 @@ func (q *limitQuerier) write(name string) {
 
 func (q *limitQuerier) CreateTask(_ context.Context, arg pgdb.CreateTaskParams) (pgdb.Task, error) {
 	q.write("task")
-	return pgdb.Task{TaskID: arg.TaskID, UserID: arg.UserID, ChatID: arg.ChatID, Type: arg.Type, Time: arg.Time, Status: arg.Status}, nil
+	createdAt := q.createdAt
+	if createdAt.IsZero() {
+		createdAt = now
+	}
+	return pgdb.Task{TaskID: arg.TaskID, UserID: arg.UserID, ChatID: arg.ChatID, Type: arg.Type, Time: arg.Time, Status: arg.Status, CreatedAt: createdAt}, nil
 }
 
 func (q *limitQuerier) RecordTaskCreation(context.Context, pgdb.RecordTaskCreationParams) error {
@@ -336,13 +341,13 @@ func TestSchedulesThatDoNotRunWithinTheHorizonAreRefused(t *testing.T) {
 	}
 }
 
-// A one-time schedule stays open five minutes after its run (end inclusive),
-// so a schedule that runs again within that time is refused.
+// A one-time expression with runs minutes apart names several times, not one,
+// and is refused so that one is chosen.
 func TestOneTimeSchedulesMustRunOnce(t *testing.T) {
 	for expr, refused := range map[string]bool{
 		"0,2,4 9 * * *": true,
 		"* 9 * * *":     true,
-		"*/5 9 * * *":   true, // 09:00 and 09:05, both within the window
+		"*/5 9 * * *":   true, // 09:00, 09:05, ...
 		"*/6 9 * * *":   false,
 		"0 9 * * *":     false,
 		"0 9 24 12 *":   false,
