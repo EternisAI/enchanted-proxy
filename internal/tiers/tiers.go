@@ -45,11 +45,13 @@ type Config struct {
 	// Model access (allowlist only - empty array means all models allowed)
 	AllowedModels []string `json:"allowed_models"` // Models allowed for this tier (empty = all allowed)
 
-	// Deep research limits
-	DeepResearchDailyRuns         int `json:"deep_research_daily_runs"`          // -1 = unlimited
-	DeepResearchLifetimeRuns      int `json:"deep_research_lifetime_runs"`       // -1 = unlimited, 0 = check daily only
-	DeepResearchTokenCap          int `json:"deep_research_token_cap"`           // Per-run token cap (GLM-4.6 tokens)
-	DeepResearchMaxActiveSessions int `json:"deep_research_max_active_sessions"` // Max concurrent deep research jobs
+	// Deep research limits, counted over the account's quota group. A run counts
+	// whatever its outcome, unless it failed within a minute of starting.
+	DeepResearchDailyRuns         int `json:"deep_research_daily_runs"`          // Per UTC day; 0 or -1 = no daily limit
+	DeepResearchWeeklyRuns        int `json:"deep_research_weekly_runs"`         // Per week from Monday 00:00 UTC; 0 = no weekly limit
+	DeepResearchLifetimeRuns      int `json:"deep_research_lifetime_runs"`       // Ever; 0 = no lifetime limit
+	DeepResearchTokenCap          int `json:"deep_research_token_cap"`           // Reported to clients only; the backend enforces per-run budgets
+	DeepResearchMaxActiveSessions int `json:"deep_research_max_active_sessions"` // Runs at once; 1 for every plan
 
 	// Scheduled task limits, counted over the account's quota group. Paused
 	// tasks do not count. Values sit at or above what real users have used.
@@ -93,8 +95,9 @@ var Configs = map[Tier]Config{
 			"dphn/Dolphin-Mistral-24B-Venice-Edition", // Dolphin Mistral (0.5×, uncensored)
 			"Qwen/Qwen3-30B-A3B-Instruct-2507",        // Qwen3 30B (0.04×)
 		},
-		DeepResearchDailyRuns:         0, // Not available daily
-		DeepResearchLifetimeRuns:      1, // 1 lifetime run
+		DeepResearchDailyRuns:         0, // No daily limit: the lifetime limit applies
+		DeepResearchWeeklyRuns:        0,
+		DeepResearchLifetimeRuns:      1, // 1 lifetime run, for Apple and Google sign-ins only
 		DeepResearchTokenCap:          8_000,
 		DeepResearchMaxActiveSessions: 1,
 		TaskMaxActiveRecurring:        10,
@@ -114,10 +117,11 @@ var Configs = map[Tier]Config{
 		FallbackDailyPlanTokens:       40_000,
 		FallbackModel:                 "Qwen/Qwen3-30B-A3B-Instruct-2507",
 		AllowedModels:                 []string{}, // All models allowed (same as Pro)
-		DeepResearchDailyRuns:         -1,         // Unlimited daily runs
-		DeepResearchLifetimeRuns:      0,          // Check daily only
+		DeepResearchDailyRuns:         5,
+		DeepResearchWeeklyRuns:        10,
+		DeepResearchLifetimeRuns:      0,
 		DeepResearchTokenCap:          10_000,
-		DeepResearchMaxActiveSessions: 0, // Unlimited concurrent
+		DeepResearchMaxActiveSessions: 1,
 		TaskMaxActiveRecurring:        25,
 		TaskMinInterval:               15 * time.Minute,
 		TaskMaxRunsPerDay:             100,
@@ -135,9 +139,10 @@ var Configs = map[Tier]Config{
 		FallbackModel:                 "Qwen/Qwen3-30B-A3B-Instruct-2507",
 		AllowedModels:                 []string{}, // Empty = all models allowed
 		DeepResearchDailyRuns:         10,
-		DeepResearchLifetimeRuns:      0, // Check daily only
+		DeepResearchWeeklyRuns:        15,
+		DeepResearchLifetimeRuns:      0,
 		DeepResearchTokenCap:          10_000,
-		DeepResearchMaxActiveSessions: 0, // 0 = unlimited concurrent sessions
+		DeepResearchMaxActiveSessions: 1,
 		TaskMaxActiveRecurring:        50,
 		TaskMinInterval:               5 * time.Minute,
 		TaskMaxRunsPerDay:             200,

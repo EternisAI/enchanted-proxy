@@ -66,9 +66,9 @@ func newRefusalRouter() *gin.Engine {
 	q := untouchedQuerier{}
 	engine := gin.New()
 	engine.Use(withUser)
-	engine.POST("/start", StartDeepResearchHandler(log, nil, nil, nil, nil, q, true, nil, nil, nil))
-	engine.POST("/clarify", ClarifyDeepResearchHandler(log, nil, nil, nil, nil, q, true, nil))
-	engine.GET("/ws", DeepResearchHandler(log, nil, nil, nil, nil, q, true, nil))
+	engine.POST("/start", StartDeepResearchHandler(log, nil, nil, nil, nil, q, true, nil, nil, nil, nil))
+	engine.POST("/clarify", ClarifyDeepResearchHandler(log, nil, nil, nil, nil, q, true, nil, nil))
+	engine.GET("/ws", DeepResearchHandler(log, nil, nil, nil, nil, q, true, nil, nil))
 	return engine
 }
 
@@ -127,7 +127,7 @@ func TestStartMarksRunFailedWhenBackendUnreachable(t *testing.T) {
 
 	engine := gin.New()
 	engine.Use(withUser)
-	engine.POST("/start", StartDeepResearchHandler(log, tracking, nil, nil, NewSessionManager(log), q, false, nil, nil, nil))
+	engine.POST("/start", StartDeepResearchHandler(log, tracking, nil, nil, NewSessionManager(log), q, false, nil, nil, nil, &Config{}))
 
 	req := httptest.NewRequest(http.MethodPost, "/start",
 		strings.NewReader(`{"query":"q","chat_id":"0d6f6b3e-8a54-4c1e-9a1f-2f4b6c7d8e9f"}`))

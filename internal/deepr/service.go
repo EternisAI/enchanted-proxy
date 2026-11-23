@@ -6,17 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
-	"github.com/eternisai/enchanted-proxy/internal/errors"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
-	"github.com/eternisai/enchanted-proxy/internal/tiers"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -33,6 +30,7 @@ type Service struct {
 	deepResearchRateLimitEnabled bool
 	queries                      pgdb.Querier // For tier-based quota enforcement
 	notificationService          *notifications.Service
+	cfg                          *Config // Limits and backend settings
 }
 
 // mapEventTypeToState maps event types from deep research server to session states.
@@ -48,118 +46,6 @@ func mapEventTypeToState(eventType string) string {
 		// All other events (research_progress, etc.) map to in_progress
 		return "in_progress"
 	}
-}
-
-// canForwardMessage checks if a message from the client should be forwarded to the backend
-// based on the current session state. Messages can only be forwarded when state is 'clarify' or 'error'.
-func (s *Service) canForwardMessage(ctx context.Context, userID, chatID string) (bool, string, error) {
-	log := s.logger.WithContext(ctx).WithComponent("deepr")
-
-	sessionState, err := s.firebaseClient.GetSessionState(ctx, userID, chatID)
-	if err != nil {
-		log.Error("failed to get session state for message forwarding check",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.String("error", err.Error()))
-		return false, "", fmt.Errorf("failed to get session state: %w", err)
-	}
-
-	// If no session state exists yet, allow forwarding (initial message)
-	if sessionState == nil {
-		log.Debug("no session state found, allowing initial message",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID))
-		return true, "", nil
-	}
-
-	// Only allow message forwarding when state is 'clarify' or 'error'
-	canForward := sessionState.State == "clarify" || sessionState.State == "error"
-
-	log.Info("message forwarding check",
-		slog.String("user_id", userID),
-		slog.String("chat_id", chatID),
-		slog.String("session_state", sessionState.State),
-		slog.Bool("can_forward", canForward))
-
-	if !canForward {
-		return false, sessionState.State, nil
-	}
-
-	return true, sessionState.State, nil
-}
-
-// checkDeepResearchQuota validates run limits and enforces per-run caps using tier-based system.
-// This replaces the old Firestore-based freemium validation with PostgreSQL tier system.
-// Returns *errors.ForbiddenError for quota violations, or a regular error for system failures.
-func (s *Service) checkDeepResearchQuota(ctx context.Context, userID string, tierConfig tiers.Config) *errors.ForbiddenError {
-	log := s.logger.WithContext(ctx).WithComponent("deepr")
-
-	if !s.deepResearchRateLimitEnabled {
-		log.Info("deep research rate limiting disabled, skipping quota check",
-			slog.String("user_id", userID))
-		return nil
-	}
-
-	// Check active jobs (only applies when MaxActiveSessions == 1, i.e., Free tier)
-	// Pro tier has MaxActiveSessions == 0 (unlimited), so this check is skipped
-	if tierConfig.DeepResearchMaxActiveSessions == 1 {
-		hasActive, err := s.queries.HasActiveDeepResearchRun(ctx, userID)
-		if err != nil {
-			log.Error("failed to check active runs",
-				slog.String("user_id", userID),
-				slog.String("error", err.Error()))
-			return errors.TierValidationFailed("failed to check active runs")
-		}
-		if hasActive {
-			log.Warn("user blocked - already has active deep research run",
-				slog.String("user_id", userID),
-				slog.Int("max_active", tierConfig.DeepResearchMaxActiveSessions))
-			return errors.ActiveDeepResearchSession(tierConfig.Name, tierConfig.DisplayName, tierConfig.DeepResearchMaxActiveSessions)
-		}
-	}
-
-	// Check daily runs (Pro tier: 10 runs/day)
-	if tierConfig.DeepResearchDailyRuns > 0 {
-		count, err := s.queries.GetUserDeepResearchRunsToday(ctx, userID)
-		if err != nil {
-			log.Error("failed to check daily runs",
-				slog.String("user_id", userID),
-				slog.String("error", err.Error()))
-			return errors.TierValidationFailed("failed to check daily runs")
-		}
-		if int(count) >= tierConfig.DeepResearchDailyRuns {
-			log.Warn("daily deep research limit exceeded",
-				slog.String("user_id", userID),
-				slog.Int64("runs_today", count),
-				slog.Int("daily_limit", tierConfig.DeepResearchDailyRuns))
-			now := time.Now().UTC()
-			nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
-			return errors.DeepResearchDailyLimit(tierConfig.Name, tierConfig.DisplayName, count, int64(tierConfig.DeepResearchDailyRuns), nextMidnight)
-		}
-	}
-
-	// Check lifetime runs (Free tier: 1 run total)
-	if tierConfig.DeepResearchLifetimeRuns > 0 {
-		count, err := s.queries.GetUserDeepResearchRunsLifetime(ctx, userID)
-		if err != nil {
-			log.Error("failed to check lifetime runs",
-				slog.String("user_id", userID),
-				slog.String("error", err.Error()))
-			return errors.TierValidationFailed("failed to check lifetime runs")
-		}
-		if int(count) >= tierConfig.DeepResearchLifetimeRuns {
-			log.Warn("lifetime deep research limit reached",
-				slog.String("user_id", userID),
-				slog.Int64("lifetime_runs", count),
-				slog.Int("lifetime_limit", tierConfig.DeepResearchLifetimeRuns))
-			return errors.DeepResearchLifetimeLimit(tierConfig.Name, tierConfig.DisplayName, count, int64(tierConfig.DeepResearchLifetimeRuns))
-		}
-	}
-
-	log.Info("deep research quota check passed",
-		slog.String("user_id", userID),
-		slog.String("tier", tierConfig.Name))
-	return nil
 }
 
 // markRunFailed marks a run failed. It is used when a start fails after the run
@@ -181,96 +67,26 @@ func (s *Service) markRunFailed(runID int64) {
 	}
 }
 
-// trackDeepResearchTokens updates run token usage and enforces per-run cap.
-func (s *Service) trackDeepResearchTokens(
-	ctx context.Context,
-	runID int64,
-	tokensUsed int,
-	tierConfig tiers.Config,
-) error {
-	log := s.logger.WithContext(ctx).WithComponent("deepr")
-
-	// Calculate plan tokens (GLM-4.6 multiplier = 3×)
-	planTokens := tokensUsed * 3
-
-	// Check per-run cap (cap is in raw GLM-4.6 tokens: 8k for free, 10k for pro)
-	cap := tierConfig.DeepResearchTokenCap
-
-	if tokensUsed > cap {
-		log.Warn("deep research run exceeded token cap",
-			slog.Int64("run_id", runID),
-			slog.Int("tokens_used", tokensUsed),
-			slog.Int("plan_tokens", planTokens),
-			slog.Int("cap", cap))
-
-		// Terminate run
-		if err := s.queries.CompleteDeepResearchRun(ctx, pgdb.CompleteDeepResearchRunParams{
-			ID:     runID,
-			Status: "failed",
-		}); err != nil {
-			log.Error("failed to terminate run after cap exceeded",
-				slog.Int64("run_id", runID),
-				slog.String("error", err.Error()))
-			return fmt.Errorf("failed to terminate run: %w", err)
-		}
-
-		return fmt.Errorf("per-run token limit exceeded (%d/%d raw tokens)", tokensUsed, cap)
+// trackDeepResearchTokens records a run's token usage as the backend reports it
+// (a running total). The backend enforces the per-run budget; the proxy only records.
+func (s *Service) trackDeepResearchTokens(ctx context.Context, runID int64, tokensUsed int) error {
+	if s.queries == nil || runID <= 0 || tokensUsed <= 0 {
+		return nil
 	}
-
-	// Update token usage
+	// Plan tokens keep the multiplier used for deep research so far (3x).
+	planTokens := tokensUsed * 3
 	if err := s.queries.UpdateDeepResearchRunTokens(ctx, pgdb.UpdateDeepResearchRunTokensParams{
 		ID:              runID,
 		ModelTokensUsed: int32(tokensUsed),
 		PlanTokensUsed:  int32(planTokens),
 	}); err != nil {
-		log.Error("failed to update run tokens",
-			slog.Int64("run_id", runID),
-			slog.Int("tokens", tokensUsed),
-			slog.String("error", err.Error()))
 		return fmt.Errorf("failed to update tokens: %w", err)
-	}
-
-	log.Debug("updated deep research run tokens",
-		slog.Int64("run_id", runID),
-		slog.Int("tokens_used", tokensUsed),
-		slog.Int("plan_tokens", planTokens),
-		slog.Int("cap", cap))
-
-	return nil
-}
-
-// validateFreemiumAccess is DEPRECATED - kept for backwards compatibility during migration.
-// Use checkDeepResearchQuota instead.
-func (s *Service) validateFreemiumAccess(ctx context.Context, userID, chatID string, isReconnection bool) error {
-	log := s.logger.WithContext(ctx).WithComponent("deepr")
-
-	// Skip validation if deep research rate limiting is disabled
-	if !s.deepResearchRateLimitEnabled {
-		log.Info("deep research rate limiting disabled, skipping freemium validation",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID))
-		return nil
-	}
-
-	// Get user's tier configuration
-	tierConfig, _, err := s.trackingService.GetUserTierConfig(ctx, userID)
-	if err != nil {
-		log.Error("failed to get user tier",
-			slog.String("user_id", userID),
-			slog.String("error", err.Error()))
-		return fmt.Errorf("failed to verify subscription status")
-	}
-
-	// Delegate to new tier-based quota check
-	if forbiddenErr := s.checkDeepResearchQuota(ctx, userID, tierConfig); forbiddenErr != nil {
-		// Convert ForbiddenError to regular error for backwards compatibility
-		return fmt.Errorf("%s", forbiddenErr.UIMessage)
 	}
 	return nil
 }
 
 // NewService creates a new deep research service with database storage.
-func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool, notificationService *notifications.Service) *Service {
+func NewService(logger *logger.Logger, trackingService *request_tracking.Service, firebaseClient *auth.FirebaseClient, storage MessageStorage, sessionManager *SessionManager, queries pgdb.Querier, deepResearchRateLimitEnabled bool, notificationService *notifications.Service, cfg *Config) *Service {
 	var encryptionService *messaging.EncryptionService
 	var firestoreClient *messaging.FirestoreClient
 
@@ -290,6 +106,7 @@ func NewService(logger *logger.Logger, trackingService *request_tracking.Service
 		firestoreClient:              firestoreClient,
 		deepResearchRateLimitEnabled: deepResearchRateLimitEnabled,
 		notificationService:          notificationService,
+		cfg:                          cfg,
 	}
 }
 
@@ -487,42 +304,17 @@ func (s *Service) handleBackendMessages(ctx context.Context, session *ActiveSess
 					messageType = msg.Type
 				}
 
-				// Track token usage if reported by backend
+				// Record token usage if reported by the backend
 				if msg.TokensUsed > 0 && session.RunID > 0 {
-					// Get user's tier config for token cap enforcement
-					tierConfig, _, err := s.trackingService.GetUserTierConfig(ctx, userID)
-					if err != nil {
-						log.Error("failed to get user tier for token tracking",
-							slog.String("user_id", userID),
+					if err := s.trackDeepResearchTokens(ctx, session.RunID, msg.TokensUsed); err != nil {
+						log.Error("token tracking failed",
 							slog.Int64("run_id", session.RunID),
 							slog.String("error", err.Error()))
-					} else {
-						// Track tokens with multiplier and cap enforcement
-						if err := s.trackDeepResearchTokens(ctx, session.RunID, msg.TokensUsed, tierConfig); err != nil {
-							log.Error("token tracking failed",
-								slog.String("user_id", userID),
-								slog.String("chat_id", chatID),
-								slog.Int64("run_id", session.RunID),
-								slog.Int("tokens_used", msg.TokensUsed),
-								slog.String("error", err.Error()))
-
-							// If token cap exceeded, this is a terminal error - close session
-							if strings.Contains(err.Error(), "token limit exceeded") {
-								log.Warn("closing session due to token cap",
-									slog.String("user_id", userID),
-									slog.String("chat_id", chatID),
-									slog.Int64("run_id", session.RunID))
-								return
-							}
-						} else {
-							log.Debug("tracked deep research tokens",
-								slog.String("user_id", userID),
-								slog.Int64("run_id", session.RunID),
-								slog.Int("tokens_used", msg.TokensUsed))
-						}
 					}
 				}
 			}
+
+			session.ObserveBackendEvent(messageType)
 
 			// Update session state in Firebase
 			sessionState := mapEventTypeToState(messageType)
@@ -669,25 +461,36 @@ func (s *Service) HandleConnection(ctx context.Context, clientConn *websocket.Co
 		slog.String("client_id", clientID),
 		slog.Bool("is_reconnection", false))
 
-	// Validate freemium access for new connections
-	if err := s.validateFreemiumAccess(ctx, userID, chatID, false); err != nil {
-		log.Error("freemium validation failed",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.String("error", err.Error()))
-		// Send error message to client
-		errorMsg := map[string]string{
-			"error": err.Error(),
-		}
-		if errJSON, marshalErr := json.Marshal(errorMsg); marshalErr == nil {
+	// A new connection starts a run: apply the same checks as every other start path.
+	refuse := func(message string) {
+		if errJSON, err := json.Marshal(map[string]string{"error": message}); err == nil {
 			clientConn.WriteMessage(websocket.TextMessage, errJSON)
 		}
 		clientConn.Close()
+	}
+	tierConfig, _, err := s.trackingService.GetUserTierConfig(ctx, userID)
+	if err != nil {
+		log.Error("failed to get user tier", slog.String("error", err.Error()))
+		refuse("Failed to validate access")
+		return
+	}
+	var identity *auth.Identity
+	if id, ok := auth.IdentityFromContext(ctx); ok {
+		identity = &id
+	}
+	runID, fe, err := s.startRun(ctx, userID, chatID, identity, tierConfig)
+	if fe != nil {
+		refuse(fe.Error)
+		return
+	}
+	if err != nil {
+		log.Error("failed to create run record", slog.String("error", err.Error()))
+		refuse("Failed to initialize session")
 		return
 	}
 
 	// Create new backend connection
-	s.handleNewConnection(ctx, clientConn, userID, chatID, clientID)
+	s.handleNewConnection(ctx, clientConn, userID, chatID, clientID, runID)
 }
 
 // checkAndTrackSubscription checks user subscription and tracks usage
@@ -785,22 +588,8 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 		slog.String("chat_id", chatID),
 		slog.String("client_id", clientID))
 
-	// Validate freemium access for reconnections
-	if err := s.validateFreemiumAccess(ctx, userID, chatID, true); err != nil {
-		log.Error("freemium validation failed for reconnection",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.String("error", err.Error()))
-		// Send error message to client
-		errorMsg := map[string]string{
-			"error": err.Error(),
-		}
-		if errJSON, marshalErr := json.Marshal(errorMsg); marshalErr == nil {
-			clientConn.WriteMessage(websocket.TextMessage, errJSON)
-		}
-		clientConn.Close()
-		return
-	}
+	// A reconnection joins the caller's own running session (sessions are keyed by
+	// user and chat) and starts no run, so the run limits are not checked again.
 
 	// Check if session is complete and replay unsent messages BEFORE adding client to session manager
 	// This prevents concurrent writes: backend broadcast won't know about this client during replay
@@ -914,31 +703,22 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 					slog.String("client_id", clientID),
 					slog.Int("message_size", len(message)))
 
-				// Check if message can be forwarded based on session state
-				canForward, currentState, err := s.canForwardMessage(session.Context, userID, chatID)
-				if err != nil {
-					log.Error("failed to check if message can be forwarded",
-						slog.String("user_id", userID),
-						slog.String("chat_id", chatID),
-						slog.String("error", err.Error()))
-					// Send error to client
-					clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify session state"}`))
-					continue
-				}
-
-				if !canForward {
-					log.Warn("message blocked - session state does not allow user input",
-						slog.String("user_id", userID),
-						slog.String("chat_id", chatID),
-						slog.String("session_state", currentState))
-					// Send error to client indicating they cannot send messages in current state
-					errMsg := fmt.Sprintf(`{"error": "Cannot send messages while research is in progress", "session_state": "%s"}`, currentState)
-					clientConn.WriteMessage(websocket.TextMessage, []byte(errMsg))
+				// Forward only what the run accepts: the query, then a reply to each
+				// clarification question, at most twice. Anything else would start more
+				// work in the backend within the same counted run.
+				// Claim and write on the session this client joined, never on a
+				// later run that took the same chat.
+				allowed, reason := session.ClaimClientInput()
+				if !allowed {
+					log.Warn("message from client not forwarded", slog.String("reason", reason))
+					if errJSON, err := json.Marshal(map[string]string{"error": reason}); err == nil {
+						clientConn.WriteMessage(websocket.TextMessage, errJSON)
+					}
 					continue
 				}
 
 				// Forward to backend using synchronized write
-				if err := s.sessionManager.WriteToBackend(userID, chatID, websocket.TextMessage, message); err != nil {
+				if err := session.WriteToBackend(websocket.TextMessage, message); err != nil {
 					log.Error("failed to forward message to backend",
 						slog.String("user_id", userID),
 						slog.String("chat_id", chatID),
@@ -956,8 +736,9 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 	<-done
 }
 
-// handleClientMessages handles forwarding messages from a client to the backend.
-func (s *Service) handleClientMessages(sessionCtx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
+// handleClientMessages forwards messages from a client to the backend of session,
+// the run the client started.
+func (s *Service) handleClientMessages(sessionCtx context.Context, session *ActiveSession, clientConn *websocket.Conn, userID, chatID, clientID string) {
 	log := s.logger.WithContext(sessionCtx).WithComponent("deepr")
 
 	log.Info("client message handler started",
@@ -1002,31 +783,20 @@ func (s *Service) handleClientMessages(sessionCtx context.Context, clientConn *w
 				slog.Int("message_size", len(message)),
 				slog.Int("message_number", messageCount))
 
-			// Check if message can be forwarded based on session state
-			canForward, currentState, err := s.canForwardMessage(sessionCtx, userID, chatID)
-			if err != nil {
-				log.Error("failed to check if message can be forwarded",
-					slog.String("user_id", userID),
-					slog.String("chat_id", chatID),
-					slog.String("error", err.Error()))
-				// Send error to client
-				clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to verify session state"}`))
-				continue
-			}
-
-			if !canForward {
-				log.Warn("message blocked - session state does not allow user input",
-					slog.String("user_id", userID),
-					slog.String("chat_id", chatID),
-					slog.String("session_state", currentState))
-				// Send error to client indicating they cannot send messages in current state
-				errMsg := fmt.Sprintf(`{"error": "Cannot send messages while research is in progress", "session_state": "%s"}`, currentState)
-				clientConn.WriteMessage(websocket.TextMessage, []byte(errMsg))
+			// Forward only what the run accepts: the query, then a reply to each
+			// clarification question, at most twice. Anything else would start more
+			// work in the backend within the same counted run.
+			allowed, reason := session.ClaimClientInput()
+			if !allowed {
+				log.Warn("message from client not forwarded", slog.String("reason", reason))
+				if errJSON, err := json.Marshal(map[string]string{"error": reason}); err == nil {
+					clientConn.WriteMessage(websocket.TextMessage, errJSON)
+				}
 				continue
 			}
 
 			// Forward to backend using synchronized write
-			if err := s.sessionManager.WriteToBackend(userID, chatID, websocket.TextMessage, message); err != nil {
+			if err := session.WriteToBackend(websocket.TextMessage, message); err != nil {
 				log.Error("failed to forward message to backend",
 					slog.String("user_id", userID),
 					slog.String("chat_id", chatID),
@@ -1044,9 +814,47 @@ func (s *Service) handleClientMessages(sessionCtx context.Context, clientConn *w
 }
 
 // handleNewConnection creates a new backend connection and manages message flow.
-func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
+func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string, runID int64) {
 	startTime := time.Now()
 	log := s.logger.WithContext(ctx).WithComponent("deepr")
+
+	// The run was recorded at admission. Mark it completed or failed whenever this
+	// returns, including when the backend cannot be reached. Registered first, so
+	// it runs after the session is removed. Uses a fresh context, not ctx.
+	completedSuccessfully := false
+	defer func() {
+		if s.queries == nil || runID <= 0 {
+			return
+		}
+
+		// Determine final status
+		status := "failed"
+		if completedSuccessfully {
+			status = "completed"
+		}
+
+		// Use fresh context with timeout to ensure DB write succeeds
+		completionCtx, cancelCompletion := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelCompletion()
+
+		if err := s.queries.CompleteDeepResearchRun(completionCtx, pgdb.CompleteDeepResearchRunParams{
+			ID:     runID,
+			Status: status,
+		}); err != nil {
+			log.Error("failed to mark deep research run as completed in defer",
+				slog.Int64("run_id", runID),
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("status", status),
+				slog.String("error", err.Error()))
+		} else {
+			log.Info("deep research run marked as completed in defer",
+				slog.Int64("run_id", runID),
+				slog.String("user_id", userID),
+				slog.String("chat_id", chatID),
+				slog.String("status", status))
+		}
+	}()
 
 	log.Info("initiating new backend connection",
 		slog.String("user_id", userID),
@@ -1078,7 +886,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 	dialer.HandshakeTimeout = 30 * time.Second
 
 	connectStart := time.Now()
-	serverConn, _, err := dialer.Dial(wsURL.String(), nil)
+	serverConn, _, err := dialer.Dial(wsURL.String(), s.cfg.backendHeaders())
 	if err != nil {
 		log.Error("backend connection failed",
 			slog.String("user_id", userID),
@@ -1120,59 +928,8 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 	sessionCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create run record for token tracking
-	runID, err := s.queries.CreateDeepResearchRun(ctx, pgdb.CreateDeepResearchRunParams{
-		UserID: userID,
-		ChatID: chatID,
-	})
-	if err != nil {
-		log.Error("failed to create run record",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.String("error", err.Error()))
-		clientConn.WriteMessage(websocket.TextMessage, []byte(`{"error": "Failed to initialize session"}`))
-		return
-	}
-
-	// Ensure run is marked as completed when function exits (regardless of how it exits)
-	// Use background context to avoid cancellation issues
-	completedSuccessfully := false
-	defer func() {
-		if s.queries == nil || runID <= 0 {
-			return
-		}
-
-		// Determine final status
-		status := "failed"
-		if completedSuccessfully {
-			status = "completed"
-		}
-
-		// Use fresh context with timeout to ensure DB write succeeds
-		completionCtx, cancelCompletion := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancelCompletion()
-
-		if err := s.queries.CompleteDeepResearchRun(completionCtx, pgdb.CompleteDeepResearchRunParams{
-			ID:     runID,
-			Status: status,
-		}); err != nil {
-			log.Error("failed to mark deep research run as completed in defer",
-				slog.Int64("run_id", runID),
-				slog.String("user_id", userID),
-				slog.String("chat_id", chatID),
-				slog.String("status", status),
-				slog.String("error", err.Error()))
-		} else {
-			log.Info("deep research run marked as completed in defer",
-				slog.Int64("run_id", runID),
-				slog.String("user_id", userID),
-				slog.String("chat_id", chatID),
-				slog.String("status", status))
-		}
-	}()
-
 	// Create and register session with runID for token tracking
-	_ = s.sessionManager.CreateSession(userID, chatID, runID, serverConn, sessionCtx, cancel)
+	session := s.sessionManager.CreateSession(userID, chatID, runID, serverConn, sessionCtx, cancel, queryFromClient)
 	defer s.sessionManager.RemoveSession(userID, chatID)
 
 	// Check if user has premium to log parallel session creation
@@ -1189,7 +946,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 
 	// Handle messages from this client to backend in a separate goroutine
 	// Use session context so client can disconnect without terminating the session
-	go s.handleClientMessages(sessionCtx, clientConn, userID, chatID, clientID)
+	go s.handleClientMessages(sessionCtx, session, clientConn, userID, chatID, clientID)
 
 	log.Info("session established, starting message processing",
 		slog.String("user_id", userID),
@@ -1243,7 +1000,15 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 				if msg.Type != "" {
 					messageType = msg.Type
 				}
+				// Record token usage if reported by the backend
+				if msg.TokensUsed > 0 {
+					if err := s.trackDeepResearchTokens(ctx, runID, msg.TokensUsed); err != nil {
+						log.Error("token tracking failed", slog.Int64("run_id", runID), slog.String("error", err.Error()))
+					}
+				}
 			}
+			// This reader's own run, even if a later start took the chat's key.
+			session.ObserveBackendEvent(messageType)
 
 			// Update session state in Firebase based on message type
 			sessionState := mapEventTypeToState(messageType)

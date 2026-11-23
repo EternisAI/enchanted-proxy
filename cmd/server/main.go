@@ -172,6 +172,9 @@ func main() {
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
 
+	// Accounts that share limits (a purchase's accounts, once purchases are bound).
+	quotaGroups := quota.NewGroups()
+
 	var taskService *task.Service
 	if config.AppConfig.TemporalEndpoint != "" && config.AppConfig.TemporalNamespace != "" && config.AppConfig.TemporalAPIKey != "" {
 		taskService, err = task.NewService(
@@ -181,7 +184,7 @@ func main() {
 			db.DB,
 			db.Queries,
 			requestTrackingService,
-			quota.NewGroups(),
+			quotaGroups,
 			logger.WithComponent("task"),
 		)
 		if err != nil {
@@ -195,6 +198,13 @@ func main() {
 	// Initialize deep research storage
 	deeprStorage := deepr.NewDBStorage(logger.WithComponent("deepr-storage"), db.DB)
 	deeprSessionManager := deepr.NewSessionManager(logger.WithComponent("deepr-session"))
+	deeprConfig := deepr.LoadConfig(quotaGroups)
+	deeprConfig.Admission = deepr.LockedAdmission(db.DB)
+
+	// Mark runs failed that stayed active past any possible run length.
+	deeprReaperCtx, deeprReaperCancel := context.WithCancel(context.Background())
+	go deepr.RunReaper(deeprReaperCtx, db.Queries, deeprConfig, logger.WithComponent("deepr-reaper"))
+	defer deeprReaperCancel()
 
 	// Initialize Firestore client for chat operations
 	var firestoreClient *messaging.FirestoreClient
@@ -533,6 +543,7 @@ func main() {
 		keyshareHandler:        keyshareHandler,
 		deeprStorage:           deeprStorage,
 		deeprSessionManager:    deeprSessionManager,
+		deeprConfig:            deeprConfig,
 		queries:                db,
 		config:                 config.AppConfig,
 	})
@@ -704,6 +715,7 @@ type restServerInput struct {
 	keyshareHandler        *keyshare.Handler
 	deeprStorage           deepr.MessageStorage
 	deeprSessionManager    *deepr.SessionManager
+	deeprConfig            *deepr.Config
 	queries                *pg.Database
 	config                 *config.Config
 }
@@ -818,9 +830,9 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		api.POST("/problem-reports", input.problemReportsHandler.CreateProblemReport) // POST /api/v1/problem-reports - Submit a problem report
 
 		// Deep Research endpoints (protected)
-		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled, input.notificationService, input.titleService, input.modelRouter)) // POST API to start deep research
-		api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled, input.notificationService))                                    // POST API to submit clarification response
-		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled, input.notificationService))                                                 // WebSocket proxy for deep research
+		api.POST("/deepresearch/start", deepr.StartDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled, input.notificationService, input.titleService, input.modelRouter, input.deeprConfig)) // POST API to start deep research
+		api.POST("/deepresearch/clarify", deepr.ClarifyDeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled, input.notificationService, input.deeprConfig))                                    // POST API to submit clarification response
+		api.GET("/deepresearch/ws", deepr.DeepResearchHandler(input.logger, input.requestTrackingService, input.firebaseClient, input.deeprStorage, input.deeprSessionManager, input.queries.Queries, input.config.DeepResearchRateLimitEnabled, input.notificationService, input.deeprConfig))                                                 // WebSocket proxy for deep research
 
 		// Stream Control API routes (protected)
 		chats := api.Group("/chats")

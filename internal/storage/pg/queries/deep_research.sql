@@ -1,6 +1,15 @@
+-- name: LockDeepResearchAdmission :exec
+-- Holds the deep research admission lock until the transaction ends, so the
+-- limit checks and the new run's row cannot interleave with another start.
+-- One lock covers the whole service: starts are rare, and the service-wide
+-- daily ceiling counts every account's runs.
+SELECT pg_advisory_xact_lock(hashtextextended('deep_research_admission', 0));
+
 -- name: CreateDeepResearchRun :one
-INSERT INTO deep_research_runs (user_id, chat_id, run_date, status)
-VALUES ($1, $2, CURRENT_DATE, 'active')
+-- run_date is the UTC date, whatever the session's time zone; the counts below
+-- use the same.
+INSERT INTO deep_research_runs (user_id, chat_id, run_date, status, tier)
+VALUES ($1, $2, (NOW() AT TIME ZONE 'UTC')::date, 'active', $3)
 RETURNING id;
 
 -- name: UpdateDeepResearchRunTokens :exec
@@ -15,18 +24,35 @@ SET status = $2,
     completed_at = NOW()
 WHERE id = $1;
 
+-- A run counts toward the allowance whatever its outcome, unless it failed within
+-- a minute of starting (the backend refused or broke before doing work).
+
 -- name: GetUserDeepResearchRunsToday :one
 SELECT COUNT(*) as run_count
 FROM deep_research_runs
-WHERE user_id = $1
-  AND run_date = CURRENT_DATE
-  AND status IN ('completed', 'active');
+WHERE user_id = ANY(sqlc.arg(user_ids)::text[])
+  AND run_date = (NOW() AT TIME ZONE 'UTC')::date
+  AND NOT (status = 'failed' AND completed_at IS NOT NULL AND completed_at < started_at + INTERVAL '60 seconds');
+
+-- name: GetUserDeepResearchRunsThisWeek :one
+SELECT COUNT(*) as run_count
+FROM deep_research_runs
+WHERE user_id = ANY(sqlc.arg(user_ids)::text[])
+  AND run_date >= DATE_TRUNC('week', NOW() AT TIME ZONE 'UTC')::date
+  AND NOT (status = 'failed' AND completed_at IS NOT NULL AND completed_at < started_at + INTERVAL '60 seconds');
 
 -- name: GetUserDeepResearchRunsLifetime :one
 SELECT COUNT(*) as run_count
 FROM deep_research_runs
-WHERE user_id = $1
-  AND status IN ('completed', 'active');
+WHERE user_id = ANY(sqlc.arg(user_ids)::text[])
+  AND NOT (status = 'failed' AND completed_at IS NOT NULL AND completed_at < started_at + INTERVAL '60 seconds');
+
+-- name: CountDeepResearchRunsToday :one
+-- All accounts, for the service-wide daily ceiling.
+SELECT COUNT(*) as run_count
+FROM deep_research_runs
+WHERE run_date = (NOW() AT TIME ZONE 'UTC')::date
+  AND NOT (status = 'failed' AND completed_at IS NOT NULL AND completed_at < started_at + INTERVAL '60 seconds');
 
 -- name: GetActiveDeepResearchRun :one
 SELECT id, model_tokens_used
@@ -41,9 +67,17 @@ LIMIT 1;
 SELECT EXISTS(
     SELECT 1
     FROM deep_research_runs
-    WHERE user_id = $1
+    WHERE user_id = ANY(sqlc.arg(user_ids)::text[])
       AND status = 'active'
 ) as has_active;
+
+-- name: FailStaleDeepResearchRuns :execrows
+-- Runs still active long after any run could have finished: their connection
+-- was lost without the run being completed (for example a restart).
+UPDATE deep_research_runs
+SET status = 'failed', completed_at = NOW()
+WHERE status = 'active'
+  AND started_at < sqlc.arg(started_before);
 
 -- name: GetDeepResearchRunCountForChat :one
 SELECT COUNT(*) as run_count
