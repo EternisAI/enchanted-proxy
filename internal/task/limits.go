@@ -263,6 +263,11 @@ func (s *Service) admitTask(ctx context.Context, userID, taskID string, req *Cre
 	if err != nil {
 		return pgdb.Task{}, err
 	}
+	// The limits are checked over the horizon; a schedule whose first run lies
+	// beyond it cannot be checked, and a task that far off serves no one.
+	if next := schedule.Next(now); next.IsZero() || !next.Before(now.Add(scheduleHorizon)) {
+		return pgdb.Task{}, &ValidationError{Message: "The schedule does not run within the next five years."}
+	}
 
 	if s.tierLookup == nil || s.groups == nil || s.admission == nil {
 		return pgdb.Task{}, fmt.Errorf("task limits are not configured")

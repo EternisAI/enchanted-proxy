@@ -318,3 +318,20 @@ func TestCreateTaskHandlerStatusForRefusals(t *testing.T) {
 		}
 	}
 }
+
+// The next Sunday, February 29 is in 2032, past the five-year horizon.
+func TestSchedulesThatDoNotRunWithinTheHorizonAreRefused(t *testing.T) {
+	for _, expr := range []string{"* * 29 2 SUN", "0 9 30 2 *", "0 9 31 4 *"} {
+		for _, kind := range []string{"recurring", "one_time"} {
+			q := &limitQuerier{}
+			err := newLimitService(tiers.TierPro, q).admitErr(context.Background(), "user-1", request(kind, expr), now)
+			var v *ValidationError
+			if !stderrors.As(err, &v) || !strings.Contains(err.Error(), "five years") {
+				t.Errorf("%s %q: err = %v, want a ValidationError about five years", kind, expr, err)
+			}
+			if len(q.writes) != 0 {
+				t.Errorf("%s %q: refused schedule wrote %v", kind, expr, q.writes)
+			}
+		}
+	}
+}
