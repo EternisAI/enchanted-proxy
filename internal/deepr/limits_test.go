@@ -320,7 +320,15 @@ func TestBackendHeaders(t *testing.T) {
 }
 
 func TestLoadConfigDefaults(t *testing.T) {
-	t.Setenv("DEEP_RESEARCH_FREE_RUN_PROVIDERS", "")
+	for _, name := range []string{
+		"DEEP_RESEARCH_FREE_RUN_PROVIDERS",
+		"DEEP_RESEARCH_MAX_RUNS_PER_DAY",
+		"DEEP_RESEARCH_RUN_MAX_LLM_CALLS",
+		"DEEP_RESEARCH_RUN_MAX_TOKENS",
+		"DEEP_RESEARCH_RUN_MAX_SECONDS",
+	} {
+		t.Setenv(name, "")
+	}
 	c := LoadConfig(pairGroup{})
 	if c.MaxRunsPerDay != 25 || c.RunMaxLLMCalls != 300 || c.RunMaxTokens != 6_500_000 || c.RunMaxSeconds != 12_600 {
 		t.Errorf("defaults = %+v", c)
@@ -363,6 +371,7 @@ func TestNextMonday(t *testing.T) {
 func TestRunReaperCutoff(t *testing.T) {
 	q := &runCountQuerier{}
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel) // also stops the reaper if the test fails below
 	done := make(chan struct{})
 	go func() { RunReaper(ctx, q, &Config{RunMaxSeconds: 3600}, testLogger()); close(done) }()
 	deadline := time.Now().Add(2 * time.Second)
@@ -463,30 +472,37 @@ func TestClarifyForwardsOnlyRepliesToQuestions(t *testing.T) {
 	engine := gin.New()
 	engine.Use(withUser)
 	engine.POST("/clarify", ClarifyDeepResearchHandler(log, nil, nil, nil, sm, untouchedQuerier{}, true, nil, &Config{}))
-	post := func() int {
-		req := httptest.NewRequest(http.MethodPost, "/clarify", strings.NewReader(`{"chat_id":"`+chat+`","response":"Europe"}`))
+	post := func(response string) int {
+		req := httptest.NewRequest(http.MethodPost, "/clarify", strings.NewReader(`{"chat_id":"`+chat+`","response":"`+response+`"}`))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, req)
 		return w.Code
 	}
 
-	if code := post(); code != http.StatusConflict {
+	// Each attempt sends its own text, so a refused reply that reached the
+	// backend anyway would show up.
+	if code := post("too early"); code != http.StatusConflict {
 		t.Fatalf("reply without a question: status %d, want 409", code)
 	}
 	session.ObserveBackendEvent("clarification_needed")
-	if code := post(); code != http.StatusOK {
+	if code := post("Europe"); code != http.StatusOK {
 		t.Fatalf("reply to a question: status %d, want 200", code)
+	}
+	if code := post("one too many"); code != http.StatusConflict {
+		t.Fatalf("second reply to one question: status %d, want 409", code)
 	}
 	select {
 	case m := <-received:
-		if !strings.Contains(m, "Europe") {
-			t.Fatalf("backend received %q", m)
+		if !strings.Contains(m, `"Europe"`) {
+			t.Fatalf("backend received %q, want the accepted reply", m)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("the reply did not reach the backend")
 	}
-	if code := post(); code != http.StatusConflict {
-		t.Fatalf("second reply to one question: status %d, want 409", code)
+	select {
+	case m := <-received:
+		t.Fatalf("backend also received %q, want only the accepted reply", m)
+	case <-time.After(200 * time.Millisecond):
 	}
 }

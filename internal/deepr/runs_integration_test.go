@@ -113,7 +113,8 @@ func TestRunCountingQueries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	insertRun(t, db, "dr-c-"+uuid.NewString(), "active", 0, 0)
+	recent := "dr-c-" + uuid.NewString() // active, started two hours ago
+	insertRun(t, db, recent, "active", 0, 0)
 	count("service-wide today", func() (int64, error) { return q.CountDeepResearchRunsToday(ctx) }, before+1)
 
 	if active, err := q.HasActiveDeepResearchRun(ctx, group); err != nil || active {
@@ -143,6 +144,9 @@ func TestRunCountingQueries(t *testing.T) {
 	var status string
 	if err := db.QueryRow(`SELECT status FROM deep_research_runs WHERE id = $1`, id).Scan(&status); err != nil || status != "failed" {
 		t.Fatalf("status = %q, %v; want failed", status, err)
+	}
+	if err := db.QueryRow(`SELECT status FROM deep_research_runs WHERE user_id = $1`, recent).Scan(&status); err != nil || status != "active" {
+		t.Fatalf("recent run status = %q, %v; want active", status, err)
 	}
 }
 
