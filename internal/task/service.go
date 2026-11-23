@@ -153,6 +153,17 @@ func (s *Service) scheduleExists(ctx context.Context, scheduleID string) (bool, 
 	}
 }
 
+// rejectedOutright reports whether Temporal refused a request in a way that
+// rules out the schedule being created later. After any other error, such as
+// a deadline or an unavailable service, the request may still be processed,
+// so "not found" does not settle the outcome.
+func rejectedOutright(err error) bool {
+	var invalid *serviceerror.InvalidArgument
+	var denied *serviceerror.PermissionDenied
+	var noNamespace *serviceerror.NamespaceNotFound
+	return errors.As(err, &invalid) || errors.As(err, &denied) || errors.As(err, &noNamespace)
+}
+
 // CreateTask creates a new scheduled task.
 func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTaskRequest) (*Task, error) {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
@@ -275,8 +286,11 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 		log.Error("failed to create temporal schedule",
 			slog.String("error", err.Error()),
 			slog.String("task_id", taskID))
-		// The schedule may have been created even so. Its task is released only
-		// once Temporal confirms there is no schedule.
+		// The schedule may have been created even so, or may still be. Its task
+		// is released only when Temporal refused the request outright and holds
+		// no schedule. Otherwise it stays pending and counted; the owner can
+		// delete it, and the reconciler removes pending tasks that have no
+		// schedule.
 		exists, checkErr := s.scheduleExists(ctx, taskID)
 		switch {
 		case checkErr != nil:
@@ -284,9 +298,13 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 				slog.String("error", checkErr.Error()),
 				slog.String("task_id", taskID))
 			return nil, fmt.Errorf("failed to create schedule: %w", err)
-		case !exists:
+		case !exists && rejectedOutright(err):
 			log.Info("cleaning up database entry due to schedule creation failure")
 			s.releaseTask(ctx, taskID, userID)
+			return nil, fmt.Errorf("failed to create schedule: %w", err)
+		case !exists:
+			log.Warn("schedule not found, but the request may still be processed; the task stays counted",
+				slog.String("task_id", taskID))
 			return nil, fmt.Errorf("failed to create schedule: %w", err)
 		}
 		log.Warn("the schedule was created despite the error; continuing", slog.String("task_id", taskID))

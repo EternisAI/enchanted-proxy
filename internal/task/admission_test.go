@@ -104,9 +104,9 @@ func scriptedService(q *limitQuerier, schedules *scriptedSchedules) *Service {
 func TestCreateTaskReleasesAnUnscheduledTask(t *testing.T) {
 	for _, kind := range []string{"recurring", "one_time"} {
 		q := &limitQuerier{}
-		schedules := &scriptedSchedules{createErr: serviceerror.NewUnavailable("down"), describeErr: serviceerror.NewNotFound("no schedule")}
+		schedules := &scriptedSchedules{createErr: serviceerror.NewInvalidArgument("refused"), describeErr: serviceerror.NewNotFound("no schedule")}
 		if _, err := scriptedService(q, schedules).CreateTask(context.Background(), "user-1", request(kind, "0 9 24 12 *")); err == nil {
-			t.Fatalf("%s: CreateTask succeeded with Temporal down", kind)
+			t.Fatalf("%s: CreateTask succeeded although Temporal refused the schedule", kind)
 		}
 		if len(q.deletedTasks) != 1 || !slices.Equal(q.deletedTasks, q.releasedCreation) {
 			t.Fatalf("%s: deleted tasks %v, released creations %v; want the admitted task released", kind, q.deletedTasks, q.releasedCreation)
@@ -130,6 +130,21 @@ func TestCreateTaskKeepsAScheduleCreatedDespiteAnError(t *testing.T) {
 	}
 }
 
+// "Not found" right after a failed call does not rule out a request that is
+// still being processed.
+func TestCreateTaskKeepsTheTaskCountedAfterAnUncertainFailure(t *testing.T) {
+	for _, createErr := range []error{serviceerror.NewDeadlineExceeded("late"), serviceerror.NewUnavailable("down"), context.Canceled} {
+		q := &limitQuerier{}
+		schedules := &scriptedSchedules{createErr: createErr, describeErr: serviceerror.NewNotFound("no schedule")}
+		if _, err := scriptedService(q, schedules).CreateTask(context.Background(), "user-1", request("recurring", "0 9 * * *")); err == nil {
+			t.Fatalf("%v: CreateTask succeeded", createErr)
+		}
+		if len(q.deletedTasks) != 0 || len(q.releasedCreation) != 0 {
+			t.Fatalf("%v: released a task whose schedule may still be created: %v %v", createErr, q.deletedTasks, q.releasedCreation)
+		}
+	}
+}
+
 func TestCreateTaskKeepsTheTaskCountedWhenTheOutcomeIsUnknown(t *testing.T) {
 	q := &limitQuerier{}
 	schedules := &scriptedSchedules{createErr: serviceerror.NewDeadlineExceeded("late"), describeErr: serviceerror.NewUnavailable("down")}
@@ -147,7 +162,7 @@ func TestCreateTaskIgnoresAClientThatLeaves(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	q := &limitQuerier{}
-	schedules := &scriptedSchedules{createErr: serviceerror.NewUnavailable("down"), describeErr: serviceerror.NewNotFound("no schedule")}
+	schedules := &scriptedSchedules{createErr: serviceerror.NewInvalidArgument("refused"), describeErr: serviceerror.NewNotFound("no schedule")}
 	_, _ = scriptedService(q, schedules).CreateTask(ctx, "user-1", request("recurring", "0 9 * * *"))
 	if schedules.createCtxErr != nil {
 		t.Errorf("Create ran on a cancelled context: %v", schedules.createCtxErr)
