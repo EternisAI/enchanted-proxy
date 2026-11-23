@@ -18,12 +18,14 @@ const (
 	maxTaskNameRunes = 100
 	maxTaskTextRunes = 2000
 
-	// Schedules are examined over the next year, which covers every
-	// month, day-of-month and weekday combination a cron can express.
-	scheduleHorizon = 366 * 24 * time.Hour
+	// Schedules are examined over the next five years. A schedule restricted
+	// by both day-of-month and day-of-week runs only on days matching both,
+	// as in Temporal, and such a day (Monday, January 1) can be years away.
+	// Five years is also as far ahead as robfig/cron looks for a run.
+	scheduleHorizon = 5 * 366 * 24 * time.Hour
 	// Bounds on the work per schedule: firing days in the horizon, and runs in one
 	// day (a minute-level schedule runs 1,440 times a day; one with seconds more).
-	maxFiringDays       = 400
+	maxFiringDays       = 5*366 + 1
 	maxRunsPerDayWalked = 100_000
 )
 

@@ -52,8 +52,8 @@ func TestMinInterval(t *testing.T) {
 		"*/5 * * * *":     5 * time.Minute,
 		"0 * * * *":       time.Hour,
 		"0 9 * * *":       24 * time.Hour,
-		"0,59 0,23 * * *": time.Minute, // 23:59 then 00:00 the next day
-		"0 0 1 1 *":       0,           // runs once within the next year
+		"0,59 0,23 * * *": time.Minute,          // 23:59 then 00:00 the next day
+		"0 0 1 1 *":       365 * 24 * time.Hour, // once a year
 		"0 12 * * 1,3":    48 * time.Hour,
 		"59 23 31 * *":    31 * 24 * time.Hour, // Dec 31 to Jan 31, the shortest step between 31sts
 	}
@@ -65,6 +65,10 @@ func TestMinInterval(t *testing.T) {
 	// A burst far ahead still counts: every minute on one day of the year.
 	if got := minInterval(mustParse(t, "* * 1 1 *"), now); got != time.Minute {
 		t.Errorf("burst on Jan 1: min interval %v, want 1m", got)
+	}
+	// A run every minute on a day years away (the next Monday, January 1 is in 2029).
+	if got := minInterval(mustParse(t, "* * 1 1 MON"), now); got != time.Minute {
+		t.Errorf("Monday, January 1: min interval %v, want 1m", got)
 	}
 	// Consecutive firing days only at a month boundary far ahead: Jan 31 23:59, Feb 1 00:00.
 	if got := minInterval(mustParse(t, "0,59 0,23 1,31 1,2 *"), now); got != time.Minute {
@@ -232,6 +236,10 @@ func TestCreationLimits(t *testing.T) {
 		{"plus every 5 minutes", tiers.TierPlus, &limitQuerier{}, request("recurring", "*/5 * * * *"), "min_interval"},
 		{"pro every 5 minutes in working hours", tiers.TierPro, &limitQuerier{}, request("recurring", "*/5 9-17 * * *"), ""},
 		{"pro every 5 minutes all day", tiers.TierPro, &limitQuerier{}, request("recurring", "*/5 * * * *"), "runs_per_day"},
+		// Monday, January 1 is in 2029: checks reach that far.
+		{"free every minute on a day years away", tiers.TierFree, &limitQuerier{}, request("recurring", "* * 1 1 MON"), "min_interval"},
+		{"pro every 5 minutes on a day years away", tiers.TierPro, &limitQuerier{}, request("recurring", "*/5 * 1 1 MON"), "runs_per_day"},
+		{"pro three an hour on a day years away beside an existing task", tiers.TierPro, &limitQuerier{rows: recurringRows("*/10 * * * *")}, request("recurring", "0,20,40 * 1 1 MON"), "runs_per_day"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
