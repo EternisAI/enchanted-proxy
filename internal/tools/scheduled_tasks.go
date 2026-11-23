@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -198,6 +199,16 @@ func (t *ScheduledTasksTool) executeCreate(ctx context.Context, userID string, a
 	// Call task service
 	_, err := t.taskService.CreateTask(ctx, userID, req)
 	if err != nil {
+		// Plan limits and malformed schedules come back as a sentence for the
+		// model to pass on, not as a tool failure.
+		var limit *task.LimitError
+		if errors.As(err, &limit) {
+			return "The task was not created. " + limit.Message, nil
+		}
+		var invalid *task.ValidationError
+		if errors.As(err, &invalid) {
+			return "The task was not created. " + invalid.Message, nil
+		}
 		return "", fmt.Errorf("failed to create task: %w", err)
 	}
 

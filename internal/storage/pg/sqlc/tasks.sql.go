@@ -8,7 +8,28 @@ package pgdb
 import (
 	"context"
 	"database/sql"
+	"time"
+
+	"github.com/lib/pq"
 )
+
+const countTaskCreationsSince = `-- name: CountTaskCreationsSince :one
+SELECT COUNT(*) FROM task_creations
+WHERE user_id = ANY($1::text[])
+  AND created_at > $2
+`
+
+type CountTaskCreationsSinceParams struct {
+	UserIds []string  `json:"userIds"`
+	Since   time.Time `json:"since"`
+}
+
+func (q *Queries) CountTaskCreationsSince(ctx context.Context, arg CountTaskCreationsSinceParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTaskCreationsSince, pq.Array(arg.UserIds), arg.Since)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
 
 const createTask = `-- name: CreateTask :one
 INSERT INTO tasks (task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at)
@@ -66,6 +87,16 @@ type DeleteTaskParams struct {
 
 func (q *Queries) DeleteTask(ctx context.Context, arg DeleteTaskParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, deleteTask, arg.TaskID, arg.UserID)
+}
+
+const deleteTaskCreation = `-- name: DeleteTaskCreation :exec
+DELETE FROM task_creations WHERE task_id = $1
+`
+
+// Releases the creation recorded for a task whose schedule could not be set up.
+func (q *Queries) DeleteTaskCreation(ctx context.Context, taskID string) error {
+	_, err := q.db.ExecContext(ctx, deleteTaskCreation, taskID)
+	return err
 }
 
 const getAllActiveTasks = `-- name: GetAllActiveTasks :many
@@ -209,6 +240,77 @@ func (q *Queries) GetTasksByUserID(ctx context.Context, userID string) ([]Task, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const listOpenTasksForUsers = `-- name: ListOpenTasksForUsers :many
+SELECT task_id, type, time, status, created_at
+FROM tasks
+WHERE user_id = ANY($1::text[])
+  AND status IN ('pending', 'active')
+`
+
+type ListOpenTasksForUsersRow struct {
+	TaskID    string    `json:"taskId"`
+	Type      string    `json:"type"`
+	Time      string    `json:"time"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// Tasks that may still run, for the limit checks: the caller's quota group.
+func (q *Queries) ListOpenTasksForUsers(ctx context.Context, userIds []string) ([]ListOpenTasksForUsersRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenTasksForUsers, pq.Array(userIds))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOpenTasksForUsersRow{}
+	for rows.Next() {
+		var i ListOpenTasksForUsersRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.Type,
+			&i.Time,
+			&i.Status,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockTaskAdmission = `-- name: LockTaskAdmission :exec
+SELECT pg_advisory_xact_lock(hashtextextended('task_admission:' || $1::text, 0))
+`
+
+// Holds an account's task admission lock until the transaction ends, so the
+// limit checks and the new task's rows cannot interleave with another
+// admission for the same account.
+func (q *Queries) LockTaskAdmission(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, lockTaskAdmission, userID)
+	return err
+}
+
+const recordTaskCreation = `-- name: RecordTaskCreation :exec
+INSERT INTO task_creations (user_id, task_id) VALUES ($1, $2)
+`
+
+type RecordTaskCreationParams struct {
+	UserID string `json:"userId"`
+	TaskID string `json:"taskId"`
+}
+
+func (q *Queries) RecordTaskCreation(ctx context.Context, arg RecordTaskCreationParams) error {
+	_, err := q.db.ExecContext(ctx, recordTaskCreation, arg.UserID, arg.TaskID)
+	return err
 }
 
 const updateTaskStatus = `-- name: UpdateTaskStatus :exec

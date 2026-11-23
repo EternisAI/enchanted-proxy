@@ -27,6 +27,9 @@ const (
 	ReasonInviteAlreadyUsed ForbiddenReason = "invite_already_used"
 	ReasonInviteWrongUser   ForbiddenReason = "invite_wrong_user"
 
+	// Scheduled tasks
+	ReasonTaskLimit ForbiddenReason = "task_limit"
+
 	// Subscription/Tier
 	ReasonTierValidationFailed ForbiddenReason = "tier_validation_failed"
 	ReasonSubscriptionExpired  ForbiddenReason = "subscription_expired"

@@ -37,6 +37,7 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/notifications"
 	"github.com/eternisai/enchanted-proxy/internal/problem_reports"
 	"github.com/eternisai/enchanted-proxy/internal/proxy"
+	"github.com/eternisai/enchanted-proxy/internal/quota"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
 	"github.com/eternisai/enchanted-proxy/internal/routing"
 	"github.com/eternisai/enchanted-proxy/internal/search"
@@ -177,7 +178,10 @@ func main() {
 			config.AppConfig.TemporalEndpoint,
 			config.AppConfig.TemporalNamespace,
 			config.AppConfig.TemporalAPIKey,
+			db.DB,
 			db.Queries,
+			requestTrackingService,
+			quota.NewGroups(),
 			logger.WithComponent("task"),
 		)
 		if err != nil {
