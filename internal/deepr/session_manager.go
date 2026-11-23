@@ -2,6 +2,7 @@ package deepr
 
 import (
 	"context"
+	stderrors "errors"
 	"log/slog"
 	"sync"
 
@@ -53,12 +54,29 @@ func (s *ActiveSession) ClaimClientInput() (bool, string) {
 	}
 }
 
-// MarkQuerySent records that the query has gone to the backend by another route.
-func (s *ActiveSession) MarkQuerySent() {
-	s.inputMu.Lock()
-	defer s.inputMu.Unlock()
-	s.querySent = true
+// WriteToBackend sends a message on this session's backend connection. Writes
+// are serialized: the connection supports one writer at a time.
+func (s *ActiveSession) WriteToBackend(messageType int, data []byte) error {
+	s.backendWriteMu.Lock()
+	defer s.backendWriteMu.Unlock()
+	if s.BackendConn == nil {
+		return errBackendClosed
+	}
+	return s.BackendConn.WriteMessage(messageType, data)
 }
+
+var errBackendClosed = stderrors.New("backend connection closed")
+
+// querySource says who sends a new session's query to the backend.
+type querySource int
+
+const (
+	// queryFromClient: the client's first message is the query (WebSocket start).
+	queryFromClient querySource = iota
+	// queryFromProxy: the proxy sends the query itself (REST start), so no
+	// client message may take its place.
+	queryFromProxy
+)
 
 // ObserveBackendEvent updates what the client may send after a backend message.
 func (s *ActiveSession) ObserveBackendEvent(eventType string) {
@@ -102,8 +120,9 @@ func (sm *SessionManager) GetSession(userID, chatID string) (*ActiveSession, boo
 	return session, exists
 }
 
-// CreateSession creates a new active session.
-func (sm *SessionManager) CreateSession(userID, chatID string, runID int64, backendConn *websocket.Conn, ctx context.Context, cancel context.CancelFunc) *ActiveSession {
+// CreateSession creates a new active session. With queryFromProxy, the session
+// is published with its query already claimed.
+func (sm *SessionManager) CreateSession(userID, chatID string, runID int64, backendConn *websocket.Conn, ctx context.Context, cancel context.CancelFunc, query querySource) *ActiveSession {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -145,6 +164,7 @@ func (sm *SessionManager) CreateSession(userID, chatID string, runID int64, back
 		Context:     ctx,
 		CancelFunc:  cancel,
 		clientConns: make(map[string]*websocket.Conn),
+		querySent:   query == queryFromProxy,
 	}
 
 	sm.sessions[key] = session
@@ -342,46 +362,4 @@ func (sm *SessionManager) HasActiveBackend(userID, chatID string) bool {
 		slog.Int("total_sessions", len(sm.sessions)))
 
 	return exists
-}
-
-// WriteToBackend sends a message to the backend websocket with proper synchronization
-// This method ensures only one goroutine writes to the backend at a time.
-func (sm *SessionManager) WriteToBackend(userID, chatID string, messageType int, message []byte) error {
-	sm.mu.RLock()
-	key := sm.getSessionKey(userID, chatID)
-	session, exists := sm.sessions[key]
-	sm.mu.RUnlock()
-
-	if !exists {
-		sm.logger.WithComponent("deepr-session").Debug("no active session for backend write",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID))
-		return nil // No active session
-	}
-
-	// Serialize writes to backend websocket
-	session.backendWriteMu.Lock()
-	defer session.backendWriteMu.Unlock()
-
-	if session.BackendConn == nil {
-		sm.logger.WithComponent("deepr-session").Warn("backend connection closed, cannot write",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID))
-		return nil // Backend connection closed
-	}
-
-	err := session.BackendConn.WriteMessage(messageType, message)
-	if err != nil {
-		sm.logger.WithComponent("deepr-session").Error("failed to write to backend",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.String("error", err.Error()))
-	} else {
-		sm.logger.WithComponent("deepr-session").Debug("message written to backend",
-			slog.String("user_id", userID),
-			slog.String("chat_id", chatID),
-			slog.Int("message_size", len(message)))
-	}
-
-	return err
 }

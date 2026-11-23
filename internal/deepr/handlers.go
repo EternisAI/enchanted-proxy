@@ -280,8 +280,9 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 		// Create session context
 		sessionCtx, cancel := context.WithCancel(context.Background())
 
-		// Create and register session with runID for token tracking
-		session := sessionManager.CreateSession(userID, req.ChatID, runID, backendConn, sessionCtx, cancel)
+		// Create and register session with runID for token tracking. Its query is
+		// claimed before it is published, so a client connecting now cannot send one.
+		session := sessionManager.CreateSession(userID, req.ChatID, runID, backendConn, sessionCtx, cancel, queryFromProxy)
 
 		// Update backend connection status in storage
 		if storage != nil {
@@ -313,7 +314,7 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			return
 		}
 
-		if err := backendConn.WriteMessage(websocket.TextMessage, queryJSON); err != nil {
+		if err := session.WriteToBackend(websocket.TextMessage, queryJSON); err != nil {
 			log.Error("failed to send query to backend",
 				slog.String("user_id", userID),
 				slog.String("chat_id", req.ChatID),
@@ -326,8 +327,6 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 			})
 			return
 		}
-
-		session.MarkQuerySent()
 
 		log.Info("deep research started successfully",
 			slog.String("user_id", userID),
@@ -450,13 +449,15 @@ func ClarifyDeepResearchHandler(logger *logger.Logger, trackingService *request_
 		}
 
 		// Create message to send to backend
-		clarificationMsg := map[string]string{
+		clarificationJSON, err := json.Marshal(map[string]string{
 			"type":    "message",
 			"content": req.Response,
+		})
+		if err == nil {
+			// Send clarification response to Python backend
+			err = session.WriteToBackend(websocket.TextMessage, clarificationJSON)
 		}
-
-		// Send clarification response to Python backend
-		if err := session.BackendConn.WriteJSON(clarificationMsg); err != nil {
+		if err != nil {
 			log.Error("failed to send clarification to backend",
 				slog.String("user_id", userID),
 				slog.String("chat_id", req.ChatID),

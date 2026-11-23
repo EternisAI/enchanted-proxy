@@ -212,12 +212,83 @@ func TestClientInputGating(t *testing.T) {
 		}
 	}
 
-	errored := &ActiveSession{}
-	errored.MarkQuerySent()
+	errored := &ActiveSession{querySent: true}
 	errored.ObserveBackendEvent("clarification_needed")
 	errored.ObserveBackendEvent("error")
 	if ok, _ := errored.ClaimClientInput(); ok {
 		t.Fatal("input forwarded after the run failed")
+	}
+}
+
+// A session started over REST is published with its query claimed, so a client
+// that connects before the proxy has sent the query cannot send one instead.
+func TestQueryFromProxyIsClaimedAtCreation(t *testing.T) {
+	sm := NewSessionManager(testLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rest := sm.CreateSession("test-user", "chat-rest", 1, nil, ctx, cancel, queryFromProxy)
+	if ok, _ := rest.ClaimClientInput(); ok {
+		t.Fatal("a client message took the REST query's place")
+	}
+	ws := sm.CreateSession("test-user", "chat-ws", 2, nil, ctx, cancel, queryFromClient)
+	if ok, _ := ws.ClaimClientInput(); !ok {
+		t.Fatal("the WebSocket client could not send its query")
+	}
+}
+
+// Writes through a session are serialized: the WebSocket library supports one
+// writer at a time, and detects concurrent writes with a panic.
+func TestSessionWritesAreSerialized(t *testing.T) {
+	const writers = 50
+	received := make(chan string, writers)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		for {
+			_, m, err := c.ReadMessage()
+			if err != nil {
+				return
+			}
+			received <- string(m)
+		}
+	}))
+	defer backend.Close()
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(backend.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	session := &ActiveSession{BackendConn: conn}
+	payload := strings.Repeat("x", 64<<10) // large enough for writes to overlap
+	var wg sync.WaitGroup
+	for range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := session.WriteToBackend(websocket.TextMessage, []byte(payload)); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	for i := range writers {
+		select {
+		case m := <-received:
+			if m != payload {
+				t.Fatalf("message %d arrived damaged (%d bytes)", i, len(m))
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%d of %d messages arrived", i, writers)
+		}
+	}
+
+	if err := (&ActiveSession{}).WriteToBackend(websocket.TextMessage, nil); err == nil {
+		t.Error("a write without a backend connection succeeded")
 	}
 }
 
@@ -361,8 +432,7 @@ func TestClarifyForwardsOnlyRepliesToQuestions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	const chat = "0d6f6b3e-8a54-4c1e-9a1f-2f4b6c7d8e9f"
-	session := sm.CreateSession("test-user", chat, 1, backendConn, ctx, cancel)
-	session.MarkQuerySent()
+	session := sm.CreateSession("test-user", chat, 1, backendConn, ctx, cancel, queryFromProxy)
 
 	engine := gin.New()
 	engine.Use(withUser)

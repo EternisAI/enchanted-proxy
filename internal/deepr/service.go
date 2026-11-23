@@ -706,10 +706,9 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 				// Forward only what the run accepts: the query, then a reply to each
 				// clarification question, at most twice. Anything else would start more
 				// work in the backend within the same counted run.
-				allowed, reason := false, "No active deep research session"
-				if session, ok := s.sessionManager.GetSession(userID, chatID); ok && session != nil {
-					allowed, reason = session.ClaimClientInput()
-				}
+				// Claim and write on the session this client joined, never on a
+				// later run that took the same chat.
+				allowed, reason := session.ClaimClientInput()
 				if !allowed {
 					log.Warn("message from client not forwarded", slog.String("reason", reason))
 					if errJSON, err := json.Marshal(map[string]string{"error": reason}); err == nil {
@@ -719,7 +718,7 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 				}
 
 				// Forward to backend using synchronized write
-				if err := s.sessionManager.WriteToBackend(userID, chatID, websocket.TextMessage, message); err != nil {
+				if err := session.WriteToBackend(websocket.TextMessage, message); err != nil {
 					log.Error("failed to forward message to backend",
 						slog.String("user_id", userID),
 						slog.String("chat_id", chatID),
@@ -737,8 +736,9 @@ func (s *Service) handleReconnection(ctx context.Context, clientConn *websocket.
 	<-done
 }
 
-// handleClientMessages handles forwarding messages from a client to the backend.
-func (s *Service) handleClientMessages(sessionCtx context.Context, clientConn *websocket.Conn, userID, chatID, clientID string) {
+// handleClientMessages forwards messages from a client to the backend of session,
+// the run the client started.
+func (s *Service) handleClientMessages(sessionCtx context.Context, session *ActiveSession, clientConn *websocket.Conn, userID, chatID, clientID string) {
 	log := s.logger.WithContext(sessionCtx).WithComponent("deepr")
 
 	log.Info("client message handler started",
@@ -786,10 +786,7 @@ func (s *Service) handleClientMessages(sessionCtx context.Context, clientConn *w
 			// Forward only what the run accepts: the query, then a reply to each
 			// clarification question, at most twice. Anything else would start more
 			// work in the backend within the same counted run.
-			allowed, reason := false, "No active deep research session"
-			if session, ok := s.sessionManager.GetSession(userID, chatID); ok && session != nil {
-				allowed, reason = session.ClaimClientInput()
-			}
+			allowed, reason := session.ClaimClientInput()
 			if !allowed {
 				log.Warn("message from client not forwarded", slog.String("reason", reason))
 				if errJSON, err := json.Marshal(map[string]string{"error": reason}); err == nil {
@@ -799,7 +796,7 @@ func (s *Service) handleClientMessages(sessionCtx context.Context, clientConn *w
 			}
 
 			// Forward to backend using synchronized write
-			if err := s.sessionManager.WriteToBackend(userID, chatID, websocket.TextMessage, message); err != nil {
+			if err := session.WriteToBackend(websocket.TextMessage, message); err != nil {
 				log.Error("failed to forward message to backend",
 					slog.String("user_id", userID),
 					slog.String("chat_id", chatID),
@@ -932,7 +929,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 	defer cancel()
 
 	// Create and register session with runID for token tracking
-	_ = s.sessionManager.CreateSession(userID, chatID, runID, serverConn, sessionCtx, cancel)
+	session := s.sessionManager.CreateSession(userID, chatID, runID, serverConn, sessionCtx, cancel, queryFromClient)
 	defer s.sessionManager.RemoveSession(userID, chatID)
 
 	// Check if user has premium to log parallel session creation
@@ -949,7 +946,7 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 
 	// Handle messages from this client to backend in a separate goroutine
 	// Use session context so client can disconnect without terminating the session
-	go s.handleClientMessages(sessionCtx, clientConn, userID, chatID, clientID)
+	go s.handleClientMessages(sessionCtx, session, clientConn, userID, chatID, clientID)
 
 	log.Info("session established, starting message processing",
 		slog.String("user_id", userID),
@@ -1010,9 +1007,8 @@ func (s *Service) handleNewConnection(ctx context.Context, clientConn *websocket
 					}
 				}
 			}
-			if session, ok := s.sessionManager.GetSession(userID, chatID); ok && session != nil {
-				session.ObserveBackendEvent(messageType)
-			}
+			// This reader's own run, even if a later start took the chat's key.
+			session.ObserveBackendEvent(messageType)
 
 			// Update session state in Firebase based on message type
 			sessionState := mapEventTypeToState(messageType)
