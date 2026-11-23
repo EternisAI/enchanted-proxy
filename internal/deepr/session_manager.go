@@ -29,6 +29,7 @@ type ActiveSession struct {
 	querySent      bool
 	awaitingReply  bool
 	clarifications int
+	ended          bool // the backend sent research_complete or error
 }
 
 // maxClarificationRounds is how many clarification replies one run accepts.
@@ -40,6 +41,8 @@ func (s *ActiveSession) ClaimClientInput() (bool, string) {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
 	switch {
+	case s.ended:
+		return false, "This research has ended"
 	case !s.querySent:
 		s.querySent = true
 		return true, ""
@@ -87,6 +90,7 @@ func (s *ActiveSession) ObserveBackendEvent(eventType string) {
 		s.awaitingReply = true
 	case "error", "research_complete":
 		s.awaitingReply = false
+		s.ended = true
 	}
 }
 

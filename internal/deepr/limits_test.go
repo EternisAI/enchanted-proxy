@@ -218,6 +218,14 @@ func TestClientInputGating(t *testing.T) {
 	if ok, _ := errored.ClaimClientInput(); ok {
 		t.Fatal("input forwarded after the run failed")
 	}
+
+	// A backend that refuses before the query (for example when it is busy)
+	// ends the run: the query is not accepted afterwards.
+	refused := &ActiveSession{}
+	refused.ObserveBackendEvent("error")
+	if ok, _ := refused.ClaimClientInput(); ok {
+		t.Fatal("query forwarded after the backend ended the run")
+	}
 }
 
 // A session started over REST is published with its query claimed, so a client
