@@ -16,7 +16,6 @@ func TestDaysMatchBothFieldsAsInTemporal(t *testing.T) {
 		"new":        mustParse(t, "0 9 1 * MON"),
 		"stored":     mustParseStored(t, "0 9 1 * MON"),
 		"stored six": mustParseStored(t, "0 9 1 * MON 2027"),
-		"stored tz":  mustParseStored(t, "CRON_TZ=UTC 0 9 1 * 1"),
 	} {
 		if got := s.Next(now); !got.Equal(mondayFirst) {
 			t.Errorf("%s: next run %v, want %v", name, got, mondayFirst)

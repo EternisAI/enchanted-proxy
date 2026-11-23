@@ -19,9 +19,13 @@ import (
 //   - 7 fields: second in front, year at the end
 //   - @yearly, @monthly, @weekly, @daily, @hourly
 //   - @every <interval>[/<phase>], with units s, m, h or d
-//   - an optional CRON_TZ= or TZ= prefix (UTC without one) and a trailing # comment
+//   - a trailing # comment
 //   - 7 as well as 0 for Sunday
 //   - a run only on days matching both day-of-month and day-of-week
+//
+// Schedules are read in UTC. A CRON_TZ= or TZ= prefix is not read, and such a
+// schedule counts as unreadable: none is stored, and new schedules cannot have
+// one.
 
 // storedFieldsParser reads the time fields once they are normalized to six,
 // seconds first; storedDescriptorParser reads the @ shorthands.
@@ -41,16 +45,10 @@ func parseStoredSchedule(expr string) (cron.Schedule, error) {
 	}
 	s = strings.TrimSpace(s)
 
-	tz := "CRON_TZ=UTC "
-	if strings.HasPrefix(s, "CRON_TZ=") || strings.HasPrefix(s, "TZ=") {
-		prefix, rest, _ := strings.Cut(s, " ")
-		_, zone, _ := strings.Cut(prefix, "=")
-		if _, err := time.LoadLocation(zone); err != nil {
-			return nil, fmt.Errorf("unknown time zone %q", zone)
-		}
-		tz = "CRON_TZ=" + zone + " "
-		s = strings.TrimSpace(rest)
+	if strings.Contains(s, "TZ=") {
+		return nil, fmt.Errorf("a stored schedule with a time zone is not read")
 	}
+	const tz = "CRON_TZ=UTC "
 
 	if rest, ok := strings.CutPrefix(s, "@every "); ok {
 		return parseEvery(strings.TrimSpace(rest))
@@ -84,7 +82,7 @@ func parseStoredSchedule(expr string) (cron.Schedule, error) {
 	if err != nil {
 		return nil, err
 	}
-	return yearSchedule{inner: spec, allow: allow, loc: scheduleLocation(spec)}, nil
+	return yearSchedule{inner: spec, allow: allow}, nil
 }
 
 // sundayAsZero rewrites Temporal's 7 for Sunday, which robfig does not accept,
@@ -162,11 +160,10 @@ func (s intervalSchedule) profile(from time.Time) dailyProfile {
 }
 
 // yearSchedule keeps the runs of a schedule that fall in the years its year
-// field allows, judged in the schedule's own time zone.
+// field allows, judged in UTC like the rest of the schedule.
 type yearSchedule struct {
 	inner cron.Schedule
 	allow func(year int) bool
-	loc   *time.Location
 }
 
 func (y yearSchedule) Next(t time.Time) time.Time {
@@ -176,11 +173,11 @@ func (y yearSchedule) Next(t time.Time) time.Time {
 		if n.IsZero() {
 			return n
 		}
-		year := n.In(y.loc).Year()
+		year := n.UTC().Year()
 		if y.allow(year) {
 			return n
 		}
-		t = time.Date(year+1, 1, 1, 0, 0, 0, 0, y.loc).Add(-time.Nanosecond)
+		t = time.Date(year+1, 1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Nanosecond)
 	}
 	return time.Time{}
 }
@@ -277,20 +274,4 @@ func withTemporalDays(s cron.Schedule) cron.Schedule {
 		return s
 	}
 	return bothDays{spec: spec}
-}
-
-// scheduleLocation is the time zone a schedule's calendar fields are read in.
-// Every parser here sets one; intervals run on an absolute grid, read as UTC.
-func scheduleLocation(s cron.Schedule) *time.Location {
-	switch v := s.(type) {
-	case *cron.SpecSchedule:
-		if v.Location != nil && v.Location != time.Local {
-			return v.Location
-		}
-	case bothDays:
-		return scheduleLocation(v.spec)
-	case yearSchedule:
-		return v.loc
-	}
-	return time.UTC
 }

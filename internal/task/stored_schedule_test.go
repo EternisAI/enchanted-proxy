@@ -38,22 +38,20 @@ func TestParseStoredScheduleReadsTemporalLayouts(t *testing.T) {
 		runs int
 	}{
 		{"0 9 * * *", weekday, 1},
-		{"0 * * * * 2027", weekday, 0},                  // six fields: minute to day-of-week, then a year
-		{"0 * * * * 2027", in2027, 24},                  //
-		{"0 * * * * 2026-2030/2", in2027, 0},            // even years only
-		{"0 * * * * 2025,2027", in2027, 24},             //
-		{"*/30 * * * * * *", weekday, 2880},             // seven fields: seconds first
-		{"0 0 9 * * * 2026-2027", weekday, 1},           //
-		{"@daily", weekday, 1},                          //
-		{"@hourly", weekday, 24},                        //
-		{"@every 1d", weekday, 1},                       //
-		{"CRON_TZ=Europe/Berlin 0 9 * * *", weekday, 1}, //
-		{"TZ=UTC 0 9 * * *", weekday, 1},                //
-		{"0 9 * * * # every morning", weekday, 1},       //
-		{"0 9 * * 7", weekday, 0},                       // 7 is Sunday
-		{"0 9 * * 7", day(2026, 11, 29), 1},             //
-		{"0 9 * * 5-7", day(2026, 11, 29), 1},           //
-		{"0 9 * * 1,7", weekday, 1},                     //
+		{"0 * * * * 2027", weekday, 0},            // six fields: minute to day-of-week, then a year
+		{"0 * * * * 2027", in2027, 24},            //
+		{"0 * * * * 2026-2030/2", in2027, 0},      // even years only
+		{"0 * * * * 2025,2027", in2027, 24},       //
+		{"*/30 * * * * * *", weekday, 2880},       // seven fields: seconds first
+		{"0 0 9 * * * 2026-2027", weekday, 1},     //
+		{"@daily", weekday, 1},                    //
+		{"@hourly", weekday, 24},                  //
+		{"@every 1d", weekday, 1},                 //
+		{"0 9 * * * # every morning", weekday, 1}, //
+		{"0 9 * * 7", weekday, 0},                 // 7 is Sunday
+		{"0 9 * * 7", day(2026, 11, 29), 1},       //
+		{"0 9 * * 5-7", day(2026, 11, 29), 1},     //
+		{"0 9 * * 1,7", weekday, 1},               //
 	}
 	for _, c := range cases {
 		if got := runsOnDay(mustParseStored(t, c.expr), c.on); got != c.runs {
@@ -62,9 +60,6 @@ func TestParseStoredScheduleReadsTemporalLayouts(t *testing.T) {
 	}
 	if next := mustParseStored(t, "0 * * * * 2025").Next(now); !next.IsZero() {
 		t.Errorf("a schedule for 2025 runs again at %v", next)
-	}
-	if next := mustParseStored(t, "CRON_TZ=Europe/Berlin 0 9 * * *").Next(now); !next.Equal(time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)) {
-		t.Errorf("09:00 in Berlin next runs at %v, want 08:00 UTC", next.UTC())
 	}
 }
 
@@ -86,7 +81,7 @@ func TestEveryRunsOnTemporalsGrid(t *testing.T) {
 }
 
 func TestParseStoredScheduleRefusesWhatItCannotCount(t *testing.T) {
-	for _, expr := range []string{"", "bogus", "0 9 * * * * * *", "0 9 *", "@every 10x", "@every 0s", "@every", "CRON_TZ=Nowhere/City 0 9 * * *", "0 9 * * * 20x6", "61 * * * *"} {
+	for _, expr := range []string{"", "bogus", "0 9 * * * * * *", "0 9 *", "@every 10x", "@every 0s", "@every", "CRON_TZ=Nowhere/City 0 9 * * *", "CRON_TZ=Europe/Berlin 0 9 * * *", "TZ=UTC 0 9 * * *", "0 9 * * * 20x6", "61 * * * *"} {
 		if _, err := parseStoredSchedule(expr); err == nil {
 			t.Errorf("%q was read", expr)
 		}
@@ -110,6 +105,7 @@ func TestStoredLegacySchedulesCountTowardLimits(t *testing.T) {
 		{"every 10 minutes", tiers.TierPlus, stored("@every 10m"), request("recurring", "0 9 * * *"), "runs_per_day"},
 		{"every 10 minutes on Pro", tiers.TierPro, stored("@every 10m"), request("recurring", "0 9 * * *"), ""},
 		{"unreadable blocks recurring", tiers.TierPro, stored("bogus"), request("recurring", "0 9 * * *"), "unreadable_schedule"},
+		{"time zone is unreadable", tiers.TierPro, stored("CRON_TZ=Asia/Tokyo 0 9 * * *"), request("recurring", "0 9 * * *"), "unreadable_schedule"},
 		{"unreadable leaves one-time alone", tiers.TierPro, stored("bogus"), oneTimeOnly, ""},
 	}
 	for _, tt := range tests {
@@ -130,44 +126,6 @@ func TestUnreadableOneTimeTaskCountsAsPending(t *testing.T) {
 	err := newLimitService(tiers.TierFree, &limitQuerier{rows: rows}).admitErr(context.Background(), "user-1", request("one_time", "0 9 24 12 *"), now)
 	if limitReason(err) != "pending_one_time_tasks" {
 		t.Fatalf("err = %v, want the pending one-time limit", err)
-	}
-}
-
-// A stored schedule with a time zone is matched in that zone, whatever the
-// zone of the time the check starts from.
-func TestStoredSchedulesUseTheirTimeZone(t *testing.T) {
-	cases := map[string]time.Time{
-		"CRON_TZ=Europe/Berlin 0 0 1 * MON":         time.Date(2027, 1, 31, 23, 0, 0, 0, time.UTC),  // Monday, Feb 1 in Berlin
-		"CRON_TZ=Asia/Tokyo 0 0 1 * MON":            time.Date(2027, 1, 31, 15, 0, 0, 0, time.UTC),  // Monday, Feb 1 in Tokyo
-		"CRON_TZ=Pacific/Kiritimati 0 0 1 1 * 2027": time.Date(2026, 12, 31, 10, 0, 0, 0, time.UTC), // New Year 2027 there
-	}
-	for expr, want := range cases {
-		if got := mustParseStored(t, expr).Next(now); !got.Equal(want) {
-			t.Errorf("%q: next run %v, want %v", expr, got.UTC(), want)
-		}
-	}
-	if got := runsOnDay(mustParseStored(t, "CRON_TZ=Asia/Tokyo * 0 1 * MON"), day(2027, 1, 31)); got != 60 {
-		t.Errorf("every minute of midnight hour, Monday the 1st in Tokyo: %d runs on that UTC day, want 60", got)
-	}
-}
-
-// Runs per day are counted per UTC day, also for schedules read in another zone.
-func TestRunsPerDayAreCountedPerUTCDay(t *testing.T) {
-	// 00:00-08:00 and 12:00 on Mondays in Tokyo: 9 runs on Sunday UTC, 1 on Monday.
-	tokyo := mustParseStored(t, "CRON_TZ=Asia/Tokyo 0 0-8,12 * * MON")
-	if exceedsRunsPerDay([]cron.Schedule{tokyo}, now, 9) || !exceedsRunsPerDay([]cron.Schedule{tokyo}, now, 8) {
-		t.Error("Tokyo schedule: busiest UTC day should have 9 runs")
-	}
-	// 10:00 and 20:00 on Mondays in Denver: one run on Monday UTC, one on Tuesday.
-	denver := mustParseStored(t, "CRON_TZ=America/Denver 0 10,20 * * MON")
-	if exceedsRunsPerDay([]cron.Schedule{denver}, now, 1) {
-		t.Error("Denver schedule: no UTC day should have more than 1 run")
-	}
-	// With an hourly task, Sunday UTC has 33 runs, past Free's 25.
-	q := &limitQuerier{rows: recurringRows("CRON_TZ=Asia/Tokyo 0 0-8,12 * * MON")}
-	err := newLimitService(tiers.TierFree, q).admitErr(context.Background(), "user-1", request("recurring", "0 * * * *"), now)
-	if limitReason(err) != "runs_per_day" {
-		t.Fatalf("err = %v, want the runs-per-day limit", err)
 	}
 }
 
