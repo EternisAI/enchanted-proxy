@@ -166,7 +166,7 @@ jobs:
     - check
     - build
     - repush
-    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.repush.result == 'success' || (needs.check.outputs.digest && needs.build.result == 'skipped')) }}
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.repush.result == 'success' || (needs.check.outputs.digest && needs.build.result == 'skipped' && needs.repush.result == 'skipped')) }}
     permissions:
       contents: read
     # Waits for the gitops-apps run it dispatches (see the action's run-timeout).
