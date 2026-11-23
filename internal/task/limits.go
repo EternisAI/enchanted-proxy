@@ -248,6 +248,13 @@ func (s *Service) admitTask(ctx context.Context, userID, taskID string, req *Cre
 	if next := schedule.Next(now); next.IsZero() || !next.Before(now.Add(scheduleHorizon)) {
 		return pgdb.Task{}, &ValidationError{Message: "The schedule does not run within the next five years."}
 	}
+	// A one-time schedule stays open for a few minutes after its run; one that
+	// runs again in that time would run more than once, counted as one task.
+	if req.Type == string(TaskTypeOneTime) {
+		if gap := minInterval(schedule, now); gap > 0 && gap <= oneTimeWindow {
+			return pgdb.Task{}, &ValidationError{Message: "A one-time task needs a schedule that runs at a single time; this one runs again within five minutes."}
+		}
+	}
 
 	if s.tierLookup == nil || s.groups == nil || s.admission == nil {
 		return pgdb.Task{}, fmt.Errorf("task limits are not configured")

@@ -22,6 +22,11 @@ import (
 // missed while Temporal was unavailable.
 const scheduleCatchupWindow = 5 * time.Minute
 
+// oneTimeWindow is how long a one-time task's schedule stays open after its
+// run. Temporal's end time is inclusive, so the schedule must not have another
+// run within this window (checked at admission).
+const oneTimeWindow = 5 * time.Minute
+
 // After a task is admitted, the steps that schedule it or clean up after a
 // failure run on contexts that keep the request's values but not its
 // cancellation: a client that disconnects must not interrupt them halfway.
@@ -249,7 +254,7 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 		// Read the clock again: a run that passed while the task was admitted is
 		// gone, as Temporal does not backfill a new schedule.
 		nextRun := schedule.Next(s.currentTime())
-		endTime := nextRun.Add(5 * time.Minute) // End shortly after the expected run
+		endTime := nextRun.Add(oneTimeWindow) // End shortly after the expected run
 		scheduleSpec.EndAt = endTime
 		log.Info("one-time schedule configured",
 			slog.Time("expected_run", nextRun),

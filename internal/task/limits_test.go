@@ -335,3 +335,30 @@ func TestSchedulesThatDoNotRunWithinTheHorizonAreRefused(t *testing.T) {
 		}
 	}
 }
+
+// A one-time schedule stays open five minutes after its run (end inclusive),
+// so a schedule that runs again within that time is refused.
+func TestOneTimeSchedulesMustRunOnce(t *testing.T) {
+	for expr, refused := range map[string]bool{
+		"0,2,4 9 * * *": true,
+		"* 9 * * *":     true,
+		"*/5 9 * * *":   true, // 09:00 and 09:05, both within the window
+		"*/6 9 * * *":   false,
+		"0 9 * * *":     false,
+		"0 9 24 12 *":   false,
+	} {
+		q := &limitQuerier{}
+		err := newLimitService(tiers.TierPro, q).admitErr(context.Background(), "user-1", request("one_time", expr), now)
+		var v *ValidationError
+		if got := stderrors.As(err, &v) && strings.Contains(err.Error(), "single time"); got != refused {
+			t.Errorf("one-time %q: err = %v, refused %v, want %v", expr, err, got, refused)
+		}
+		if refused && len(q.writes) != 0 {
+			t.Errorf("one-time %q: refused schedule wrote %v", expr, q.writes)
+		}
+	}
+	// The rule is for one-time tasks only.
+	if err := newLimitService(tiers.TierPro, &limitQuerier{}).admitErr(context.Background(), "user-1", request("recurring", "*/5 9 * * *"), now); err != nil {
+		t.Errorf("recurring */5 refused: %v", err)
+	}
+}
