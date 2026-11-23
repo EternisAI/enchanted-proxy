@@ -48,16 +48,25 @@ func TestDayMatchingDoesNotOvercountRunsPerDay(t *testing.T) {
 }
 
 func TestOneTimeTaskEndsAfterTemporalsFirstRun(t *testing.T) {
-	schedules := &scriptedSchedules{}
-	_, _ = scriptedService(&limitQuerier{}, schedules).CreateTask(context.Background(), "user-1", request("one_time", "0 9 1 * MON"))
-	opts := schedules.options
-
-	first := time.Now().UTC()
-	for first = first.Truncate(24 * time.Hour); first.Day() != 1 || first.Weekday() != time.Monday; first = first.Add(24 * time.Hour) {
-	}
-	want := first.Add(9*time.Hour + 5*time.Minute)
-	if !opts.Spec.EndAt.Equal(want) {
-		t.Fatalf("one-time schedule ends at %v, want %v (after the first Monday the 1st)", opts.Spec.EndAt.UTC(), want)
+	for _, c := range []struct {
+		name  string
+		clock time.Time
+		want  time.Time
+	}{
+		// The first Monday the 1st after now is February 1, 2027.
+		{"before", now, time.Date(2027, 2, 1, 9, 5, 0, 0, time.UTC)},
+		// On that day after 09:00, the next one is March 1.
+		{"same day, later", time.Date(2027, 2, 1, 10, 0, 0, 0, time.UTC), time.Date(2027, 3, 1, 9, 5, 0, 0, time.UTC)},
+	} {
+		schedules := &scriptedSchedules{}
+		s := scriptedService(&limitQuerier{}, schedules)
+		s.clock = func() time.Time { return c.clock }
+		if _, err := s.CreateTask(context.Background(), "user-1", request("one_time", "0 9 1 * MON")); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got := schedules.options.Spec.EndAt; !got.Equal(c.want) {
+			t.Errorf("%s: one-time schedule ends at %v, want %v", c.name, got.UTC(), c.want)
+		}
 	}
 }
 

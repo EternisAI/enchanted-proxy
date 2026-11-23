@@ -49,6 +49,14 @@ type Service struct {
 	tierLookup     TierLookup
 	groups         GroupLookup
 	admission      admissionTx
+	clock          func() time.Time // time.Now outside tests
+}
+
+func (s *Service) currentTime() time.Time {
+	if s.clock != nil {
+		return s.clock()
+	}
+	return time.Now()
 }
 
 // NewService creates a new task service. tierLookup and groups supply the plan
@@ -97,6 +105,7 @@ func NewService(endpoint, namespace, apiKey string, db *sql.DB, queries pgdb.Que
 		tierLookup:     tierLookup,
 		groups:         groups,
 		admission:      lockedAdmission(db),
+		clock:          time.Now,
 	}, nil
 }
 
@@ -179,7 +188,8 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 
 	// Check the plan limits, insert the task as pending and record its creation,
 	// under the quota group's admission lock.
-	dbTask, err := s.admitTask(ctx, userID, taskID, req, time.Now())
+	started := s.currentTime()
+	dbTask, err := s.admitTask(ctx, userID, taskID, req, started)
 	if err != nil {
 		var limitErr *LimitError
 		var validationErr *ValidationError
@@ -225,7 +235,7 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 			s.releaseTask(ctx, taskID, userID)
 			return nil, fmt.Errorf("invalid cron expression: %w", err)
 		}
-		nextRun := schedule.Next(time.Now())
+		nextRun := schedule.Next(started)
 		endTime := nextRun.Add(5 * time.Minute) // End shortly after the expected run
 		scheduleSpec.EndAt = endTime
 		log.Info("one-time schedule configured",

@@ -179,6 +179,7 @@ func newLimitService(tier tiers.Tier, q *limitQuerier) *Service {
 		queries:    q,
 		tierLookup: fixedTier{tier: tier},
 		groups:     twoMemberGroup{},
+		clock:      func() time.Time { return now },
 		admission: func(_ context.Context, userIDs []string, fn func(pgdb.Querier) error) error {
 			q.lockedFor = userIDs
 			q.inAdmission = true
