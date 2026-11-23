@@ -75,23 +75,24 @@ func parseStrictSchedule(expr string) (cron.Schedule, error) {
 
 // dailyProfile describes when a schedule runs within the horizon. Cron fields
 // multiply out, so on every day a schedule fires it fires at the same times of
-// day; the profile keeps those times and the list of firing days, which avoids
-// walking every single run.
+// day in its own time zone; the profile keeps those times and the list of
+// firing days, which avoids walking every single run.
 type dailyProfile struct {
-	timesOfDay []time.Duration // offsets from midnight UTC, ascending
-	days       []time.Time     // UTC midnights of the firing days, ascending
+	timesOfDay []time.Duration // offsets from the local midnight, ascending
+	days       []time.Time     // local midnights of the firing days, ascending
 }
 
 func profileSchedule(s cron.Schedule, from time.Time) dailyProfile {
 	if interval, ok := s.(intervalSchedule); ok && interval.every < 24*time.Hour {
 		return interval.profile(from)
 	}
+	loc := scheduleLocation(s)
 	end := from.Add(scheduleHorizon)
 	var p dailyProfile
 	for t := s.Next(from); !t.IsZero() && t.Before(end) && len(p.days) <= maxFiringDays; {
-		day := t.UTC().Truncate(24 * time.Hour)
+		day := midnight(t, loc)
 		p.days = append(p.days, day)
-		t = s.Next(day.Add(24*time.Hour - time.Nanosecond)) // first run on a later day
+		t = s.Next(nextMidnight(day).Add(-time.Nanosecond)) // first run on a later day
 	}
 	if len(p.days) == 0 {
 		return p
@@ -101,10 +102,22 @@ func profileSchedule(s cron.Schedule, from time.Time) dailyProfile {
 	if len(p.days) > 1 {
 		day = p.days[1]
 	}
-	for t := s.Next(day.Add(-time.Nanosecond)); !t.IsZero() && t.Before(day.Add(24*time.Hour)) && len(p.timesOfDay) < maxRunsPerDayWalked; t = s.Next(t) {
+	for t := s.Next(day.Add(-time.Nanosecond)); !t.IsZero() && t.Before(nextMidnight(day)) && len(p.timesOfDay) < maxRunsPerDayWalked; t = s.Next(t) {
 		p.timesOfDay = append(p.timesOfDay, t.Sub(day))
 	}
 	return p
+}
+
+// midnight is the start of t's day in loc.
+func midnight(t time.Time, loc *time.Location) time.Time {
+	y, m, d := t.In(loc).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, loc)
+}
+
+// nextMidnight is the start of the day after the one beginning at day.
+func nextMidnight(day time.Time) time.Time {
+	y, m, d := day.Date()
+	return time.Date(y, m, d+1, 0, 0, 0, 0, day.Location())
 }
 
 // minInterval is the shortest gap between consecutive runs within the horizon,
@@ -131,14 +144,21 @@ func minInterval(s cron.Schedule, from time.Time) time.Duration {
 }
 
 // exceedsRunsPerDay reports whether the schedules together run more than limit
-// times on any UTC day within the horizon.
+// times on any UTC day within the horizon. A local day of a schedule read in
+// another time zone straddles two UTC days, so its runs are split between them.
 func exceedsRunsPerDay(schedules []cron.Schedule, from time.Time, limit int) bool {
-	perDay := map[time.Time]int{}
+	perDay := map[int64]int{} // runs per UTC day, keyed by the day's Unix time
+	add := func(utcDay time.Time, runs int) bool {
+		key := utcDay.Unix()
+		perDay[key] += runs
+		return perDay[key] > limit
+	}
 	for _, s := range schedules {
 		p := profileSchedule(s, from)
 		for _, day := range p.days {
-			perDay[day] += len(p.timesOfDay)
-			if perDay[day] > limit {
+			first := day.UTC().Truncate(24 * time.Hour) // the UTC day this local day begins in
+			split, _ := slices.BinarySearch(p.timesOfDay, first.Add(24*time.Hour).Sub(day))
+			if add(first, split) || add(first.Add(24*time.Hour), len(p.timesOfDay)-split) {
 				return true
 			}
 		}

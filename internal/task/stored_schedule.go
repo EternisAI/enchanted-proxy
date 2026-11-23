@@ -84,7 +84,7 @@ func parseStoredSchedule(expr string) (cron.Schedule, error) {
 	if err != nil {
 		return nil, err
 	}
-	return yearSchedule{inner: spec, allow: allow}, nil
+	return yearSchedule{inner: spec, allow: allow, loc: scheduleLocation(spec)}, nil
 }
 
 // sundayAsZero rewrites Temporal's 7 for Sunday, which robfig does not accept,
@@ -162,25 +162,37 @@ func (s intervalSchedule) profile(from time.Time) dailyProfile {
 }
 
 // yearSchedule keeps the runs of a schedule that fall in the years its year
-// field allows.
+// field allows, judged in the schedule's own time zone.
 type yearSchedule struct {
 	inner cron.Schedule
 	allow func(year int) bool
+	loc   *time.Location
 }
 
 func (y yearSchedule) Next(t time.Time) time.Time {
 	// robfig gives up five years ahead; a few skips cover that.
 	for range 8 {
 		n := y.inner.Next(t)
-		if n.IsZero() || y.allow(n.Year()) {
+		if n.IsZero() {
 			return n
 		}
-		t = time.Date(n.Year()+1, 1, 1, 0, 0, 0, 0, n.Location()).Add(-time.Nanosecond)
+		year := n.In(y.loc).Year()
+		if y.allow(year) {
+			return n
+		}
+		t = time.Date(year+1, 1, 1, 0, 0, 0, 0, y.loc).Add(-time.Nanosecond)
 	}
 	return time.Time{}
 }
 
-// parseYearField reads a year field: a comma list of *, x, x-z, x/y and x-z/y.
+// The years Temporal's calendar covers; a stepped * counts from the first.
+const (
+	minCalendarYear = 2000
+	maxCalendarYear = 2100
+)
+
+// parseYearField reads a year field: a comma list of *, */y, x, x-z, x/y and
+// x-z/y. As in Temporal, */y and x/y run up to the last calendar year.
 func parseYearField(field string) (func(int) bool, error) {
 	var matchers []func(int) bool
 	for _, part := range strings.Split(field, ",") {
@@ -193,9 +205,12 @@ func parseYearField(field string) (func(int) bool, error) {
 			}
 			step = n
 		}
-		if rangeText == "*" {
+		if rangeText == "*" && !hasStep {
 			matchers = append(matchers, func(int) bool { return true })
 			continue
+		}
+		if rangeText == "*" {
+			rangeText = strconv.Itoa(minCalendarYear)
 		}
 		loText, hiText, isRange := strings.Cut(rangeText, "-")
 		lo, err := strconv.Atoi(loText)
@@ -209,7 +224,7 @@ func parseYearField(field string) (func(int) bool, error) {
 				return nil, fmt.Errorf("invalid year range %q", part)
 			}
 		case hasStep:
-			hi = 1 << 30 // x/y runs from x onwards
+			hi = maxCalendarYear // x/y runs from x onwards
 		}
 		matchers = append(matchers, func(y int) bool { return y >= lo && y <= hi && (y-lo)%step == 0 })
 	}
@@ -231,15 +246,21 @@ const robfigStarBit uint64 = 1 << 63
 // day-of-month or the day-of-week when both are restricted.
 type bothDays struct{ spec *cron.SpecSchedule }
 
+// Next matches and moves between days in the schedule's time zone: robfig
+// returns a run in the zone of the time it is given, not the schedule's.
 func (b bothDays) Next(t time.Time) time.Time {
 	// Each pass moves to a later day; robfig itself looks five years ahead.
 	for range 5 * 366 {
 		n := b.spec.Next(t)
-		if n.IsZero() || b.matches(n) {
+		if n.IsZero() {
 			return n
 		}
-		y, m, d := n.Date()
-		t = time.Date(y, m, d+1, 0, 0, 0, 0, n.Location()).Add(-time.Nanosecond)
+		local := n.In(b.spec.Location)
+		if b.matches(local) {
+			return n
+		}
+		y, m, d := local.Date()
+		t = time.Date(y, m, d+1, 0, 0, 0, 0, b.spec.Location).Add(-time.Nanosecond)
 	}
 	return time.Time{}
 }
@@ -256,4 +277,20 @@ func withTemporalDays(s cron.Schedule) cron.Schedule {
 		return s
 	}
 	return bothDays{spec: spec}
+}
+
+// scheduleLocation is the time zone a schedule's calendar fields are read in.
+// Every parser here sets one; intervals run on an absolute grid, read as UTC.
+func scheduleLocation(s cron.Schedule) *time.Location {
+	switch v := s.(type) {
+	case *cron.SpecSchedule:
+		if v.Location != nil && v.Location != time.Local {
+			return v.Location
+		}
+	case bothDays:
+		return scheduleLocation(v.spec)
+	case yearSchedule:
+		return v.loc
+	}
+	return time.UTC
 }
