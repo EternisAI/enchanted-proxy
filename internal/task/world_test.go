@@ -23,13 +23,16 @@ type taskWorld struct {
 	client.Client
 
 	rows        map[string]pgdb.Task
+	open        []pgdb.ListOpenTasksForUsersRow // other open tasks of the group
 	inAdmission bool
 	events      []string
 
 	// Schedule state and scripted outcomes.
-	missing     bool // no schedule exists
-	deleteErr   error
-	describeErr error // overrides the state above
+	missing                         bool // no schedule exists
+	paused                          bool
+	note                            string
+	pauseErr, unpauseErr, deleteErr error
+	describeErr                     error // overrides the state above
 }
 
 func (w *taskWorld) log(event string) {
@@ -45,6 +48,33 @@ func (w *taskWorld) GetTaskForUser(_ context.Context, arg pgdb.GetTaskForUserPar
 		return pgdb.Task{}, sql.ErrNoRows
 	}
 	return row, nil
+}
+
+func (w *taskWorld) MarkTaskPaused(_ context.Context, arg pgdb.MarkTaskPausedParams) (int64, error) {
+	w.log("row paused:" + *arg.PauseReason)
+	row := w.rows[arg.TaskID]
+	if row.Status != string(TaskStatusActive) && row.Status != string(TaskStatusPending) {
+		return 0, nil
+	}
+	row.Status, row.PauseReason = string(TaskStatusPaused), arg.PauseReason
+	w.rows[arg.TaskID] = row
+	return 1, nil
+}
+
+func (w *taskWorld) MarkTaskResumed(_ context.Context, arg pgdb.MarkTaskResumedParams) (int64, error) {
+	w.log("row resumed")
+	row := w.rows[arg.TaskID]
+	if row.Status != string(TaskStatusPaused) || (row.PauseReason == nil) != (arg.PauseReason == nil) ||
+		(row.PauseReason != nil && *row.PauseReason != *arg.PauseReason) {
+		return 0, nil
+	}
+	row.Status, row.PauseReason = string(TaskStatusActive), nil
+	w.rows[arg.TaskID] = row
+	return 1, nil
+}
+
+func (w *taskWorld) ListOpenTasksForUsers(context.Context, []string) ([]pgdb.ListOpenTasksForUsersRow, error) {
+	return w.open, nil
 }
 
 func (w *taskWorld) DeleteTask(_ context.Context, arg pgdb.DeleteTaskParams) (sql.Result, error) {
@@ -78,7 +108,27 @@ func (h *taskHandle) Describe(context.Context) (*client.ScheduleDescription, err
 	if w.missing {
 		return nil, serviceerror.NewNotFound("no schedule")
 	}
-	return &client.ScheduleDescription{}, nil
+	return &client.ScheduleDescription{Schedule: client.Schedule{State: &client.ScheduleState{Paused: w.paused, Note: w.note}}}, nil
+}
+
+func (h *taskHandle) Pause(_ context.Context, o client.SchedulePauseOptions) error {
+	w := h.world
+	if w.pauseErr != nil {
+		return w.pauseErr
+	}
+	w.log("schedule paused:" + o.Note)
+	w.paused, w.note = true, o.Note
+	return nil
+}
+
+func (h *taskHandle) Unpause(context.Context, client.ScheduleUnpauseOptions) error {
+	w := h.world
+	if w.unpauseErr != nil {
+		return w.unpauseErr
+	}
+	w.log("schedule resumed")
+	w.paused = false
+	return nil
 }
 
 func (h *taskHandle) Delete(context.Context) error {

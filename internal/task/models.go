@@ -14,6 +14,9 @@ type Task struct {
 	Status    string    `json:"status" db:"status"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+
+	// Why the task is paused (see PauseReason); empty unless Status is "paused".
+	PauseReason string `json:"pause_reason,omitempty" db:"pause_reason"`
 }
 
 // TaskType represents the type of task scheduling.
@@ -52,6 +55,11 @@ type CreateTaskResponse struct {
 // GetTasksResponse represents the response when getting tasks.
 type GetTasksResponse struct {
 	Tasks []*Task `json:"tasks"`
+}
+
+// TaskResponse is the response to pausing or resuming a task.
+type TaskResponse struct {
+	Task *Task `json:"task"`
 }
 
 // DeleteTaskResponse represents the response when deleting a task.

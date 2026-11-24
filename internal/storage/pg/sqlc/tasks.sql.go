@@ -34,7 +34,7 @@ func (q *Queries) CountTaskCreationsSince(ctx context.Context, arg CountTaskCrea
 const createTask = `-- name: CreateTask :one
 INSERT INTO tasks (task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-RETURNING task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at
+RETURNING task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason
 `
 
 type CreateTaskParams struct {
@@ -71,6 +71,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PauseReason,
 	)
 	return i, err
 }
@@ -100,7 +101,7 @@ func (q *Queries) DeleteTaskCreation(ctx context.Context, taskID string) error {
 }
 
 const getAllActiveTasks = `-- name: GetAllActiveTasks :many
-SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at FROM tasks
+SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason FROM tasks
 WHERE status = 'active'
 ORDER BY created_at DESC
 `
@@ -125,6 +126,7 @@ func (q *Queries) GetAllActiveTasks(ctx context.Context) ([]Task, error) {
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PauseReason,
 		); err != nil {
 			return nil, err
 		}
@@ -140,7 +142,7 @@ func (q *Queries) GetAllActiveTasks(ctx context.Context) ([]Task, error) {
 }
 
 const getTaskByID = `-- name: GetTaskByID :one
-SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at FROM tasks
+SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason FROM tasks
 WHERE task_id = $1
 `
 
@@ -158,12 +160,13 @@ func (q *Queries) GetTaskByID(ctx context.Context, taskID string) (Task, error) 
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PauseReason,
 	)
 	return i, err
 }
 
 const getTaskForUser = `-- name: GetTaskForUser :one
-SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at FROM tasks
+SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason FROM tasks
 WHERE task_id = $1 AND user_id = $2
 `
 
@@ -186,12 +189,13 @@ func (q *Queries) GetTaskForUser(ctx context.Context, arg GetTaskForUserParams) 
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PauseReason,
 	)
 	return i, err
 }
 
 const getTasksByChatID = `-- name: GetTasksByChatID :many
-SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at FROM tasks
+SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason FROM tasks
 WHERE chat_id = $1
 ORDER BY created_at DESC
 `
@@ -216,6 +220,7 @@ func (q *Queries) GetTasksByChatID(ctx context.Context, chatID string) ([]Task, 
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PauseReason,
 		); err != nil {
 			return nil, err
 		}
@@ -231,7 +236,7 @@ func (q *Queries) GetTasksByChatID(ctx context.Context, chatID string) ([]Task, 
 }
 
 const getTasksByUserID = `-- name: GetTasksByUserID :many
-SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at FROM tasks
+SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason FROM tasks
 WHERE user_id = $1
 ORDER BY created_at DESC
 `
@@ -256,6 +261,7 @@ func (q *Queries) GetTasksByUserID(ctx context.Context, userID string) ([]Task, 
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PauseReason,
 		); err != nil {
 			return nil, err
 		}
@@ -325,6 +331,49 @@ SELECT pg_advisory_xact_lock(hashtextextended('task_admission:' || $1::text, 0))
 func (q *Queries) LockTaskAdmission(ctx context.Context, userID string) error {
 	_, err := q.db.ExecContext(ctx, lockTaskAdmission, userID)
 	return err
+}
+
+const markTaskPaused = `-- name: MarkTaskPaused :execrows
+UPDATE tasks
+SET status = 'paused', pause_reason = $1, updated_at = NOW()
+WHERE task_id = $2 AND status IN ('pending', 'active')
+`
+
+type MarkTaskPausedParams struct {
+	PauseReason *string `json:"pauseReason"`
+	TaskID      string  `json:"taskId"`
+}
+
+// Records that a task's schedule is paused, and why. A task that is already
+// paused keeps its reason, and a finished one is left as it is.
+func (q *Queries) MarkTaskPaused(ctx context.Context, arg MarkTaskPausedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markTaskPaused, arg.PauseReason, arg.TaskID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const markTaskResumed = `-- name: MarkTaskResumed :execrows
+UPDATE tasks
+SET status = 'active', pause_reason = NULL, updated_at = NOW()
+WHERE task_id = $1 AND status = 'paused'
+  AND pause_reason IS NOT DISTINCT FROM $2
+`
+
+type MarkTaskResumedParams struct {
+	TaskID      string  `json:"taskId"`
+	PauseReason *string `json:"pauseReason"`
+}
+
+// Records that a paused task's schedule runs again. Only a task still paused
+// for the reason the caller checked is changed.
+func (q *Queries) MarkTaskResumed(ctx context.Context, arg MarkTaskResumedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markTaskResumed, arg.TaskID, arg.PauseReason)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const recordTaskCreation = `-- name: RecordTaskCreation :exec

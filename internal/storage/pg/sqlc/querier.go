@@ -104,6 +104,12 @@ type Querier interface {
 	LockTaskAdmission(ctx context.Context, userID string) error
 	MarkAllMessagesAsSent(ctx context.Context, sessionID string) error
 	MarkMessageAsSent(ctx context.Context, id string) error
+	// Records that a task's schedule is paused, and why. A task that is already
+	// paused keeps its reason, and a finished one is left as it is.
+	MarkTaskPaused(ctx context.Context, arg MarkTaskPausedParams) (int64, error)
+	// Records that a paused task's schedule runs again. Only a task still paused
+	// for the reason the caller checked is changed.
+	MarkTaskResumed(ctx context.Context, arg MarkTaskResumedParams) (int64, error)
 	RecordTaskCreation(ctx context.Context, arg RecordTaskCreationParams) error
 	ResetInviteCode(ctx context.Context, codeHash string) error
 	SoftDeleteInviteCode(ctx context.Context, id int64) error

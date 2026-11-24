@@ -59,3 +59,18 @@ DELETE FROM task_creations WHERE task_id = $1;
 -- name: GetTaskForUser :one
 SELECT * FROM tasks
 WHERE task_id = $1 AND user_id = $2;
+
+-- name: MarkTaskPaused :execrows
+-- Records that a task's schedule is paused, and why. A task that is already
+-- paused keeps its reason, and a finished one is left as it is.
+UPDATE tasks
+SET status = 'paused', pause_reason = sqlc.arg(pause_reason), updated_at = NOW()
+WHERE task_id = sqlc.arg(task_id) AND status IN ('pending', 'active');
+
+-- name: MarkTaskResumed :execrows
+-- Records that a paused task's schedule runs again. Only a task still paused
+-- for the reason the caller checked is changed.
+UPDATE tasks
+SET status = 'active', pause_reason = NULL, updated_at = NOW()
+WHERE task_id = sqlc.arg(task_id) AND status = 'paused'
+  AND pause_reason IS NOT DISTINCT FROM sqlc.narg(pause_reason);

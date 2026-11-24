@@ -117,16 +117,17 @@ type RequestLog struct {
 }
 
 type Task struct {
-	TaskID    string    `json:"taskId"`
-	UserID    string    `json:"userId"`
-	ChatID    string    `json:"chatId"`
-	TaskName  string    `json:"taskName"`
-	TaskText  string    `json:"taskText"`
-	Type      string    `json:"type"`
-	Time      string    `json:"time"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	TaskID      string    `json:"taskId"`
+	UserID      string    `json:"userId"`
+	ChatID      string    `json:"chatId"`
+	TaskName    string    `json:"taskName"`
+	TaskText    string    `json:"taskText"`
+	Type        string    `json:"type"`
+	Time        string    `json:"time"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+	PauseReason *string   `json:"pauseReason"`
 }
 
 type TaskCreation struct {

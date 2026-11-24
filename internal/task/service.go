@@ -396,18 +396,7 @@ func (s *Service) GetTasksByUserID(ctx context.Context, userID string) ([]*Task,
 
 	tasks := make([]*Task, 0, len(dbTasks))
 	for _, dbTask := range dbTasks {
-		tasks = append(tasks, &Task{
-			TaskID:    dbTask.TaskID,
-			UserID:    dbTask.UserID,
-			ChatID:    dbTask.ChatID,
-			TaskName:  dbTask.TaskName,
-			TaskText:  dbTask.TaskText,
-			Type:      dbTask.Type,
-			Time:      dbTask.Time,
-			Status:    dbTask.Status,
-			CreatedAt: dbTask.CreatedAt,
-			UpdatedAt: dbTask.UpdatedAt,
-		})
+		tasks = append(tasks, taskFromRow(dbTask))
 	}
 
 	return tasks, nil
