@@ -42,7 +42,7 @@ make sqlc         # Regenerate SQL after editing queries/
 | Notifications (FCM) | `internal/notifications/service.go` |
 | Stripe payments | `internal/stripe/handler.go` |
 | Zcash payments | `internal/zcash/handler.go` |
-| IAP validation | `internal/iap/handler.go` |
+| IAP validation | `internal/iap/handler.go` ([purchases and quota groups](docs/apple-purchases.md)) |
 | Composio integration | `internal/composio/handlers.go` |
 | OAuth token exchange | `internal/oauth/handlers.go` |
 | Invite codes | `internal/invitecode/handlers.go` |
