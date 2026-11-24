@@ -173,7 +173,7 @@ func main() {
 	searchService := search.NewService(logger.WithComponent("search"))
 
 	// Accounts that share limits (a purchase's accounts, once purchases are bound).
-	quotaGroups := quota.NewGroups()
+	quotaGroups := quota.NewGroups(db.Queries)
 
 	var taskService *task.Service
 	if config.AppConfig.TemporalEndpoint != "" && config.AppConfig.TemporalNamespace != "" && config.AppConfig.TemporalAPIKey != "" {
