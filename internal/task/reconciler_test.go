@@ -773,3 +773,32 @@ func TestReconcilerStopsWhenItsContextEnds(t *testing.T) {
 		t.Fatalf("changes %q, errors %q; want no changes and the stop reported", w.events, rep.Errors)
 	}
 }
+
+// A hold lifts only once the owner's account is known not to keep it: while
+// the account lookup fails, the hold stays. Without an account lookup at all,
+// holds lift on the plan alone.
+func TestReconcilerKeepsHoldsWhileTheAccountsAreUnknown(t *testing.T) {
+	setup := func() *reconWorld {
+		w := newReconWorld()
+		w.owner("u", 200*oneDay, tiers.TierPro) // inactive, so a known account keeps the hold
+		w.task("held", "u", "recurring", "*/10 * * * *", TaskStatusPaused, 60*oneDay, &fakeSchedule{paused: true, note: "plan_ended: over the limits"})
+		w.setRow("held", func(r *pgdb.Task) { r.PauseReason = reasonPtr(PausePlanEnded) })
+		return w
+	}
+
+	w := setup()
+	w.lookupErr = errors.New("unavailable")
+	rep := w.sweep(t, ReconcilerEnforce)
+	expectChanges(t, w)
+	if len(rep.Errors) != 1 || !strings.Contains(rep.Errors[0], "holds kept") {
+		t.Fatalf("errors %q, want the lookup failure reported with the holds kept", rep.Errors)
+	}
+
+	w = setup()
+	r := w.reconciler(ReconcilerEnforce, false)
+	r.accounts = nil
+	r.sweep(context.Background())
+	if w.rows["held"].Status != string(TaskStatusActive) || w.schedules["held"].paused {
+		t.Fatalf("row %s, schedule paused %v; want the hold lifted without an account lookup", w.rows["held"].Status, w.schedules["held"].paused)
+	}
+}

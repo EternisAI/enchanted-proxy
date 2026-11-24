@@ -322,9 +322,9 @@ func (r *Reconciler) sweep(ctx context.Context) *Report {
 		accounts, err := r.accounts.LookupAccounts(ctx, owners)
 		switch {
 		case err != nil:
-			rep.fail("looking up accounts, account rules skipped: %v", err)
+			rep.fail("looking up accounts, account rules skipped and plan_ended holds kept: %v", err)
 		case tooMany(countMissing(accounts), len(owners), maxMissingOwnersShare, minMissingOwners):
-			rep.fail("%d of %d owners have no account; account rules skipped. Check the Firebase project", countMissing(accounts), len(owners))
+			rep.fail("%d of %d owners have no account; account rules skipped and plan_ended holds kept. Check the Firebase project", countMissing(accounts), len(owners))
 		default:
 			snap.accounts = accounts
 		}
@@ -518,7 +518,14 @@ func (r *Reconciler) plan(ctx context.Context, snap snapshot, rep *Report) []act
 			}
 		}
 	}
-	return append(actions, r.planHolds(ctx, snap, candidates, rep)...)
+	holds := r.planHolds(ctx, snap, candidates, rep)
+	if r.accounts != nil && snap.accounts == nil {
+		// The accounts could not be read, so the owner of a held task may be
+		// missing or inactive, whose holds stay. Lifts wait for a sweep that
+		// reads the accounts; the walk still counts each held task in its place.
+		holds = slices.DeleteFunc(holds, func(a action) bool { return a.kind == actLiftHold })
+	}
+	return append(actions, holds...)
 }
 
 // planUnscheduled decides about a row whose schedule is not listed.

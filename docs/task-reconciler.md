@@ -87,8 +87,10 @@ The same summary is logged as `task reconciler sweep finished`, and each action 
 
 - **One sweep per interval.** A sweep holds a Postgres advisory lock in a transaction,
   and skips if another instance recorded a sweep within 90% of the interval.
-- **Wrong Firebase project.** If more than half of the owners (and at least five) have
-  no account, the account rules are skipped and the report carries an error.
+- **Accounts unknown.** If the account lookup fails, or more than half of the owners
+  (and at least five) have no account, which points at the wrong Firebase project, the
+  account rules are skipped, `plan_ended` holds are kept until a sweep can read the
+  accounts, and the report carries an error.
 - **Shared Temporal namespace.** Every proxy deployment that uses the same Temporal
   namespace must use the same database: the reconciler deletes schedules that have no
   row in its own database. If more than half of the schedules (and at least ten) have
