@@ -146,7 +146,9 @@ func main() {
 
 	// Initialize services
 	inviteCodeService := invitecode.NewService(db.Queries)
-	requestTrackingService := request_tracking.NewService(db.Queries, logger.WithComponent("request_tracking"))
+	// Accounts that share limits: every account a purchase has been attached to.
+	quotaGroups := quota.NewGroups(db.Queries)
+	requestTrackingService := request_tracking.NewService(db.Queries, quotaGroups, logger.WithComponent("request_tracking"))
 	iapService := iap.NewService(db.Queries)
 	stripeService := stripe.NewService(db.Queries, logger.WithComponent("stripe"))
 
@@ -171,9 +173,6 @@ func main() {
 
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
-
-	// Accounts that share limits (a purchase's accounts, once purchases are bound).
-	quotaGroups := quota.NewGroups(db.Queries)
 
 	var taskService *task.Service
 	if config.AppConfig.TemporalEndpoint != "" && config.AppConfig.TemporalNamespace != "" && config.AppConfig.TemporalAPIKey != "" {

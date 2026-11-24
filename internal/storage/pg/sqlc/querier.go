@@ -94,14 +94,15 @@ type Querier interface {
 	// Note: Queries request_logs directly (not materialized view) because monthly buckets aren't pre-aggregated.
 	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
 	// Month starts on 1st at 00:00 UTC per PostgreSQL DATE_TRUNC('month') behavior.
-	GetUserPlanTokensThisMonth(ctx context.Context, userID string) (int64, error)
+	GetUserPlanTokensThisMonth(ctx context.Context, userIds []string) (int64, error)
 	// Note: Queries request_logs directly (not materialized view) because weekly buckets aren't pre-aggregated.
 	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
 	// Week starts Monday at 00:00 UTC per PostgreSQL DATE_TRUNC('week') behavior.
-	GetUserPlanTokensThisWeek(ctx context.Context, userID string) (int64, error)
+	GetUserPlanTokensThisWeek(ctx context.Context, userIds []string) (int64, error)
+	// Counts over the given accounts: the caller's quota group.
 	// Queries request_logs directly for real-time data (not materialized view).
 	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast.
-	GetUserPlanTokensToday(ctx context.Context, userID string) (int64, error)
+	GetUserPlanTokensToday(ctx context.Context, userIds []string) (int64, error)
 	GetUserTier(ctx context.Context, userID string) (GetUserTierRow, error)
 	GetZcashInvoice(ctx context.Context, id uuid.UUID) (ZcashInvoice, error)
 	// Row-locking read used to serialise concurrent payment callbacks for one invoice.

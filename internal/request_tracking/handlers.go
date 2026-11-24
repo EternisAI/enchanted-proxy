@@ -185,10 +185,15 @@ func RateLimitStatusHandler(trackingService *Service, log *logger.Logger, modelR
 			}
 		}
 
-		// Deep research info
-		dailyRunsUsed, _ := trackingService.GetUserDeepResearchRunsToday(ctx, []string{userID})
-		weeklyRunsUsed, _ := trackingService.GetUserDeepResearchRunsThisWeek(ctx, []string{userID})
-		lifetimeRunsUsed, _ := trackingService.GetUserDeepResearchRunsLifetime(ctx, []string{userID})
+		// Deep research info, counted over the quota group as admission counts it.
+		var dailyRunsUsed, weeklyRunsUsed, lifetimeRunsUsed int64
+		if group, err := trackingService.QuotaGroup(ctx, userID); err != nil {
+			reqLog.Error("failed to get quota group", slog.String("error", err.Error()))
+		} else {
+			dailyRunsUsed, _ = trackingService.GetUserDeepResearchRunsToday(ctx, group)
+			weeklyRunsUsed, _ = trackingService.GetUserDeepResearchRunsThisWeek(ctx, group)
+			lifetimeRunsUsed, _ = trackingService.GetUserDeepResearchRunsLifetime(ctx, group)
+		}
 		response.DeepResearch = &DeepResearchInfo{
 			DailyRuns:         tierConfig.DeepResearchDailyRuns,
 			LifetimeRuns:      tierConfig.DeepResearchLifetimeRuns,

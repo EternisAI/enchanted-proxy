@@ -29,15 +29,15 @@ func (q tierQuerier) GetUserTier(_ context.Context, _ string) (pgdb.GetUserTierR
 	return pgdb.GetUserTierRow{SubscriptionTier: q.tier}, nil
 }
 
-func (q tierQuerier) GetUserPlanTokensThisMonth(_ context.Context, _ string) (int64, error) {
+func (q tierQuerier) GetUserPlanTokensThisMonth(_ context.Context, _ []string) (int64, error) {
 	return 0, nil
 }
 
-func (q tierQuerier) GetUserPlanTokensThisWeek(_ context.Context, _ string) (int64, error) {
+func (q tierQuerier) GetUserPlanTokensThisWeek(_ context.Context, _ []string) (int64, error) {
 	return 0, nil
 }
 
-func (q tierQuerier) GetUserPlanTokensToday(_ context.Context, _ string) (int64, error) {
+func (q tierQuerier) GetUserPlanTokensToday(_ context.Context, _ []string) (int64, error) {
 	return 0, nil
 }
 
@@ -72,7 +72,7 @@ func newTestRouterWithKey(t *testing.T, tier, openAIKey string) *gin.Engine {
 		t.Fatalf("load test config: %v", err)
 	}
 
-	service := NewService(tierQuerier{tier: tier}, log)
+	service := NewService(tierQuerier{tier: tier}, nil, log)
 	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })
 
 	engine := gin.New()

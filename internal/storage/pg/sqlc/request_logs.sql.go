@@ -8,6 +8,8 @@ package pgdb
 import (
 	"context"
 	"database/sql"
+
+	"github.com/lib/pq"
 )
 
 const createRequestLog = `-- name: CreateRequestLog :exec
@@ -76,21 +78,21 @@ func (q *Queries) CreateRequestLogWithPlanTokens(ctx context.Context, arg Create
 const getUserFallbackPlanTokensToday = `-- name: GetUserFallbackPlanTokensToday :one
 SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
 FROM request_logs
-WHERE user_id = $1
+WHERE user_id = ANY($1::text[])
   AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
   AND plan_tokens IS NOT NULL
   AND model = $2
 `
 
 type GetUserFallbackPlanTokensTodayParams struct {
-	UserID string  `json:"userId"`
-	Model  *string `json:"model"`
+	UserIds []string `json:"userIds"`
+	Model   *string  `json:"model"`
 }
 
 // Returns plan tokens used today on the fallback model.
 // Used for tracking fallback quota when normal quota is exceeded.
 func (q *Queries) GetUserFallbackPlanTokensToday(ctx context.Context, arg GetUserFallbackPlanTokensTodayParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserFallbackPlanTokensToday, arg.UserID, arg.Model)
+	row := q.db.QueryRowContext(ctx, getUserFallbackPlanTokensToday, pq.Array(arg.UserIds), arg.Model)
 	var plan_tokens int64
 	err := row.Scan(&plan_tokens)
 	return plan_tokens, err
@@ -99,7 +101,7 @@ func (q *Queries) GetUserFallbackPlanTokensToday(ctx context.Context, arg GetUse
 const getUserPlanTokensThisMonth = `-- name: GetUserPlanTokensThisMonth :one
 SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
 FROM request_logs
-WHERE user_id = $1
+WHERE user_id = ANY($1::text[])
   AND created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')
   AND plan_tokens IS NOT NULL
 `
@@ -107,8 +109,8 @@ WHERE user_id = $1
 // Note: Queries request_logs directly (not materialized view) because monthly buckets aren't pre-aggregated.
 // Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
 // Month starts on 1st at 00:00 UTC per PostgreSQL DATE_TRUNC('month') behavior.
-func (q *Queries) GetUserPlanTokensThisMonth(ctx context.Context, userID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserPlanTokensThisMonth, userID)
+func (q *Queries) GetUserPlanTokensThisMonth(ctx context.Context, userIds []string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserPlanTokensThisMonth, pq.Array(userIds))
 	var plan_tokens int64
 	err := row.Scan(&plan_tokens)
 	return plan_tokens, err
@@ -117,7 +119,7 @@ func (q *Queries) GetUserPlanTokensThisMonth(ctx context.Context, userID string)
 const getUserPlanTokensThisWeek = `-- name: GetUserPlanTokensThisWeek :one
 SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
 FROM request_logs
-WHERE user_id = $1
+WHERE user_id = ANY($1::text[])
   AND created_at >= DATE_TRUNC('week', NOW() AT TIME ZONE 'UTC')
   AND plan_tokens IS NOT NULL
 `
@@ -125,8 +127,8 @@ WHERE user_id = $1
 // Note: Queries request_logs directly (not materialized view) because weekly buckets aren't pre-aggregated.
 // Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
 // Week starts Monday at 00:00 UTC per PostgreSQL DATE_TRUNC('week') behavior.
-func (q *Queries) GetUserPlanTokensThisWeek(ctx context.Context, userID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserPlanTokensThisWeek, userID)
+func (q *Queries) GetUserPlanTokensThisWeek(ctx context.Context, userIds []string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserPlanTokensThisWeek, pq.Array(userIds))
 	var plan_tokens int64
 	err := row.Scan(&plan_tokens)
 	return plan_tokens, err
@@ -135,15 +137,16 @@ func (q *Queries) GetUserPlanTokensThisWeek(ctx context.Context, userID string) 
 const getUserPlanTokensToday = `-- name: GetUserPlanTokensToday :one
 SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
 FROM request_logs
-WHERE user_id = $1
+WHERE user_id = ANY($1::text[])
   AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
   AND plan_tokens IS NOT NULL
 `
 
+// Counts over the given accounts: the caller's quota group.
 // Queries request_logs directly for real-time data (not materialized view).
 // Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast.
-func (q *Queries) GetUserPlanTokensToday(ctx context.Context, userID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getUserPlanTokensToday, userID)
+func (q *Queries) GetUserPlanTokensToday(ctx context.Context, userIds []string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getUserPlanTokensToday, pq.Array(userIds))
 	var plan_tokens int64
 	err := row.Scan(&plan_tokens)
 	return plan_tokens, err

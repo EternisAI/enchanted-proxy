@@ -404,7 +404,7 @@ func TestWebSocketStartRefusesAnonymousFreeRun(t *testing.T) {
 	log := testLogger()
 	q := &runCountQuerier{}
 	tq := &runQuerier{} // free tier, no history
-	tracking := request_tracking.NewService(tq, log)
+	tracking := request_tracking.NewService(tq, nil, log)
 	t.Cleanup(func() { _ = tracking.Shutdown(context.Background()) })
 	cfg := &Config{Groups: pairGroup{}, Admission: directAdmission(q), MaxRunsPerDay: 25, FreeRunProviders: []string{auth.ProviderApple, auth.ProviderGoogle}}
 

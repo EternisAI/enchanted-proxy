@@ -43,15 +43,15 @@ func (q failingQuerier) GetUserTier(context.Context, string) (pgdb.GetUserTierRo
 	return pgdb.GetUserTierRow{SubscriptionTier: q.tier}, nil
 }
 
-func (q failingQuerier) GetUserPlanTokensThisMonth(context.Context, string) (int64, error) {
+func (q failingQuerier) GetUserPlanTokensThisMonth(context.Context, []string) (int64, error) {
 	return q.result("monthly")
 }
 
-func (q failingQuerier) GetUserPlanTokensThisWeek(context.Context, string) (int64, error) {
+func (q failingQuerier) GetUserPlanTokensThisWeek(context.Context, []string) (int64, error) {
 	return q.result("weekly")
 }
 
-func (q failingQuerier) GetUserPlanTokensToday(context.Context, string) (int64, error) {
+func (q failingQuerier) GetUserPlanTokensToday(context.Context, []string) (int64, error) {
 	return q.result("daily")
 }
 
@@ -70,7 +70,7 @@ func serveWithQuerier(t *testing.T, q failingQuerier, failClosed bool, body stri
 		RequestTrackingBufferSize:     1,
 	}
 	log := logger.New(logger.Config{Level: slog.LevelError + 4})
-	service := NewService(q, log)
+	service := NewService(q, nil, log)
 	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })
 
 	engine := gin.New()
