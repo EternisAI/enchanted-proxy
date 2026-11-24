@@ -115,6 +115,34 @@ func TestResumeTaskDoesNotApplyTheScheduleLimitsAgain(t *testing.T) {
 	}
 }
 
+// A pause whose row update failed leaves the row active and the schedule
+// paused: resuming resumes the schedule, under the same refusals.
+func TestResumeTaskResumesAScheduleWhoseRowStayedActive(t *testing.T) {
+	w := newTaskWorld()
+	w.paused, w.note = true, pauseNote(PauseUser, "paused by the owner")
+	got, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectEvents(t, w, "schedule resumed")
+	if got.Status != string(TaskStatusActive) || w.paused {
+		t.Fatalf("task %+v, schedule paused %v; want both running", got, w.paused)
+	}
+
+	w = newTaskWorld()
+	w.paused, w.note = true, "admin: incident 2026-11"
+	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); limitReason(err) != "paused_by_admin" {
+		t.Fatalf("err = %v, want refused as an admin pause", err)
+	}
+	expectEvents(t, w)
+
+	w = newTaskWorld() // running: nothing to do
+	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); err != nil {
+		t.Fatal(err)
+	}
+	expectEvents(t, w)
+}
+
 func TestResumeTaskRefusesPastThePlansTaskCount(t *testing.T) {
 	w := pausedWorld(PauseUser)
 	for range tiers.Configs[tiers.TierFree].TaskMaxActiveRecurring {
