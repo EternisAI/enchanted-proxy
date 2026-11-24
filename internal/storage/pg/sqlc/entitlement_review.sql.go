@@ -46,10 +46,12 @@ func (q *Queries) FinishEntitlementReviewRun(ctx context.Context, arg FinishEnti
 const hasEnforcedEntitlementReview = `-- name: HasEnforcedEntitlementReview :one
 SELECT EXISTS (
     SELECT 1 FROM entitlement_review_runs
-    WHERE mode = 'enforce' AND finished_at IS NOT NULL
+    WHERE mode = 'enforce' AND finished_at IS NOT NULL AND report->'errors' IS NULL
 ) AS enforced
 `
 
+// Whether an enforced run has finished without errors. A run that hit an error
+// reset nothing, so the review may run again.
 func (q *Queries) HasEnforcedEntitlementReview(ctx context.Context) (bool, error) {
 	row := q.db.QueryRowContext(ctx, hasEnforcedEntitlementReview)
 	var enforced bool

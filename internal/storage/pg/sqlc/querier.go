@@ -111,6 +111,8 @@ type Querier interface {
 	GetZcashInvoiceForUser(ctx context.Context, arg GetZcashInvoiceForUserParams) (ZcashInvoice, error)
 	GetZcashInvoicesByUserAndStatus(ctx context.Context, arg GetZcashInvoicesByUserAndStatusParams) ([]ZcashInvoice, error)
 	HasActiveDeepResearchRun(ctx context.Context, userIds []string) (bool, error)
+	// Whether an enforced run has finished without errors. A run that hit an error
+	// reset nothing, so the review may run again.
 	HasEnforcedEntitlementReview(ctx context.Context) (bool, error)
 	// Records a purchase seen for the first time, and reports whether it did. A
 	// purchase recorded meanwhile by another request is left as it is; the caller

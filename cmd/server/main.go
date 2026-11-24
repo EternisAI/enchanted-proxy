@@ -290,6 +290,35 @@ func main() {
 		defer runningReconciler.Stop(0) // cancels it on any exit; the shutdown below waits for it
 	}
 
+	// Review the Apple entitlements written before purchases were recorded,
+	// once (off, dry-run or enforce).
+	reviewConfig, err := iap.LoadReviewConfig()
+	if err != nil {
+		log.Error("invalid entitlement review settings", slog.String("error", err.Error()))
+	}
+	if reviewConfig.Mode != iap.ReviewOff {
+		var reviewAccounts iap.AccountLookup
+		if firebaseClient != nil {
+			firebaseAccounts := task.FirebaseAccounts(firebaseClient.GetAuthClient())
+			reviewAccounts = func(ctx context.Context, userIDs []string) (map[string]iap.Account, error) {
+				found, err := firebaseAccounts.LookupAccounts(ctx, userIDs)
+				if err != nil {
+					return nil, err
+				}
+				accounts := make(map[string]iap.Account, len(found))
+				for id, a := range found {
+					accounts[id] = iap.Account{Exists: a.Exists, Created: a.Created}
+				}
+				return accounts, nil
+			}
+		} else {
+			log.Warn("firebase client not available - the entitlement review cannot look up accounts")
+		}
+		reviewCtx, reviewCancel := context.WithCancel(context.Background())
+		defer reviewCancel()
+		iap.NewReviewer(db.DB, reviewAccounts, reviewConfig, logger.WithComponent("entitlement-review")).Start(reviewCtx)
+	}
+
 	// Initialize tool system
 	toolRegistry := tools.NewRegistry()
 	exaSearchTool := tools.NewExaSearchTool(searchService, logger.WithComponent("exa-search-tool"))

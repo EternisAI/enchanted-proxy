@@ -4,9 +4,11 @@
 SELECT pg_try_advisory_xact_lock(hashtextextended('entitlement_review', 0)) AS locked;
 
 -- name: HasEnforcedEntitlementReview :one
+-- Whether an enforced run has finished without errors. A run that hit an error
+-- reset nothing, so the review may run again.
 SELECT EXISTS (
     SELECT 1 FROM entitlement_review_runs
-    WHERE mode = 'enforce' AND finished_at IS NOT NULL
+    WHERE mode = 'enforce' AND finished_at IS NOT NULL AND report->'errors' IS NULL
 ) AS enforced;
 
 -- name: StartEntitlementReviewRun :one

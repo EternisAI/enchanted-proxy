@@ -82,6 +82,9 @@ func TestFirebaseAccountsReadsStateAndLastActivity(t *testing.T) {
 	if a := accounts["refreshed"]; !a.Exists || a.Disabled || !a.LastActive.Equal(refresh.Truncate(time.Millisecond)) {
 		t.Errorf("refreshed: %+v, want present with the refresh as last activity", a)
 	}
+	if a := accounts["refreshed"]; !a.Created.Equal(created.Truncate(time.Millisecond)) {
+		t.Errorf("refreshed: created %v, want %v", a.Created, created)
+	}
 	if a := accounts["disabled"]; !a.Exists || !a.Disabled || !a.LastActive.Equal(login.Truncate(time.Millisecond)) {
 		t.Errorf("disabled: %+v", a)
 	}
