@@ -887,3 +887,28 @@ func TestReconcilerActivatesAPendingTaskOnlyWithItsSchedule(t *testing.T) {
 		t.Fatalf("row %s, skipped %v; want the row left pending", w.rows["pending"].Status, rep.Skipped)
 	}
 }
+
+// Stopping a running reconciler cancels it and reports whether it returned in
+// time. A sweep blocked where the cancellation does not reach keeps it
+// running, and until then it may still use the Temporal client.
+func TestStoppingTheReconcilerReportsWhetherItReturned(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	r := &Reconciler{
+		cfg: ReconcilerConfig{Mode: ReconcilerDryRun, Interval: time.Hour},
+		log: logger.New(logger.Config{Level: slog.LevelError + 4}),
+		gate: func(context.Context, ReconcilerMode, time.Duration, func(context.Context) *Report) (bool, error) {
+			close(entered)
+			<-release // blocked, ignoring the cancellation
+			return false, nil
+		},
+	}
+	running := r.Start()
+	<-entered
+	if running.Stop(50 * time.Millisecond) {
+		t.Fatal("Stop reported the reconciler stopped while its sweep was blocked")
+	}
+	close(release)
+	if !running.Stop(time.Second) {
+		t.Fatal("Stop did not see the reconciler return once its sweep did")
+	}
+}

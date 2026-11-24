@@ -268,7 +268,7 @@ func main() {
 
 	// Reconcile task rows with their schedules and with their owners' accounts
 	// and plans (hourly; off, dry-run or enforce).
-	var stopReconciler func(timeout time.Duration)
+	var runningReconciler *task.RunningReconciler
 	if taskService != nil {
 		var accounts task.AccountLookup
 		if firebaseClient != nil {
@@ -285,23 +285,8 @@ func main() {
 			log.Error("failed to initialize task reconciler", slog.String("error", err.Error()))
 			os.Exit(1)
 		}
-		reconcilerCtx, reconcilerCancel := context.WithCancel(context.Background())
-		reconcilerDone := make(chan struct{})
-		go func() {
-			defer close(reconcilerDone)
-			reconciler.Run(reconcilerCtx)
-		}()
-		defer reconcilerCancel()
-		// stopReconciler ends a sweep in progress and waits for it, so that it
-		// does not use the Temporal client once that is closed.
-		stopReconciler = func(timeout time.Duration) {
-			reconcilerCancel()
-			select {
-			case <-reconcilerDone:
-			case <-time.After(timeout):
-				log.Warn("task reconciler did not stop in time")
-			}
-		}
+		runningReconciler = reconciler.Start()
+		defer runningReconciler.Stop(0) // cancels it on any exit; the shutdown below waits for it
 	}
 
 	// Initialize tool system
@@ -693,13 +678,15 @@ func main() {
 	log.Info("request tracking service shutdown complete")
 
 	// Shutdown the task service (close Temporal client), once the reconciler,
-	// which uses it, has stopped.
+	// which uses it, has returned. One that does not return in time may still
+	// use the client, which then stays open until the process exits.
 	if taskService != nil {
-		if stopReconciler != nil {
-			stopReconciler(time.Duration(config.AppConfig.ServerShutdownTimeoutSeconds) * time.Second)
+		if runningReconciler == nil || runningReconciler.Stop(time.Duration(config.AppConfig.ServerShutdownTimeoutSeconds)*time.Second) {
+			taskService.Close()
+			log.Info("task service shutdown complete")
+		} else {
+			log.Warn("task reconciler did not stop in time; the Temporal client stays open until the process exits")
 		}
-		taskService.Close()
-		log.Info("task service shutdown complete")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.AppConfig.ServerShutdownTimeoutSeconds)*time.Second)

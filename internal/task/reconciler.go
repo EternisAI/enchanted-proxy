@@ -114,12 +114,13 @@ type PauseNotifier interface {
 
 // Reconciler runs the sweeps.
 type Reconciler struct {
-	s        *Service
-	gate     sweepGate
-	accounts AccountLookup // nil: account rules are skipped
-	notifier PauseNotifier // nil: no pushes
-	cfg      ReconcilerConfig
-	log      *logger.Logger
+	s          *Service
+	gate       sweepGate
+	accounts   AccountLookup // nil: account rules are skipped
+	notifier   PauseNotifier // nil: no pushes
+	cfg        ReconcilerConfig
+	log        *logger.Logger
+	firstSweep time.Duration // the delay before the first sweep
 }
 
 // NewReconciler builds the reconciler over the task service's Temporal client,
@@ -129,7 +130,7 @@ func NewReconciler(s *Service, db *sql.DB, accounts AccountLookup, notifier Paus
 	if n := db.Stats().MaxOpenConnections; cfg.Mode != ReconcilerOff && n > 0 && n < minReconcilerPool {
 		return nil, fmt.Errorf("the task reconciler needs a database pool of at least %d connections (DB_MAX_OPEN_CONNS), not %d", minReconcilerPool, n)
 	}
-	return &Reconciler{s: s, gate: lockedSweeps(db), accounts: accounts, notifier: notifier, cfg: cfg, log: log}, nil
+	return &Reconciler{s: s, gate: lockedSweeps(db), accounts: accounts, notifier: notifier, cfg: cfg, log: log, firstSweep: firstSweepDelay}, nil
 }
 
 // minReconcilerPool is the smallest connection pool the reconciler works with:
@@ -204,7 +205,7 @@ func (r *Reconciler) Run(ctx context.Context) {
 		slog.Duration("plan_ended_grace", r.cfg.PlanEndedGrace),
 		slog.Bool("pause_notifications", r.cfg.PauseNotifications),
 		slog.Bool("accounts", r.accounts != nil))
-	timer := time.NewTimer(firstSweepDelay)
+	timer := time.NewTimer(r.firstSweep)
 	defer timer.Stop()
 	for {
 		select {
@@ -214,6 +215,36 @@ func (r *Reconciler) Run(ctx context.Context) {
 		}
 		r.RunOnce(ctx)
 		timer.Reset(r.cfg.Interval)
+	}
+}
+
+// RunningReconciler is a reconciler running in the background.
+type RunningReconciler struct {
+	cancel context.CancelFunc
+	done   <-chan struct{}
+}
+
+// Start runs the reconciler in the background until it is stopped.
+func (r *Reconciler) Start() *RunningReconciler {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.Run(ctx)
+	}()
+	return &RunningReconciler{cancel: cancel, done: done}
+}
+
+// Stop cancels the reconciler and waits up to timeout for it to return. It
+// reports whether it returned: until it does, a sweep may still use the task
+// service's Temporal client.
+func (rr *RunningReconciler) Stop(timeout time.Duration) bool {
+	rr.cancel()
+	select {
+	case <-rr.done:
+		return true
+	case <-time.After(timeout):
+		return false
 	}
 }
 
