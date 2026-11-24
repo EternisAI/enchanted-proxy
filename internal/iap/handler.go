@@ -42,23 +42,39 @@ func (h *Handler) AttachAppStoreSubscription(c *gin.Context) {
 		identity = &id
 	}
 
-	payload, expiresAt, err := h.service.AttachAppStoreSubscription(c.Request.Context(), userID, identity, body.JWSTransactionInfo)
+	attached, err := h.service.AttachAppStoreSubscription(c.Request.Context(), userID, identity, body.JWSTransactionInfo)
 	var refusal *Refusal
 	switch {
 	case stderrors.As(err, &refusal):
 		h.logger.WithContext(c.Request.Context()).Info("purchase refused", slog.String("reason", refusal.Reason))
 		errors.AbortWithForbidden(c, errors.NewForbiddenError(errors.ReasonPurchaseRefused, refusal.Message, refusal.Message, "", nil))
 		return
+	case stderrors.Is(err, ErrAppleUnavailable):
+		c.JSON(http.StatusServiceUnavailable, errors.NewAPIError("The App Store could not be reached to confirm this purchase. Please try again later.", nil))
+		return
 	case err != nil:
+		h.logger.WithContext(c.Request.Context()).Warn("purchase not attached", slog.String("error", err.Error()))
 		errors.BadRequest(c, "invalid jwsTransactionInfo", nil)
 		return
 	}
 
+	payload := attached.Transaction
+	if attached.Blocked {
+		// Same shape as an accepted purchase, as the app expects, but it grants
+		// nothing.
+		c.JSON(http.StatusOK, gin.H{
+			"status":        false,
+			"productId":     payload.ProductID,
+			"originalTxId":  payload.OriginalTransactionId,
+			"transactionId": payload.TransactionID,
+		})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"status":        true,
 		"productId":     payload.ProductID,
 		"originalTxId":  payload.OriginalTransactionId,
 		"transactionId": payload.TransactionID,
-		"expiresAt":     expiresAt,
+		"expiresAt":     attached.ExpiresAt,
 	})
 }

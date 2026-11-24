@@ -18,6 +18,7 @@ type Querier interface {
 	AddDeepResearchMessage(ctx context.Context, arg AddDeepResearchMessageParams) error
 	AtomicUseInviteCode(ctx context.Context, arg AtomicUseInviteCodeParams) error
 	BackupEntitlements(ctx context.Context, runID int64) (int64, error)
+	// Blocks a purchase, with when Apple revoked it if that is the reason.
 	BlockApplePurchase(ctx context.Context, arg BlockApplePurchaseParams) error
 	ClearTaskOverLimit(ctx context.Context, taskID string) error
 	CompleteDeepResearchRun(ctx context.Context, arg CompleteDeepResearchRunParams) error
@@ -111,9 +112,10 @@ type Querier interface {
 	GetZcashInvoicesByUserAndStatus(ctx context.Context, arg GetZcashInvoicesByUserAndStatusParams) ([]ZcashInvoice, error)
 	HasActiveDeepResearchRun(ctx context.Context, userIds []string) (bool, error)
 	HasEnforcedEntitlementReview(ctx context.Context) (bool, error)
-	// Records a purchase seen for the first time. A purchase recorded meanwhile by
-	// another request is left as it is; the caller then locks and reads it.
-	InsertApplePurchase(ctx context.Context, arg InsertApplePurchaseParams) error
+	// Records a purchase seen for the first time, and reports whether it did. A
+	// purchase recorded meanwhile by another request is left as it is; the caller
+	// then locks and reads it.
+	InsertApplePurchase(ctx context.Context, arg InsertApplePurchaseParams) (int64, error)
 	// Tasks that may still run, for the limit checks: the caller's quota group.
 	ListOpenTasksForUsers(ctx context.Context, userIds []string) ([]ListOpenTasksForUsersRow, error)
 	// The accounts in the same quota group as the given one. Empty when the

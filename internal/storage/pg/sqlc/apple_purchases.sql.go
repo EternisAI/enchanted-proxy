@@ -13,18 +13,21 @@ import (
 
 const blockApplePurchase = `-- name: BlockApplePurchase :exec
 UPDATE apple_purchases
-SET blocked_at = NOW(), block_reason = $1, updated_at = NOW()
-WHERE original_transaction_id = $2
+SET blocked_at = NOW(), block_reason = $1,
+    revoked_at = COALESCE($2, revoked_at), updated_at = NOW()
+WHERE original_transaction_id = $3
   AND blocked_at IS NULL
 `
 
 type BlockApplePurchaseParams struct {
-	Reason                *string `json:"reason"`
-	OriginalTransactionID string  `json:"originalTransactionId"`
+	Reason                *string      `json:"reason"`
+	RevokedAt             sql.NullTime `json:"revokedAt"`
+	OriginalTransactionID string       `json:"originalTransactionId"`
 }
 
+// Blocks a purchase, with when Apple revoked it if that is the reason.
 func (q *Queries) BlockApplePurchase(ctx context.Context, arg BlockApplePurchaseParams) error {
-	_, err := q.db.ExecContext(ctx, blockApplePurchase, arg.Reason, arg.OriginalTransactionID)
+	_, err := q.db.ExecContext(ctx, blockApplePurchase, arg.Reason, arg.RevokedAt, arg.OriginalTransactionID)
 	return err
 }
 
@@ -76,13 +79,13 @@ func (q *Queries) GetApplePurchase(ctx context.Context, originalTransactionID st
 	return i, err
 }
 
-const insertApplePurchase = `-- name: InsertApplePurchase :exec
+const insertApplePurchase = `-- name: InsertApplePurchase :execrows
 INSERT INTO apple_purchases (
-    original_transaction_id, product_id, environment, tier, expires_at, revoked_at,
+    original_transaction_id, product_id, environment, tier, expires_at,
     holder_user_id, last_transaction_id
 ) VALUES (
     $1, $2, $3, $4,
-    $5, $6, $7, $8
+    $5, $6, $7
 )
 ON CONFLICT (original_transaction_id) DO NOTHING
 `
@@ -93,25 +96,27 @@ type InsertApplePurchaseParams struct {
 	Environment           string       `json:"environment"`
 	Tier                  string       `json:"tier"`
 	ExpiresAt             sql.NullTime `json:"expiresAt"`
-	RevokedAt             sql.NullTime `json:"revokedAt"`
 	HolderUserID          string       `json:"holderUserId"`
 	LastTransactionID     string       `json:"lastTransactionId"`
 }
 
-// Records a purchase seen for the first time. A purchase recorded meanwhile by
-// another request is left as it is; the caller then locks and reads it.
-func (q *Queries) InsertApplePurchase(ctx context.Context, arg InsertApplePurchaseParams) error {
-	_, err := q.db.ExecContext(ctx, insertApplePurchase,
+// Records a purchase seen for the first time, and reports whether it did. A
+// purchase recorded meanwhile by another request is left as it is; the caller
+// then locks and reads it.
+func (q *Queries) InsertApplePurchase(ctx context.Context, arg InsertApplePurchaseParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertApplePurchase,
 		arg.OriginalTransactionID,
 		arg.ProductID,
 		arg.Environment,
 		arg.Tier,
 		arg.ExpiresAt,
-		arg.RevokedAt,
 		arg.HolderUserID,
 		arg.LastTransactionID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const lockApplePurchase = `-- name: LockApplePurchase :one
@@ -292,11 +297,10 @@ SET product_id          = $1,
     environment         = $2,
     tier                = $3,
     expires_at          = $4,
-    revoked_at          = $5,
-    holder_user_id      = $6,
-    last_transaction_id = $7,
+    holder_user_id      = $5,
+    last_transaction_id = $6,
     updated_at          = NOW()
-WHERE original_transaction_id = $8
+WHERE original_transaction_id = $7
 `
 
 type UpdateApplePurchaseParams struct {
@@ -304,7 +308,6 @@ type UpdateApplePurchaseParams struct {
 	Environment           string       `json:"environment"`
 	Tier                  string       `json:"tier"`
 	ExpiresAt             sql.NullTime `json:"expiresAt"`
-	RevokedAt             sql.NullTime `json:"revokedAt"`
 	HolderUserID          string       `json:"holderUserId"`
 	LastTransactionID     string       `json:"lastTransactionId"`
 	OriginalTransactionID string       `json:"originalTransactionId"`
@@ -316,7 +319,6 @@ func (q *Queries) UpdateApplePurchase(ctx context.Context, arg UpdateApplePurcha
 		arg.Environment,
 		arg.Tier,
 		arg.ExpiresAt,
-		arg.RevokedAt,
 		arg.HolderUserID,
 		arg.LastTransactionID,
 		arg.OriginalTransactionID,

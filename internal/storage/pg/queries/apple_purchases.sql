@@ -1,12 +1,13 @@
--- name: InsertApplePurchase :exec
--- Records a purchase seen for the first time. A purchase recorded meanwhile by
--- another request is left as it is; the caller then locks and reads it.
+-- name: InsertApplePurchase :execrows
+-- Records a purchase seen for the first time, and reports whether it did. A
+-- purchase recorded meanwhile by another request is left as it is; the caller
+-- then locks and reads it.
 INSERT INTO apple_purchases (
-    original_transaction_id, product_id, environment, tier, expires_at, revoked_at,
+    original_transaction_id, product_id, environment, tier, expires_at,
     holder_user_id, last_transaction_id
 ) VALUES (
     sqlc.arg(original_transaction_id), sqlc.arg(product_id), sqlc.arg(environment), sqlc.arg(tier),
-    sqlc.narg(expires_at), sqlc.narg(revoked_at), sqlc.arg(holder_user_id), sqlc.arg(last_transaction_id)
+    sqlc.narg(expires_at), sqlc.arg(holder_user_id), sqlc.arg(last_transaction_id)
 )
 ON CONFLICT (original_transaction_id) DO NOTHING;
 
@@ -27,15 +28,16 @@ SET product_id          = sqlc.arg(product_id),
     environment         = sqlc.arg(environment),
     tier                = sqlc.arg(tier),
     expires_at          = sqlc.narg(expires_at),
-    revoked_at          = sqlc.narg(revoked_at),
     holder_user_id      = sqlc.arg(holder_user_id),
     last_transaction_id = sqlc.arg(last_transaction_id),
     updated_at          = NOW()
 WHERE original_transaction_id = sqlc.arg(original_transaction_id);
 
 -- name: BlockApplePurchase :exec
+-- Blocks a purchase, with when Apple revoked it if that is the reason.
 UPDATE apple_purchases
-SET blocked_at = NOW(), block_reason = sqlc.arg(reason), updated_at = NOW()
+SET blocked_at = NOW(), block_reason = sqlc.arg(reason),
+    revoked_at = COALESCE(sqlc.narg(revoked_at), revoked_at), updated_at = NOW()
 WHERE original_transaction_id = sqlc.arg(original_transaction_id)
   AND blocked_at IS NULL;
 

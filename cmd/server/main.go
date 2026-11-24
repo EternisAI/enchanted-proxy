@@ -151,7 +151,7 @@ func main() {
 	requestTrackingService := request_tracking.NewService(db.Queries, quotaGroups, logger.WithComponent("request_tracking"))
 	iapPolicy := iap.LoadPolicy()
 	log.Info("app store purchase policy", slog.String("policy", iapPolicy.String()))
-	iapService := iap.NewService(db.Queries, iapPolicy)
+	iapService := iap.NewService(db.DB, db.Queries, iapPolicy, quotaGroups, logger.WithComponent("iap"))
 	stripeService := stripe.NewService(db.Queries, logger.WithComponent("stripe"))
 
 	// Initialize zcash service with Firestore client for real-time updates
