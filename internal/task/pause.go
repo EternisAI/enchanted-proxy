@@ -137,14 +137,17 @@ func (s *Service) PauseTask(ctx context.Context, userID, taskID string) (*Task, 
 		if state == nil {
 			return errScheduleGone
 		}
-		reason := PauseUser
+		reason, note := PauseUser, pauseNote(PauseUser, "paused by the owner")
 		if state.Paused {
-			// Already paused in Temporal, for instance by an admin before the row was
-			// updated. Keep that pause and its note, so it cannot be turned into one
-			// the owner may lift.
-			reason = pauseReasonFromNote(state.Note)
-		} else if err := s.temporalClient.ScheduleClient().GetHandle(opCtx, taskID).Pause(opCtx,
-			client.SchedulePauseOptions{Note: pauseNote(PauseUser, "paused by the owner")}); err != nil {
+			// Already paused in Temporal: by an admin before the row was updated, or
+			// still, after a resume whose Unpause failed but may yet apply. The pause
+			// keeps its note, so it cannot be turned into one the owner may lift, and
+			// is made again: Temporal applies a schedule's changes in the order it
+			// accepts them, so an Unpause accepted earlier cannot undo it.
+			reason, note = pauseReasonFromNote(state.Note), state.Note
+		}
+		if err := s.temporalClient.ScheduleClient().GetHandle(opCtx, taskID).Pause(opCtx,
+			client.SchedulePauseOptions{Note: note}); err != nil {
 			if isNotFound(err) {
 				return errScheduleGone
 			}
