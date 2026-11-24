@@ -320,10 +320,11 @@ func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task,
 	return resumed, nil
 }
 
-// settleFailedResume decides what a failed Unpause left behind. The schedule
-// may have resumed even so: the row is paused again only once a lookup shows
-// the schedule paused or gone. While its state is unknown, the row stays
-// active and counted, and the reconciler settles it.
+// settleFailedResume decides what a failed Unpause left behind. The call may
+// still take effect after it failed, even after a lookup shows the schedule
+// paused, so the row stays active and counted unless the schedule is gone. A
+// retry resumes the schedule (the row says active, the schedule paused), and
+// otherwise the reconciler sets the row from the schedule's state.
 func (s *Service) settleFailedResume(ctx context.Context, taskID string, unpauseErr error, restoreRow func()) error {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
 	log.Error("failed to resume a task's schedule", slog.String("error", unpauseErr.Error()), slog.String("task_id", taskID))
@@ -331,19 +332,15 @@ func (s *Service) settleFailedResume(ctx context.Context, taskID string, unpause
 	defer cancel()
 	state, err := s.scheduleState(checkCtx, taskID)
 	switch {
-	case err != nil:
-		log.Error("could not confirm whether the schedule resumed; the task stays counted",
-			slog.String("error", err.Error()), slog.String("task_id", taskID))
-		return fmt.Errorf("failed to resume schedule: %w", unpauseErr)
-	case state == nil:
-		restoreRow()
+	case err == nil && state == nil:
+		restoreRow() // nothing can run
 		return errScheduleGone
-	case state.Paused:
-		restoreRow()
-		return fmt.Errorf("failed to resume schedule: %w", unpauseErr)
+	case err == nil && !state.Paused:
+		log.Warn("the schedule resumed despite the error", slog.String("task_id", taskID))
+		return nil
 	}
-	log.Warn("the schedule resumed despite the error", slog.String("task_id", taskID))
-	return nil
+	log.Warn("the schedule may still resume; the task stays counted", slog.String("task_id", taskID))
+	return fmt.Errorf("failed to resume schedule: %w", unpauseErr)
 }
 
 // checkResumedSchedule applies the plan's recurring-task limits to a task

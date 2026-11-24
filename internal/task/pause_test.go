@@ -211,20 +211,29 @@ func TestResumeTaskRefusesAOneTimeTaskWhoseTimePassed(t *testing.T) {
 	expectEvents(t, w)
 }
 
-// When the schedule cannot be resumed, the row is paused again so it does not
-// count as active.
-func TestResumeTaskRestoresThePauseWhenTheScheduleDoesNotResume(t *testing.T) {
+// A failed Unpause may still take effect after a lookup shows the schedule
+// paused, so the row stays active and counted; only a schedule that is gone
+// puts the pause back on the row.
+func TestResumeTaskKeepsTheTaskCountedAfterAFailedUnpause(t *testing.T) {
 	w := pausedWorld(PauseInactive)
 	w.unpauseErr = serviceerror.NewUnavailable("down")
 	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); err == nil {
 		t.Fatal("ResumeTask succeeded although the schedule did not resume")
 	}
-	expectEvents(t, w, "@row resumed", "row paused:inactive")
-	if row := w.rows["task-1"]; row.Status != string(TaskStatusPaused) || *row.PauseReason != string(PauseInactive) {
-		t.Fatalf("row %+v, want paused as before", row)
+	expectEvents(t, w, "@row resumed")
+	if row := w.rows["task-1"]; row.Status != string(TaskStatusActive) {
+		t.Fatalf("row %s, want active and counted", row.Status)
+	}
+
+	// The retry resumes the schedule: the row says active, the schedule paused.
+	w.unpauseErr = nil
+	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if w.paused {
+		t.Fatal("the retry left the schedule paused")
 	}
 }
-
 func TestPauseReasonFromNote(t *testing.T) {
 	for note, want := range map[string]PauseReason{
 		"admin: incident 2026-11":            PauseAdmin,
