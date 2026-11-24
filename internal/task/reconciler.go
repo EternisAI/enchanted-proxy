@@ -122,10 +122,19 @@ type Reconciler struct {
 }
 
 // NewReconciler builds the reconciler over the task service's Temporal client,
-// queries, plan lookup and quota groups.
-func NewReconciler(s *Service, db *sql.DB, accounts AccountLookup, notifier PauseNotifier, cfg ReconcilerConfig, log *logger.Logger) *Reconciler {
-	return &Reconciler{s: s, gate: lockedSweeps(db), accounts: accounts, notifier: notifier, cfg: cfg, log: log}
+// queries, plan lookup and quota groups. It refuses a connection pool too small
+// for its sweeps.
+func NewReconciler(s *Service, db *sql.DB, accounts AccountLookup, notifier PauseNotifier, cfg ReconcilerConfig, log *logger.Logger) (*Reconciler, error) {
+	if n := db.Stats().MaxOpenConnections; cfg.Mode != ReconcilerOff && n > 0 && n < minReconcilerPool {
+		return nil, fmt.Errorf("the task reconciler needs a database pool of at least %d connections (DB_MAX_OPEN_CONNS), not %d", minReconcilerPool, n)
+	}
+	return &Reconciler{s: s, gate: lockedSweeps(db), accounts: accounts, notifier: notifier, cfg: cfg, log: log}, nil
 }
+
+// minReconcilerPool is the smallest connection pool the reconciler works with:
+// a sweep keeps one connection for the reconciler's lock while its steps hold
+// a task's lock and do their work.
+const minReconcilerPool = minTaskLockPool + 1
 
 // sweepGate runs fn when this instance holds the reconciler's lock and no
 // sweep started within minGap, and records the sweep and its report.

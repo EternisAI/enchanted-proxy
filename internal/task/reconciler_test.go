@@ -402,6 +402,33 @@ func TestReconcilerKeepsALiftedHoldCountedWhileItsUnpauseMayApply(t *testing.T) 
 	}
 }
 
+// A sweep keeps a connection for the reconciler's lock while its steps hold a
+// task's lock and do their work.
+func TestNewReconcilerRefusesAPoolTooSmallForItsSweeps(t *testing.T) {
+	for _, c := range []struct {
+		size    int
+		mode    ReconcilerMode
+		wantErr bool
+	}{
+		{0, ReconcilerEnforce, false}, // no limit
+		{2, ReconcilerEnforce, true},
+		{2, ReconcilerDryRun, true},
+		{2, ReconcilerOff, false},
+		{3, ReconcilerEnforce, false},
+	} {
+		db, err := sql.Open("postgres", "postgres://unused") // does not connect
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.SetMaxOpenConns(c.size)
+		_, err = NewReconciler(&Service{}, db, nil, nil, ReconcilerConfig{Mode: c.mode}, logger.New(logger.Config{Level: slog.LevelError + 4}))
+		if (err != nil) != c.wantErr {
+			t.Errorf("pool of %d, %s: err = %v, want an error %v", c.size, c.mode, err, c.wantErr)
+		}
+		_ = db.Close()
+	}
+}
+
 func TestReconcilerSettlesRowsWithoutSchedules(t *testing.T) {
 	w := newReconWorld()
 	w.owner("u", oneDay, tiers.TierFree)

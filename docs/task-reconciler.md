@@ -57,7 +57,10 @@ it accepts them, so the earlier Unpause cannot undo that pause.
 | `TASK_PLAN_ENDED_GRACE_HOURS` | `168` | How long a task may stay over its owner's plan before it is held. |
 | `TASK_PAUSE_NOTIFICATIONS` | `false` | Push to the owner when tasks are paused as `inactive` or held as `plan_ended`, one push per owner and reason per sweep. |
 
-All five are in the enclave's `env` allowlist. The reconciler needs
+All five are in the enclave's `env` allowlist. Unless the mode is `off`, the proxy
+refuses to start with a database pool (`DB_MAX_OPEN_CONNS`) of fewer than three
+connections. A sweep keeps one for its lock, a task's lock takes another, and the work
+under that lock needs a third. The reconciler needs
 `identitytoolkit.googleapis.com` (account lookups) and `oauth2.googleapis.com` (access
 tokens) in the egress allowlist.
 

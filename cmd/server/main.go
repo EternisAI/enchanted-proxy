@@ -279,7 +279,11 @@ func main() {
 		if notificationService != nil {
 			pauseNotifier = notificationService
 		}
-		reconciler := task.NewReconciler(taskService, db.DB, accounts, pauseNotifier, task.LoadReconcilerConfig(), logger.WithComponent("task-reconciler"))
+		reconciler, err := task.NewReconciler(taskService, db.DB, accounts, pauseNotifier, task.LoadReconcilerConfig(), logger.WithComponent("task-reconciler"))
+		if err != nil {
+			log.Error("failed to initialize task reconciler", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
 		reconcilerCtx, reconcilerCancel := context.WithCancel(context.Background())
 		go reconciler.Run(reconcilerCtx)
 		defer reconcilerCancel()
