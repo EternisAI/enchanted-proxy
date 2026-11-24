@@ -119,7 +119,7 @@ func (s *Service) AttachAppStoreSubscription(ctx context.Context, userID string,
 	for attempt := 0; ; attempt++ {
 		current := tx
 		if confirm {
-			if current, err = s.confirm(ctx, tx, identity); err != nil {
+			if current, err = s.confirm(ctx, userID, tx, identity); err != nil {
 				return nil, err
 			}
 		}
@@ -133,8 +133,9 @@ func (s *Service) AttachAppStoreSubscription(ctx context.Context, userID string,
 }
 
 // confirm reads the transaction from the App Store and checks the policy
-// against what the App Store says.
-func (s *Service) confirm(ctx context.Context, tx *appstore.JWSTransaction, identity *auth.Identity) (*appstore.JWSTransaction, error) {
+// against what the App Store says. A purchase the App Store now reports
+// revoked is blocked, as when the app sends a revoked transaction.
+func (s *Service) confirm(ctx context.Context, userID string, tx *appstore.JWSTransaction, identity *auth.Identity) (*appstore.JWSTransaction, error) {
 	signed, err := s.apple.SignedTransaction(ctx, tx.Environment, tx.TransactionID)
 	if errors.Is(err, errNotAtApple) {
 		return nil, refuse(refusedUnknown, "The App Store does not know this purchase.")
@@ -152,6 +153,9 @@ func (s *Service) confirm(ctx context.Context, tx *appstore.JWSTransaction, iden
 		return nil, refuse(refusedUnknown, "The App Store does not know this purchase.")
 	}
 	if _, refusal := s.policy.check(current, identity, s.now()); refusal != nil {
+		if refusal.Reason == refusedRevoked {
+			return nil, s.revoke(ctx, userID, current, refusal)
+		}
 		return nil, refusal
 	}
 	return current, nil

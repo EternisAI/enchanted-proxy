@@ -332,6 +332,32 @@ func TestARevokedPurchaseIsBlocked(t *testing.T) {
 	}
 }
 
+// A purchase refunded since it was attached is blocked when the App Store
+// reports the refund while confirming a move, though the moving account sent
+// a transaction from before the refund.
+func TestARevocationFoundWhileConfirmingBlocksThePurchase(t *testing.T) {
+	w := newWorld(t)
+	a, b := newID("a"), newID("b")
+	tx, token := w.lifetime()
+	w.attach(a, token)
+
+	refunded := *tx
+	refunded.RevocationDate = testNow.Add(-time.Hour).UnixMilli()
+	w.store.tokens["apple-refunded"] = &refunded
+	w.store.apple[tx.TransactionID] = "apple-refunded"
+
+	var refusal *Refusal
+	if _, err := w.s.AttachAppStoreSubscription(context.Background(), b, nil, token); !errors.As(err, &refusal) || refusal.Reason != refusedRevoked {
+		t.Fatalf("err %v, want a revoked refusal", err)
+	}
+	row, err := w.q.GetApplePurchase(context.Background(), tx.OriginalTransactionId)
+	if err != nil || !row.BlockedAt.Valid || row.HolderUserID != a {
+		t.Fatalf("purchase %+v, %v; want it blocked, still held by a", row, err)
+	}
+	w.expectPlan(a, "free", "")
+	w.expectPlan(b, "none", "")
+}
+
 // The app sends every purchase at each launch, in no fixed order: Pro wins
 // whatever the order.
 func TestPlusAndProInEitherOrderGivePro(t *testing.T) {
