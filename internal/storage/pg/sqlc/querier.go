@@ -13,9 +13,13 @@ import (
 )
 
 type Querier interface {
+	// A task whose schedule exists although its creation did not finish.
+	ActivatePendingTask(ctx context.Context, taskID string) (int64, error)
 	AddDeepResearchMessage(ctx context.Context, arg AddDeepResearchMessageParams) error
 	AtomicUseInviteCode(ctx context.Context, arg AtomicUseInviteCodeParams) error
+	ClearTaskOverLimit(ctx context.Context, taskID string) error
 	CompleteDeepResearchRun(ctx context.Context, arg CompleteDeepResearchRunParams) error
+	CompleteOneTimeTask(ctx context.Context, taskID string) (int64, error)
 	// All accounts, for the service-wide daily ceiling.
 	CountDeepResearchRunsToday(ctx context.Context) (int64, error)
 	CountInviteCodesByRedeemedBy(ctx context.Context, redeemedBy *string) (int64, error)
@@ -34,6 +38,7 @@ type Querier interface {
 	CreateZcashInvoice(ctx context.Context, arg CreateZcashInvoiceParams) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	DeleteTask(ctx context.Context, arg DeleteTaskParams) (sql.Result, error)
+	DeleteTaskByID(ctx context.Context, taskID string) (int64, error)
 	// Releases the creation recorded for a task whose schedule could not be set up.
 	DeleteTaskCreation(ctx context.Context, taskID string) error
 	DeleteTelegramChat(ctx context.Context, chatID int64) error
@@ -41,6 +46,9 @@ type Querier interface {
 	// Runs still active long after any run could have finished: their connection
 	// was lost without the run being completed (for example a restart).
 	FailStaleDeepResearchRuns(ctx context.Context, startedBefore time.Time) (int64, error)
+	// The run is started and finished in one transaction, whose NOW() is its
+	// start, so the finish takes the wall clock.
+	FinishTaskReconcilerRun(ctx context.Context, arg FinishTaskReconcilerRunParams) error
 	GetActiveDeepResearchRun(ctx context.Context, arg GetActiveDeepResearchRunParams) (GetActiveDeepResearchRunRow, error)
 	GetAllActiveTasks(ctx context.Context) ([]Task, error)
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
@@ -92,6 +100,8 @@ type Querier interface {
 	HasActiveDeepResearchRun(ctx context.Context, userIds []string) (bool, error)
 	// Tasks that may still run, for the limit checks: the caller's quota group.
 	ListOpenTasksForUsers(ctx context.Context, userIds []string) ([]ListOpenTasksForUsersRow, error)
+	// Tasks that may still run or be resumed, oldest first.
+	ListTasksToReconcile(ctx context.Context) ([]Task, error)
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
 	// Holds the deep research admission lock until the transaction ends, so the
 	// limit checks and the new run's row cannot interleave with another start.
@@ -107,15 +117,25 @@ type Querier interface {
 	LockTaskAdmission(ctx context.Context, userID string) error
 	MarkAllMessagesAsSent(ctx context.Context, sessionID string) error
 	MarkMessageAsSent(ctx context.Context, id string) error
+	// Records when the task was first found over its owner's plan; a later call
+	// keeps the first time.
+	MarkTaskOverLimit(ctx context.Context, arg MarkTaskOverLimitParams) error
 	// Records that a task's schedule is paused, and why. A task that is already
 	// paused keeps its reason, and a finished one is left as it is.
 	MarkTaskPaused(ctx context.Context, arg MarkTaskPausedParams) (int64, error)
 	// Records that a paused task's schedule runs again. Only a task still paused
 	// for the reason the caller checked is changed.
 	MarkTaskResumed(ctx context.Context, arg MarkTaskResumedParams) (int64, error)
+	// Whether a sweep that finished started within the last given seconds, by the
+	// database's clock.
+	RecentTaskReconcilerRun(ctx context.Context, seconds float64) (bool, error)
 	RecordTaskCreation(ctx context.Context, arg RecordTaskCreationParams) error
 	ResetInviteCode(ctx context.Context, codeHash string) error
 	SoftDeleteInviteCode(ctx context.Context, id int64) error
+	StartTaskReconcilerRun(ctx context.Context, mode string) (int64, error)
+	// Takes the reconciler's lock until the transaction ends, if no other server
+	// instance holds it.
+	TryLockTaskReconciler(ctx context.Context) (bool, error)
 	UpdateDeepResearchRunTokens(ctx context.Context, arg UpdateDeepResearchRunTokensParams) error
 	// Claims an intent for a payment made at payment_time (its block time). Each
 	// payment event is delivered to every replica and again by the historical sync,
@@ -128,6 +148,7 @@ type Querier interface {
 	UpdateFaiPaymentIntentToExpired(ctx context.Context, id string) error
 	UpdateInviteCodeActive(ctx context.Context, arg UpdateInviteCodeActiveParams) error
 	UpdateInviteCodeUsage(ctx context.Context, arg UpdateInviteCodeUsageParams) error
+	UpdateTaskPauseReason(ctx context.Context, arg UpdateTaskPauseReasonParams) (int64, error)
 	UpdateTaskStatus(ctx context.Context, arg UpdateTaskStatusParams) error
 	UpdateZcashInvoiceStatus(ctx context.Context, arg UpdateZcashInvoiceStatusParams) error
 	UpdateZcashInvoiceToExpired(ctx context.Context, id uuid.UUID) error

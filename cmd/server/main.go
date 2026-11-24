@@ -266,6 +266,29 @@ func main() {
 		}
 	}
 
+	// Reconcile task rows with their schedules and with their owners' accounts
+	// and plans (hourly; off, dry-run or enforce).
+	var runningReconciler *task.RunningReconciler
+	if taskService != nil {
+		var accounts task.AccountLookup
+		if firebaseClient != nil {
+			accounts = task.FirebaseAccounts(firebaseClient.GetAuthClient())
+		} else {
+			log.Warn("firebase client not available - the task reconciler will not check accounts")
+		}
+		var pauseNotifier task.PauseNotifier
+		if notificationService != nil {
+			pauseNotifier = notificationService
+		}
+		reconciler, err := task.NewReconciler(taskService, db.DB, accounts, pauseNotifier, task.LoadReconcilerConfig(), logger.WithComponent("task-reconciler"))
+		if err != nil {
+			log.Error("failed to initialize task reconciler", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
+		runningReconciler = reconciler.Start()
+		defer runningReconciler.Stop(0) // cancels it on any exit; the shutdown below waits for it
+	}
+
 	// Initialize tool system
 	toolRegistry := tools.NewRegistry()
 	exaSearchTool := tools.NewExaSearchTool(searchService, logger.WithComponent("exa-search-tool"))
@@ -654,10 +677,16 @@ func main() {
 	rtCancel()
 	log.Info("request tracking service shutdown complete")
 
-	// Shutdown the task service (close Temporal client)
+	// Shutdown the task service (close Temporal client), once the reconciler,
+	// which uses it, has returned. One that does not return in time may still
+	// use the client, which then stays open until the process exits.
 	if taskService != nil {
-		taskService.Close()
-		log.Info("task service shutdown complete")
+		if runningReconciler == nil || runningReconciler.Stop(time.Duration(config.AppConfig.ServerShutdownTimeoutSeconds)*time.Second) {
+			taskService.Close()
+			log.Info("task service shutdown complete")
+		} else {
+			log.Warn("task reconciler did not stop in time; the Temporal client stays open until the process exits")
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.AppConfig.ServerShutdownTimeoutSeconds)*time.Second)

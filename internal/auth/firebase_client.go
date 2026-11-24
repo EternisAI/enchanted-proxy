@@ -7,6 +7,7 @@ import (
 
 	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go/v4"
+	fbauth "firebase.google.com/go/v4/auth"
 	"firebase.google.com/go/v4/messaging"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"google.golang.org/api/option"
@@ -18,6 +19,7 @@ import (
 type FirebaseClient struct {
 	firestoreClient *firestore.Client
 	messagingClient *messaging.Client
+	authClient      *fbauth.Client
 }
 
 // NewFirebaseClient creates a new Firebase client with Firestore access.
@@ -42,9 +44,15 @@ func NewFirebaseClient(ctx context.Context, projectID, credJSON string, log *log
 		return nil, fmt.Errorf("failed to get Messaging client: %w", err)
 	}
 
+	authClient, err := app.Auth(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Auth client: %w", err)
+	}
+
 	return &FirebaseClient{
 		firestoreClient: firestoreClient,
 		messagingClient: messagingClient,
+		authClient:      authClient,
 	}, nil
 }
 
@@ -64,6 +72,11 @@ func (f *FirebaseClient) GetFirestoreClient() *firestore.Client {
 // GetMessagingClient returns the Messaging client instance for sending push notifications
 func (f *FirebaseClient) GetMessagingClient() *messaging.Client {
 	return f.messagingClient
+}
+
+// GetAuthClient returns the Firebase Auth client, for looking up accounts.
+func (f *FirebaseClient) GetAuthClient() *fbauth.Client {
+	return f.authClient
 }
 
 // DeepResearchUsage represents a user's deep research usage record

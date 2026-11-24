@@ -34,7 +34,7 @@ func (q *Queries) CountTaskCreationsSince(ctx context.Context, arg CountTaskCrea
 const createTask = `-- name: CreateTask :one
 INSERT INTO tasks (task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-RETURNING task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason
+RETURNING task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason, over_limit_since
 `
 
 type CreateTaskParams struct {
@@ -72,6 +72,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PauseReason,
+		&i.OverLimitSince,
 	)
 	return i, err
 }
@@ -101,7 +102,7 @@ func (q *Queries) DeleteTaskCreation(ctx context.Context, taskID string) error {
 }
 
 const getAllActiveTasks = `-- name: GetAllActiveTasks :many
-SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason FROM tasks
+SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason, over_limit_since FROM tasks
 WHERE status = 'active'
 ORDER BY created_at DESC
 `
@@ -127,6 +128,7 @@ func (q *Queries) GetAllActiveTasks(ctx context.Context) ([]Task, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.PauseReason,
+			&i.OverLimitSince,
 		); err != nil {
 			return nil, err
 		}
@@ -142,7 +144,7 @@ func (q *Queries) GetAllActiveTasks(ctx context.Context) ([]Task, error) {
 }
 
 const getTaskByID = `-- name: GetTaskByID :one
-SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason FROM tasks
+SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason, over_limit_since FROM tasks
 WHERE task_id = $1
 `
 
@@ -161,12 +163,13 @@ func (q *Queries) GetTaskByID(ctx context.Context, taskID string) (Task, error) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PauseReason,
+		&i.OverLimitSince,
 	)
 	return i, err
 }
 
 const getTaskForUser = `-- name: GetTaskForUser :one
-SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason FROM tasks
+SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason, over_limit_since FROM tasks
 WHERE task_id = $1 AND user_id = $2
 `
 
@@ -190,12 +193,13 @@ func (q *Queries) GetTaskForUser(ctx context.Context, arg GetTaskForUserParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PauseReason,
+		&i.OverLimitSince,
 	)
 	return i, err
 }
 
 const getTasksByChatID = `-- name: GetTasksByChatID :many
-SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason FROM tasks
+SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason, over_limit_since FROM tasks
 WHERE chat_id = $1
 ORDER BY created_at DESC
 `
@@ -221,6 +225,7 @@ func (q *Queries) GetTasksByChatID(ctx context.Context, chatID string) ([]Task, 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.PauseReason,
+			&i.OverLimitSince,
 		); err != nil {
 			return nil, err
 		}
@@ -236,7 +241,7 @@ func (q *Queries) GetTasksByChatID(ctx context.Context, chatID string) ([]Task, 
 }
 
 const getTasksByUserID = `-- name: GetTasksByUserID :many
-SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason FROM tasks
+SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at, pause_reason, over_limit_since FROM tasks
 WHERE user_id = $1
 ORDER BY created_at DESC
 `
@@ -262,6 +267,7 @@ func (q *Queries) GetTasksByUserID(ctx context.Context, userID string) ([]Task, 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.PauseReason,
+			&i.OverLimitSince,
 		); err != nil {
 			return nil, err
 		}

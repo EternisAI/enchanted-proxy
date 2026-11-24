@@ -72,6 +72,10 @@ egress:
   - firestore.googleapis.com
   # Firebase Cloud Messaging (push notifications)
   - fcm.googleapis.com
+  # Google OAuth token endpoint (access tokens for FCM and Firebase Auth)
+  - oauth2.googleapis.com
+  # Firebase Auth (the task reconciler looks up task owners)
+  - identitytoolkit.googleapis.com
   # Linear API (problem reports)
   - api.linear.app
   # Slack webhooks (problem report notifications)
@@ -161,6 +165,11 @@ env:
 - STRIPE_SECRET_KEY
 - STRIPE_WEBHOOK_SECRET
 - STRIPE_WEEKLY_PRICE_ID
+- TASK_INACTIVE_DAYS
+- TASK_PAUSE_NOTIFICATIONS
+- TASK_PLAN_ENDED_GRACE_HOURS
+- TASK_RECONCILER_INTERVAL_MINUTES
+- TASK_RECONCILER_MODE
 - TELEGRAM_TOKEN
 - TEMPORAL_API_KEY
 - TEMPORAL_ENDPOINT

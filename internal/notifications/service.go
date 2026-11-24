@@ -75,6 +75,20 @@ func (s *Service) SendGPT5ProCompletionNotification(
 	return s.sendNotification(ctx, userID, notification)
 }
 
+// SendTaskPausedNotification tells a user that scheduled tasks were paused or
+// put on hold, and why. Opening it goes to the chat of the first task.
+func (s *Service) SendTaskPausedNotification(ctx context.Context, userID, chatID, title, body string) error {
+	return s.sendNotification(ctx, userID, CompletionNotification{
+		Title: title,
+		Body:  body,
+		Data: map[string]string{
+			"user_id": userID,
+			"chat_id": chatID,
+			"type":    string(TypeTaskPaused),
+		},
+	})
+}
+
 // sendNotification sends a notification to all of a user's registered devices.
 func (s *Service) sendNotification(
 	ctx context.Context,

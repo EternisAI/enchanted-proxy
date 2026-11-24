@@ -38,6 +38,7 @@ make sqlc         # Regenerate SQL after editing queries/
 | Tool execution | `internal/tools/registry.go` |
 | MCP protocol | `internal/mcp/handlers.go` |
 | Scheduled tasks | `internal/task/handlers.go` |
+| Task reconciler | `internal/task/reconciler.go` ([settings](docs/task-reconciler.md)) |
 | Notifications (FCM) | `internal/notifications/service.go` |
 | Stripe payments | `internal/stripe/handler.go` |
 | Zcash payments | `internal/zcash/handler.go` |
