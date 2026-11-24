@@ -129,6 +129,10 @@ type Querier interface {
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
 	// Active Apple Plus entitlements with no purchase on record.
 	ListUnrecordedApplePlusEntitlements(ctx context.Context) ([]string, error)
+	// Holds an account's entitlement lock until the transaction ends, so plan
+	// writes for one account are made one at a time, also while the account has
+	// no entitlement row for FOR UPDATE to lock.
+	LockAccountEntitlement(ctx context.Context, userID string) error
 	// Reads a purchase and holds its row until the transaction ends, so attaches
 	// of the same purchase are made one at a time.
 	LockApplePurchase(ctx context.Context, originalTransactionID string) (ApplePurchase, error)

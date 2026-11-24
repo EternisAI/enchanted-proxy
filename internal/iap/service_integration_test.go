@@ -379,6 +379,47 @@ func TestPlusAndProInEitherOrderGivePro(t *testing.T) {
 	}
 }
 
+// Two purchases granted at once to an account with no entitlement row are
+// granted one after the other: a Plus grant waiting on a Pro grant reads the
+// Pro plan and leaves it.
+func TestConcurrentGrantsToANewAccountKeepTheBetterPlan(t *testing.T) {
+	w := newWorld(t)
+	a := newID("a")
+	ctx := context.Background()
+
+	first, err := w.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Rollback() }()
+	if err := grant(ctx, pgdb.New(first), a, "pro-purchase", "pro", testNow.Add(24*time.Hour), testNow); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		second, err := w.db.BeginTx(ctx, nil)
+		if err != nil {
+			done <- err
+			return
+		}
+		defer func() { _ = second.Rollback() }()
+		if err := grant(ctx, pgdb.New(second), a, "plus-purchase", "plus", lifetimeExpiry, testNow); err != nil {
+			done <- err
+			return
+		}
+		done <- second.Commit()
+	}()
+	time.Sleep(300 * time.Millisecond) // the second grant reaches its lock
+	if err := first.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	w.expectPlan(a, "pro", "pro-purchase")
+}
+
 // A plan from another provider is never lowered by a purchase, and survives
 // the purchase moving away.
 func TestAnotherProvidersPlanIsKept(t *testing.T) {

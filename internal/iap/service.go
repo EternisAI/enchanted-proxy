@@ -349,6 +349,12 @@ func recordEvent(ctx context.Context, q pgdb.Querier, purchaseID, kind, userID s
 // sends every purchase at each launch, so the order of the calls must not
 // decide between plans.
 func grant(ctx context.Context, q pgdb.Querier, userID, purchaseID string, tier tiers.Tier, expiresAt, now time.Time) error {
+	// Another purchase's grant for the same account waits here and then reads
+	// this one's committed row; without it, two grants to an account with no
+	// row would both write, and the later commit would win.
+	if err := q.LockAccountEntitlement(ctx, userID); err != nil {
+		return fmt.Errorf("failed to lock entitlement: %w", err)
+	}
 	current, err := q.LockEntitlement(ctx, userID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):

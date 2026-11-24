@@ -63,6 +63,12 @@ WHERE e.original_transaction_id = sqlc.arg(purchase_id)
        WHERE u.original_transaction_id = sqlc.arg(purchase_id) AND u.kind = 'unblock'),
       '-infinity'::timestamptz);
 
+-- name: LockAccountEntitlement :exec
+-- Holds an account's entitlement lock until the transaction ends, so plan
+-- writes for one account are made one at a time, also while the account has
+-- no entitlement row for FOR UPDATE to lock.
+SELECT pg_advisory_xact_lock(hashtextextended('entitlement:' || sqlc.arg(user_id)::text, 0));
+
 -- name: LockEntitlement :one
 -- Reads an account's entitlement and holds its row until the transaction ends.
 SELECT user_id, subscription_tier, subscription_expires_at, subscription_provider, apple_original_transaction_id

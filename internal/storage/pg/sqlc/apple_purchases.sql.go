@@ -124,6 +124,18 @@ func (q *Queries) InsertApplePurchase(ctx context.Context, arg InsertApplePurcha
 	return result.RowsAffected()
 }
 
+const lockAccountEntitlement = `-- name: LockAccountEntitlement :exec
+SELECT pg_advisory_xact_lock(hashtextextended('entitlement:' || $1::text, 0))
+`
+
+// Holds an account's entitlement lock until the transaction ends, so plan
+// writes for one account are made one at a time, also while the account has
+// no entitlement row for FOR UPDATE to lock.
+func (q *Queries) LockAccountEntitlement(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, lockAccountEntitlement, userID)
+	return err
+}
+
 const lockApplePurchase = `-- name: LockApplePurchase :one
 SELECT original_transaction_id, product_id, environment, tier, expires_at, revoked_at, holder_user_id, last_transaction_id, blocked_at, block_reason, created_at, updated_at FROM apple_purchases
 WHERE original_transaction_id = $1
