@@ -75,12 +75,16 @@ func TestPauseAndResumeWritesAgainstPostgres(t *testing.T) {
 	}
 
 	// A paused task does not count toward the limits on open tasks.
+	paused := newTask(TaskStatusActive)
+	if n, err := q.MarkTaskPaused(ctx, pgdb.MarkTaskPausedParams{TaskID: paused, PauseReason: reasonPtr(PauseUser)}); err != nil || n != 1 {
+		t.Fatalf("pause: %d rows, %v", n, err)
+	}
 	open, err := q.ListOpenTasksForUsers(ctx, []string{userID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(open) != 1 || open[0].TaskID != active {
-		t.Fatalf("open tasks %+v, want only the resumed one", open)
+		t.Fatalf("open tasks %+v, want only the resumed one, not the paused or completed one", open)
 	}
 }
 
