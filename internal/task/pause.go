@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -109,10 +110,10 @@ func (s *Service) PauseTask(ctx context.Context, userID, taskID string) (*Task, 
 	// The steps do not stop when the client disconnects, and run under the
 	// task's lock, so a pause cannot interleave with a resume or a deletion of
 	// the same task.
-	opCtx, cancel := detached(ctx, scheduleSetupTimeout)
-	defer cancel()
 	var paused *Task
-	err := s.withTaskLock(opCtx, taskID, func() error {
+	err := s.withTaskLock(ctx, taskID, func() error {
+		opCtx, cancel := detached(ctx, scheduleSetupTimeout)
+		defer cancel()
 		row, err := getOwnedTask(opCtx, s.queries, userID, taskID)
 		if err != nil {
 			return err
@@ -206,11 +207,13 @@ func refuseResume(reason PauseReason, tier tiers.Config) error {
 }
 
 // ResumeTask lets a paused task of the caller's run again on its schedule. It
-// refuses a task paused by an admin or held because the plan ended, and a
-// task that would take the caller over the plan's number of tasks. The other
-// creation limits are not applied again, so that pausing stays reversible. A
-// row that says active is checked against its schedule, which may be paused
-// if recording a pause failed.
+// refuses a task paused by an admin or held because the plan ended, and one
+// that does not fit the caller's current plan as a new task would have to: the
+// number of tasks and, for a recurring task, the shortest interval and the
+// runs per day with the caller's other recurring tasks. Otherwise pausing one
+// task to make room for another, then resuming the first, would get past the
+// limits. A row that says active is checked against its schedule, which may
+// be paused if recording a pause failed.
 func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task, error) {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
 
@@ -225,10 +228,10 @@ func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task,
 	// The steps do not stop when the client disconnects, and run under the
 	// task's lock, so a resume cannot interleave with a pause or a deletion of
 	// the same task.
-	opCtx, cancel := detached(ctx, scheduleSetupTimeout)
-	defer cancel()
 	var resumed *Task
-	err = s.withTaskLock(opCtx, taskID, func() error {
+	err = s.withTaskLock(ctx, taskID, func() error {
+		opCtx, cancel := detached(ctx, scheduleSetupTimeout)
+		defer cancel()
 		row, err := getOwnedTask(opCtx, s.queries, userID, taskID)
 		if err != nil {
 			return err
@@ -317,10 +320,11 @@ func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task,
 	return resumed, nil
 }
 
-// settleFailedResume decides what a failed Unpause left behind. The schedule
-// may have resumed even so: the row is paused again only once a lookup shows
-// the schedule paused or gone. While its state is unknown, the row stays
-// active and counted, and the reconciler settles it.
+// settleFailedResume decides what a failed Unpause left behind. The call may
+// still take effect after it failed, even after a lookup shows the schedule
+// paused, so the row stays active and counted unless the schedule is gone. A
+// retry resumes the schedule (the row says active, the schedule paused), and
+// otherwise the reconciler sets the row from the schedule's state.
 func (s *Service) settleFailedResume(ctx context.Context, taskID string, unpauseErr error, restoreRow func()) error {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
 	log.Error("failed to resume a task's schedule", slog.String("error", unpauseErr.Error()), slog.String("task_id", taskID))
@@ -328,23 +332,48 @@ func (s *Service) settleFailedResume(ctx context.Context, taskID string, unpause
 	defer cancel()
 	state, err := s.scheduleState(checkCtx, taskID)
 	switch {
-	case err != nil:
-		log.Error("could not confirm whether the schedule resumed; the task stays counted",
-			slog.String("error", err.Error()), slog.String("task_id", taskID))
-		return fmt.Errorf("failed to resume schedule: %w", unpauseErr)
-	case state == nil:
-		restoreRow()
+	case err == nil && state == nil:
+		restoreRow() // nothing can run
 		return errScheduleGone
-	case state.Paused:
-		restoreRow()
-		return fmt.Errorf("failed to resume schedule: %w", unpauseErr)
+	case err == nil && !state.Paused:
+		log.Warn("the schedule resumed despite the error", slog.String("task_id", taskID))
+		return nil
 	}
-	log.Warn("the schedule resumed despite the error", slog.String("task_id", taskID))
+	log.Warn("the schedule may still resume; the task stays counted", slog.String("task_id", taskID))
+	return fmt.Errorf("failed to resume schedule: %w", unpauseErr)
+}
+
+// checkResumedSchedule applies the plan's recurring-task limits to a task
+// being resumed, beside the group's open recurring tasks.
+func checkResumedSchedule(row pgdb.Task, open openTasks, tier tiers.Config, now time.Time) error {
+	if open.recurringCount >= tier.TaskMaxActiveRecurring {
+		return &LimitError{Reason: "active_recurring_tasks", Tier: tier.Name, Message: fmt.Sprintf(
+			"The limit of %d active recurring tasks on the %s plan has been reached. Pause or delete another recurring task first.",
+			tier.TaskMaxActiveRecurring, tier.DisplayName)}
+	}
+	schedule, err := parseStoredSchedule(row.Time)
+	if err != nil {
+		return &ValidationError{Message: "This task's schedule cannot be checked against the plan's limits, so it cannot be resumed. Delete it and create a new task instead."}
+	}
+	if open.unreadableRecurring > 0 {
+		return &LimitError{Reason: "unreadable_schedule", Tier: tier.Name, Message: "An existing recurring task has a schedule that cannot be checked against the plan's limits. Delete that task before resuming another recurring task."}
+	}
+	if gap := minInterval(schedule, now); gap > 0 && gap < tier.TaskMinInterval {
+		return &LimitError{Reason: "min_interval", Tier: tier.Name, Message: fmt.Sprintf(
+			"On the %s plan a recurring task can run at most %s, and this task runs more often, so it cannot be resumed. Delete it and create one with a less frequent schedule.",
+			tier.DisplayName, describeInterval(tier.TaskMinInterval))}
+	}
+	if exceedsRunsPerDay(append(slices.Clone(open.recurring), schedule), now, tier.TaskMaxRunsPerDay) {
+		return &LimitError{Reason: "runs_per_day", Tier: tier.Name, Message: fmt.Sprintf(
+			"Resuming this task would take recurring tasks past %d runs a day, the limit on the %s plan. Pause or delete another recurring task first, or create this one with a less frequent schedule.",
+			tier.TaskMaxRunsPerDay, tier.DisplayName)}
+	}
 	return nil
 }
 
 // markResumed sets a paused row active under the admission lock, after
-// checking the plan's task count, so a task created at the same time sees it.
+// checking it against the plan as creation does, so a task created at the same
+// time sees it.
 func (s *Service) markResumed(ctx context.Context, userID string, row pgdb.Task, tier tiers.Config, now time.Time) error {
 	userIDs, err := s.groups.UserIDs(ctx, userID)
 	if err != nil {
@@ -356,10 +385,10 @@ func (s *Service) markResumed(ctx context.Context, userID string, row pgdb.Task,
 			return fmt.Errorf("failed to list tasks: %w", err)
 		}
 		open := summarizeOpenTasks(rows, now)
-		if row.Type == string(TaskTypeRecurring) && open.recurringCount >= tier.TaskMaxActiveRecurring {
-			return &LimitError{Reason: "active_recurring_tasks", Tier: tier.Name, Message: fmt.Sprintf(
-				"The limit of %d active recurring tasks on the %s plan has been reached. Pause or delete another recurring task first.",
-				tier.TaskMaxActiveRecurring, tier.DisplayName)}
+		if row.Type == string(TaskTypeRecurring) {
+			if err := checkResumedSchedule(row, open, tier, now); err != nil {
+				return err
+			}
 		}
 		if row.Type == string(TaskTypeOneTime) && open.pendingOneTime >= tier.TaskMaxPendingOneTime {
 			return &LimitError{Reason: "pending_one_time_tasks", Tier: tier.Name, Message: fmt.Sprintf(

@@ -115,11 +115,9 @@ func TestResumeTaskRefusesAnAdminPauseMadeDuringTheResume(t *testing.T) {
 	}
 }
 
-// Resuming does not apply the creation limits again: this every-5-minutes task
-// is under Free's one-hour floor, but it existed before, so pausing it stays
-// reversible. The row is set active under the admission lock, then the schedule
-// resumes.
-func TestResumeTaskDoesNotApplyTheScheduleLimitsAgain(t *testing.T) {
+// Resuming sets the row active under the admission lock, then resumes the
+// schedule, for each reason an owner may lift.
+func TestResumeTaskResumesTheRowThenTheSchedule(t *testing.T) {
 	for _, reason := range []PauseReason{PauseUser, PauseInactive, PauseAccountMissing} {
 		w := pausedWorld(reason)
 		got, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1")
@@ -133,8 +131,37 @@ func TestResumeTaskDoesNotApplyTheScheduleLimitsAgain(t *testing.T) {
 	}
 }
 
-// A pause whose row update failed leaves the row active and the schedule
-// paused: resuming resumes the schedule, under the same refusals.
+// A resumed recurring task must fit the current plan as a new one would:
+// otherwise pausing one task to make room for another and resuming the first
+// gets past the limits.
+func TestResumeTaskAppliesThePlansScheduleLimits(t *testing.T) {
+	// Every five minutes is under Free's one-hour floor (a task from a paid plan,
+	// or from before the limits).
+	w := pausedWorld(PauseUser)
+	w.setTime("*/5 * * * *")
+	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); limitReason(err) != "min_interval" {
+		t.Fatalf("err = %v, want refused under the plan's shortest interval", err)
+	}
+	expectEvents(t, w)
+
+	// Hourly fits Free on its own (24 runs), but not beside another hourly task
+	// created while this one was paused.
+	w = pausedWorld(PauseUser)
+	w.setTime("0 * * * *")
+	w.open = []pgdb.ListOpenTasksForUsersRow{{Type: string(TaskTypeRecurring), Time: "30 * * * *", Status: string(TaskStatusActive)}}
+	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); limitReason(err) != "runs_per_day" {
+		t.Fatalf("err = %v, want refused past the plan's runs per day", err)
+	}
+	expectEvents(t, w)
+
+	// The same pair fits Plus (100 runs a day).
+	w = pausedWorld(PauseUser)
+	w.setTime("0 * * * *")
+	w.open = []pgdb.ListOpenTasksForUsersRow{{Type: string(TaskTypeRecurring), Time: "30 * * * *", Status: string(TaskStatusActive)}}
+	if _, err := w.service(tiers.TierPlus).ResumeTask(context.Background(), "user-1", "task-1"); err != nil {
+		t.Fatalf("Plus: %v", err)
+	}
+}
 func TestResumeTaskResumesAScheduleWhoseRowStayedActive(t *testing.T) {
 	w := newTaskWorld()
 	w.paused, w.note = true, pauseNote(PauseUser, "paused by the owner")
@@ -184,20 +211,29 @@ func TestResumeTaskRefusesAOneTimeTaskWhoseTimePassed(t *testing.T) {
 	expectEvents(t, w)
 }
 
-// When the schedule cannot be resumed, the row is paused again so it does not
-// count as active.
-func TestResumeTaskRestoresThePauseWhenTheScheduleDoesNotResume(t *testing.T) {
+// A failed Unpause may still take effect after a lookup shows the schedule
+// paused, so the row stays active and counted; only a schedule that is gone
+// puts the pause back on the row.
+func TestResumeTaskKeepsTheTaskCountedAfterAFailedUnpause(t *testing.T) {
 	w := pausedWorld(PauseInactive)
 	w.unpauseErr = serviceerror.NewUnavailable("down")
 	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); err == nil {
 		t.Fatal("ResumeTask succeeded although the schedule did not resume")
 	}
-	expectEvents(t, w, "@row resumed", "row paused:inactive")
-	if row := w.rows["task-1"]; row.Status != string(TaskStatusPaused) || *row.PauseReason != string(PauseInactive) {
-		t.Fatalf("row %+v, want paused as before", row)
+	expectEvents(t, w, "@row resumed")
+	if row := w.rows["task-1"]; row.Status != string(TaskStatusActive) {
+		t.Fatalf("row %s, want active and counted", row.Status)
+	}
+
+	// The retry resumes the schedule: the row says active, the schedule paused.
+	w.unpauseErr = nil
+	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if w.paused {
+		t.Fatal("the retry left the schedule paused")
 	}
 }
-
 func TestPauseReasonFromNote(t *testing.T) {
 	for note, want := range map[string]PauseReason{
 		"admin: incident 2026-11":            PauseAdmin,

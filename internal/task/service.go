@@ -48,27 +48,63 @@ func detached(ctx context.Context, timeout time.Duration) (context.Context, cont
 // instance.
 type taskLocker func(ctx context.Context, taskID string, fn func() error) error
 
+// The longest wait for a task's lock, and the longest it is then held: the
+// steps under it and the recovery after a failed step, each bounded on its own.
+const (
+	taskLockWait = scheduleSetupTimeout
+	taskLockHold = scheduleSetupTimeout + 3*cleanupTimeout
+)
+
 // lockedTasks is the taskLocker backed by a Postgres advisory lock, held in a
-// transaction while fn runs. fn's own writes are not in that transaction.
-func lockedTasks(db *sql.DB) taskLocker {
+// transaction while fn runs. fn's own reads and writes go through the pool,
+// outside that transaction.
+func lockedTasks(db *sql.DB, log *logger.Logger) taskLocker {
+	// A holder keeps one pool connection for the lock and takes others for its
+	// work. Holders are limited to a third of the pool, so they cannot take every
+	// connection and then wait for one another.
+	var slots chan struct{}
+	if n := db.Stats().MaxOpenConnections; n > 0 {
+		slots = make(chan struct{}, max(1, n/3))
+	}
 	return func(ctx context.Context, taskID string, fn func() error) error {
-		tx, err := db.BeginTx(ctx, nil)
+		// The lock does not follow the request's cancellation: a client that
+		// disconnects must not release it halfway through.
+		waitCtx, cancelWait := detached(ctx, taskLockWait)
+		defer cancelWait()
+		if slots != nil {
+			select {
+			case slots <- struct{}{}:
+				defer func() { <-slots }()
+			case <-waitCtx.Done():
+				return fmt.Errorf("timed out waiting to lock task: %w", waitCtx.Err())
+			}
+		}
+		// database/sql ends the transaction, and with it the lock, when this
+		// context ends, so it covers the wait and the full hold.
+		holdCtx, cancelHold := detached(ctx, taskLockWait+taskLockHold)
+		defer cancelHold()
+		tx, err := db.BeginTx(holdCtx, nil)
 		if err != nil {
 			return fmt.Errorf("failed to begin task lock: %w", err)
 		}
 		defer func() { _ = tx.Rollback() }()
-		if err := pgdb.New(tx).LockTask(ctx, taskID); err != nil {
+		if err := pgdb.New(tx).LockTask(waitCtx, taskID); err != nil {
 			return fmt.Errorf("failed to lock task: %w", err)
 		}
 		if err := fn(); err != nil {
 			return err
 		}
-		return tx.Commit()
+		if err := tx.Commit(); err != nil {
+			// fn's work is done and written outside this transaction, so it stands;
+			// the lock ends with the transaction either way.
+			log.Warn("failed to release a task lock cleanly", slog.String("error", err.Error()), slog.String("task_id", taskID))
+		}
+		return nil
 	}
 }
 
-// withTaskLock runs fn under the task's lock. Pass a context detached from
-// the request: the lock ends with it.
+// withTaskLock runs fn under the task's lock. The lock's wait and hold are
+// bounded on their own, apart from ctx's cancellation; fn bounds its own steps.
 func (s *Service) withTaskLock(ctx context.Context, taskID string, fn func() error) error {
 	if s.taskLock == nil {
 		return fn() // tests without a database
@@ -153,7 +189,7 @@ func NewService(endpoint, namespace, apiKey string, db *sql.DB, queries pgdb.Que
 		tierLookup:     tierLookup,
 		groups:         groups,
 		admission:      lockedAdmission(db),
-		taskLock:       lockedTasks(db),
+		taskLock:       lockedTasks(db, log),
 		clock:          time.Now,
 	}, nil
 }
@@ -343,10 +379,10 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 	// The task's lock is held until the task is active or released, so a delete,
 	// pause or resume of the pending task waits for the outcome. A task deleted
 	// before the lock was taken gets no schedule.
-	lockCtx, cancelLock := detached(ctx, scheduleSetupTimeout+3*cleanupTimeout)
-	defer cancelLock()
-	err = s.withTaskLock(lockCtx, taskID, func() error {
-		if current, err := s.queries.GetTaskByID(lockCtx, taskID); err != nil || current.Status != string(TaskStatusPending) {
+	err = s.withTaskLock(ctx, taskID, func() error {
+		readCtx, cancelRead := detached(ctx, cleanupTimeout)
+		defer cancelRead()
+		if current, err := s.queries.GetTaskByID(readCtx, taskID); err != nil || current.Status != string(TaskStatusPending) {
 			if err == nil || errors.Is(err, sql.ErrNoRows) {
 				log.Warn("task deleted while it was being created; no schedule created", slog.String("task_id", taskID))
 				return errDeletedDuringCreate
@@ -495,9 +531,9 @@ func (s *Service) DeleteTask(ctx context.Context, userID, taskID string) error {
 	// The steps do not stop when the client disconnects, and run under the
 	// task's lock, so a deletion cannot overlap the task's creation, pause or
 	// resume.
-	opCtx, cancel := detached(ctx, scheduleSetupTimeout)
-	defer cancel()
-	err := s.withTaskLock(opCtx, taskID, func() error {
+	err := s.withTaskLock(ctx, taskID, func() error {
+		opCtx, cancel := detached(ctx, scheduleSetupTimeout)
+		defer cancel()
 		if _, err := getOwnedTask(opCtx, s.queries, userID, taskID); err != nil {
 			if errors.Is(err, ErrTaskNotFound) {
 				log.Warn("task not found or unauthorized",

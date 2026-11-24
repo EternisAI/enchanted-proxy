@@ -165,11 +165,18 @@ func (h *taskHandle) Delete(context.Context) error {
 	return nil
 }
 
-// newTaskWorld has one active recurring task of user-1's, task-1, every five
-// minutes, created two days before now.
+// newTaskWorld has one active recurring task of user-1's, task-1, daily at
+// 09:00, created two days before now.
 func newTaskWorld() *taskWorld {
 	return &taskWorld{rows: map[string]pgdb.Task{"task-1": {TaskID: "task-1", UserID: "user-1", ChatID: "chat-1",
-		Type: string(TaskTypeRecurring), Time: "*/5 * * * *", Status: string(TaskStatusActive), CreatedAt: now.Add(-48 * time.Hour)}}}
+		Type: string(TaskTypeRecurring), Time: "0 9 * * *", Status: string(TaskStatusActive), CreatedAt: now.Add(-48 * time.Hour)}}}
+}
+
+// setTime changes task-1's schedule.
+func (w *taskWorld) setTime(expr string) {
+	row := w.rows["task-1"]
+	row.Time = expr
+	w.rows["task-1"] = row
 }
 
 func (w *taskWorld) service(tier tiers.Tier) *Service {
