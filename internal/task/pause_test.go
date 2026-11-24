@@ -211,12 +211,12 @@ func TestResumeTaskRefusesAOneTimeTaskWhoseTimePassed(t *testing.T) {
 	expectEvents(t, w)
 }
 
-// A failed Unpause may still take effect after a lookup shows the schedule
+// A failed resume may still take effect after a lookup shows the schedule
 // paused, so the row stays active and counted; only a schedule that is gone
 // puts the pause back on the row.
-func TestResumeTaskKeepsTheTaskCountedAfterAFailedUnpause(t *testing.T) {
+func TestResumeTaskKeepsTheTaskCountedAfterAFailedResume(t *testing.T) {
 	w := pausedWorld(PauseInactive)
-	w.unpauseErr = serviceerror.NewUnavailable("down")
+	w.resumeErr = serviceerror.NewUnavailable("down")
 	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); err == nil {
 		t.Fatal("ResumeTask succeeded although the schedule did not resume")
 	}
@@ -226,7 +226,7 @@ func TestResumeTaskKeepsTheTaskCountedAfterAFailedUnpause(t *testing.T) {
 	}
 
 	// The retry resumes the schedule: the row says active, the schedule paused.
-	w.unpauseErr = nil
+	w.resumeErr = nil
 	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
@@ -278,31 +278,44 @@ func TestPauseAndResumeHandlersAnswerWithReadableRefusals(t *testing.T) {
 	}
 }
 
-// A failed Unpause can still apply after a lookup shows the schedule paused.
-// An owner's pause made before then must stay in force once it applies, or the
+// A resume whose call failed can still reach Temporal later, after a lookup
+// shows the schedule paused. An owner's pause made meanwhile must stay in
+// force whether the resume arrives before the pause or after it, or the
 // schedule would run while its row, paused, no longer counts.
-func TestPauseTaskOutlastsAFailedUnpauseThatAppliesLate(t *testing.T) {
-	w := pausedWorld(PauseUser)
-	w.unpauseErr, w.unpauseLate = serviceerror.NewDeadlineExceeded("late"), true
-	s := w.service(tiers.TierFree)
-	if _, err := s.ResumeTask(context.Background(), "user-1", "task-1"); err == nil {
-		t.Fatal("ResumeTask succeeded although Unpause failed")
+func TestPauseTaskOutlastsAFailedResumeThatArrivesLate(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		beforePause bool
+		want        []string
+	}{
+		{"before the pause", true, []string{"@row resumed", "schedule resumed late", "schedule paused:user: test", "row paused:user"}},
+		{"after the pause", false, []string{"@row resumed", "schedule paused:user: test", "row paused:user", "late resume dropped"}},
+	} {
+		w := pausedWorld(PauseUser)
+		w.resumeErr, w.resumeLate = serviceerror.NewDeadlineExceeded("late"), true
+		s := w.service(tiers.TierFree)
+		if _, err := s.ResumeTask(context.Background(), "user-1", "task-1"); err == nil {
+			t.Fatalf("%s: ResumeTask succeeded although its call failed", tc.name)
+		}
+		if tc.beforePause {
+			w.beforePause = w.deliverLateResume
+		}
+		if _, err := s.PauseTask(context.Background(), "user-1", "task-1"); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		w.deliverLateResume()
+		if row := w.rows["task-1"]; !w.paused || row.Status != string(TaskStatusPaused) {
+			t.Fatalf("%s: schedule paused %v, row %s; want both paused", tc.name, w.paused, row.Status)
+		}
+		expectEvents(t, w, tc.want...)
 	}
-	if _, err := s.PauseTask(context.Background(), "user-1", "task-1"); err != nil {
-		t.Fatal(err)
-	}
-	w.applyLateUnpause()
-	if row := w.rows["task-1"]; !w.paused || row.Status != string(TaskStatusPaused) {
-		t.Fatalf("schedule paused %v, row %s; want both paused", w.paused, row.Status)
-	}
-	expectEvents(t, w, "@row resumed", "schedule resumed late", "schedule paused:user: test", "row paused:user")
 }
 
-// After a failed Unpause the schedule may have resumed: while its state is
+// After a failed resume the schedule may have resumed: while its state is
 // unknown the row stays active, so the task keeps counting.
 func TestResumeTaskKeepsTheTaskCountedWhenTheOutcomeIsUnknown(t *testing.T) {
 	w := pausedWorld(PauseUser)
-	w.unpauseErr = serviceerror.NewDeadlineExceeded("late")
+	w.resumeErr = serviceerror.NewDeadlineExceeded("late")
 	w.describeErrs = []error{nil, serviceerror.NewUnavailable("down")} // the check before, then the one after
 	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); err == nil {
 		t.Fatal("ResumeTask succeeded with the schedule's state unknown")
@@ -315,7 +328,7 @@ func TestResumeTaskKeepsTheTaskCountedWhenTheOutcomeIsUnknown(t *testing.T) {
 
 func TestResumeTaskSucceedsWhenTheScheduleResumedDespiteAnError(t *testing.T) {
 	w := pausedWorld(PauseUser)
-	w.unpauseErr, w.unpauseApplies = serviceerror.NewDeadlineExceeded("late"), true
+	w.resumeErr, w.resumeApplies = serviceerror.NewDeadlineExceeded("late"), true
 	got, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1")
 	if err != nil {
 		t.Fatalf("ResumeTask failed although the schedule resumed: %v", err)

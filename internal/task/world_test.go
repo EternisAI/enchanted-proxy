@@ -1,9 +1,11 @@
 package task
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/binary"
 	"log/slog"
 	"slices"
 	"testing"
@@ -12,8 +14,11 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
+	schedulepb "go.temporal.io/api/schedule/v1"
 	"go.temporal.io/api/serviceerror"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"google.golang.org/grpc"
 )
 
 // taskWorld holds one owner's task rows and their schedules, and logs every
@@ -27,16 +32,21 @@ type taskWorld struct {
 	inAdmission bool
 	events      []string
 
-	// Schedule state and scripted outcomes.
-	missing                         bool // no schedule exists
-	paused                          bool
-	note                            string
-	pauseErr, unpauseErr, deleteErr error
-	describeErr                     error   // overrides the state above
-	describeErrs                    []error // one per Describe call, in order, before describeErr
-	unpauseApplies                  bool    // Unpause resumes the schedule even when it returns unpauseErr
-	unpauseLate                     bool    // Unpause returns unpauseErr and resumes the schedule later
-	pendingUnpause                  bool    // a late Unpause that has not applied yet
+	// Schedule state and scripted outcomes. As in Temporal, every change to the
+	// schedule bumps its conflict token, and a resume sent with an out-of-date
+	// token is dropped.
+	missing                        bool // no schedule exists
+	paused                         bool
+	note                           string
+	token                          int64
+	pauseErr, resumeErr, deleteErr error
+	describeErr                    error   // overrides the state above
+	describeErrs                   []error // one per Describe call, in order, before describeErr
+	resumeApplies                  bool    // a resume applies even when it returns resumeErr
+	resumeLate                     bool    // a resume returns resumeErr and reaches the schedule later
+
+	pendingResume *workflowservice.UpdateScheduleRequest // a late resume yet to arrive
+	beforePause   func()                                 // runs when a pause is sent, before it applies
 
 	duringAdmission func() // runs inside the admission lock
 	locked          bool   // inside the task's lock
@@ -114,19 +124,26 @@ type taskHandle struct {
 	id    string
 }
 
-func (h *taskHandle) Describe(context.Context) (*client.ScheduleDescription, error) {
-	w := h.world
+// describeOutcome is the scripted error of the next Describe, if any.
+func (w *taskWorld) describeOutcome() error {
 	if len(w.describeErrs) > 0 {
 		err := w.describeErrs[0]
 		w.describeErrs = w.describeErrs[1:]
-		if err != nil {
-			return nil, err
-		}
-	} else if w.describeErr != nil {
-		return nil, w.describeErr
+		return err
+	}
+	if w.describeErr != nil {
+		return w.describeErr
 	}
 	if w.missing {
-		return nil, serviceerror.NewNotFound("no schedule")
+		return serviceerror.NewNotFound("no schedule")
+	}
+	return nil
+}
+
+func (h *taskHandle) Describe(context.Context) (*client.ScheduleDescription, error) {
+	w := h.world
+	if err := w.describeOutcome(); err != nil {
+		return nil, err
 	}
 	return &client.ScheduleDescription{Schedule: client.Schedule{State: &client.ScheduleState{Paused: w.paused, Note: w.note}}}, nil
 }
@@ -136,32 +153,77 @@ func (h *taskHandle) Pause(_ context.Context, o client.SchedulePauseOptions) err
 	if w.pauseErr != nil {
 		return w.pauseErr
 	}
-	w.applyLateUnpause() // Temporal applies a schedule's changes in order
+	if w.beforePause != nil {
+		w.beforePause()
+	}
 	w.log("schedule paused:" + o.Note)
 	w.paused, w.note = true, o.Note
+	w.token++
 	return nil
 }
 
-func (h *taskHandle) Unpause(context.Context, client.ScheduleUnpauseOptions) error {
-	w := h.world
-	if w.unpauseErr != nil {
-		if w.unpauseApplies {
-			w.paused = false
-		}
-		w.pendingUnpause = w.unpauseLate
-		return w.unpauseErr
+func (w *taskWorld) WorkflowService() workflowservice.WorkflowServiceClient {
+	return taskService{world: w}
+}
+
+// taskService serves the schedule calls a resume makes directly.
+type taskService struct {
+	workflowservice.WorkflowServiceClient
+	world *taskWorld
+}
+
+func (w *taskWorld) tokenBytes() []byte { return binary.BigEndian.AppendUint64(nil, uint64(w.token)) }
+
+func (s taskService) DescribeSchedule(context.Context, *workflowservice.DescribeScheduleRequest, ...grpc.CallOption) (*workflowservice.DescribeScheduleResponse, error) {
+	w := s.world
+	if err := w.describeOutcome(); err != nil {
+		return nil, err
 	}
-	w.log("schedule resumed")
-	w.paused = false
-	return nil
+	return &workflowservice.DescribeScheduleResponse{
+		Schedule:      &schedulepb.Schedule{State: &schedulepb.ScheduleState{Paused: w.paused, Notes: w.note}},
+		ConflictToken: w.tokenBytes(),
+	}, nil
 }
 
-// applyLateUnpause applies an Unpause that returned an error and is still
-// pending.
-func (w *taskWorld) applyLateUnpause() {
-	if w.pendingUnpause {
+func (s taskService) UpdateSchedule(_ context.Context, req *workflowservice.UpdateScheduleRequest, _ ...grpc.CallOption) (*workflowservice.UpdateScheduleResponse, error) {
+	w := s.world
+	if w.resumeErr != nil {
+		if w.resumeApplies {
+			w.applyUpdate(req)
+		}
+		if w.resumeLate {
+			w.pendingResume = req
+		}
+		return nil, w.resumeErr
+	}
+	if w.applyUpdate(req) {
+		w.log("schedule resumed")
+	}
+	return &workflowservice.UpdateScheduleResponse{}, nil
+}
+
+// applyUpdate applies an update unless its conflict token is out of date, and
+// reports whether it did.
+func (w *taskWorld) applyUpdate(req *workflowservice.UpdateScheduleRequest) bool {
+	if req.ConflictToken != nil && !bytes.Equal(req.ConflictToken, w.tokenBytes()) {
+		return false
+	}
+	w.paused, w.note = req.Schedule.GetState().GetPaused(), req.Schedule.GetState().GetNotes()
+	w.token++
+	return true
+}
+
+// deliverLateResume lets a resume whose call failed reach the schedule now.
+func (w *taskWorld) deliverLateResume() {
+	req := w.pendingResume
+	if req == nil {
+		return
+	}
+	w.pendingResume = nil
+	if w.applyUpdate(req) {
 		w.log("schedule resumed late")
-		w.paused, w.pendingUnpause = false, false
+	} else {
+		w.log("late resume dropped")
 	}
 }
 
