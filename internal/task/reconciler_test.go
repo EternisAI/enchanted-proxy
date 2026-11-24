@@ -243,7 +243,10 @@ func (h reconHandle) Describe(context.Context) (*client.ScheduleDescription, err
 	if !ok {
 		return nil, serviceerror.NewNotFound("no schedule")
 	}
-	return &client.ScheduleDescription{Schedule: client.Schedule{State: &client.ScheduleState{Paused: sch.paused, Note: sch.note}}}, nil
+	return &client.ScheduleDescription{Schedule: client.Schedule{
+		Action: &client.ScheduleWorkflowAction{Workflow: sch.workflow},
+		State:  &client.ScheduleState{Paused: sch.paused, Note: sch.note},
+	}}, nil
 }
 
 func (h reconHandle) Pause(_ context.Context, o client.SchedulePauseOptions) error {
@@ -813,4 +816,17 @@ func TestReconcilerHoldsAtOnceWithNoGrace(t *testing.T) {
 	r.cfg.PlanEndedGrace = 0
 	r.sweep(context.Background())
 	expectChanges(t, w, "schedule frequent paused:plan_ended", "row frequent paused:plan_ended")
+}
+
+// A schedule without a row is deleted only while it runs the task workflow
+// by its own description, not by a listing that lags behind.
+func TestReconcilerDeletesOnlyTaskSchedules(t *testing.T) {
+	w := newReconWorld()
+	w.schedules["orphan"] = &fakeSchedule{workflow: "OtherWorkflow"}
+	w.stale = map[string]fakeSchedule{"orphan": {workflow: scheduledTaskWorkflow}}
+	rep := w.sweep(t, ReconcilerEnforce)
+	expectChanges(t, w)
+	if len(rep.Skipped["delete_schedule"]) != 1 {
+		t.Fatalf("skipped %v, want the orphan's deletion skipped", rep.Skipped)
+	}
 }

@@ -762,6 +762,18 @@ func (r *Reconciler) apply(ctx context.Context, a action, enforce bool) (bool, e
 		if _, err := q.GetTaskByID(ctx, a.taskID); !errors.Is(err, sql.ErrNoRows) {
 			return false, err // the row exists after all, or the read failed
 		}
+		// The listing may lag behind: the schedule must still run the task
+		// workflow, read from the schedule itself.
+		desc, err := handle().Describe(ctx)
+		if isNotFound(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if action, ok := desc.Schedule.Action.(*client.ScheduleWorkflowAction); !ok || action.Workflow != scheduledTaskWorkflow {
+			return false, nil
+		}
 		if !enforce {
 			return true, nil
 		}

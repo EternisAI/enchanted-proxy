@@ -36,8 +36,8 @@ form; a note with no known reason counts as `admin`, which owners cannot lift.
 
 Every change is checked against Temporal or the database right before it is made: a
 row is deleted only when Temporal answers that its schedule does not exist, a schedule
-only when its row is still absent, and a schedule paused since the listing keeps its
-pause and note. Each check and change holds the task's lock, the same Postgres
+only when its row is still absent and the schedule itself still runs the task workflow,
+and a schedule paused since the listing keeps its pause and note. Each check and change holds the task's lock, the same Postgres
 advisory lock that creating, pausing, resuming and deleting a task hold, so they cannot
 interleave with an owner's change to the same task.
 
