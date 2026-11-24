@@ -32,6 +32,7 @@ type reconWorld struct {
 
 	rows      map[string]pgdb.Task
 	creations map[string]bool
+	groups    map[string][]string // quota groups; an account not listed is alone
 	schedules map[string]*fakeSchedule
 	// lateRows are rows that appear after the snapshot was taken, as a task
 	// created during the sweep would.
@@ -363,6 +364,9 @@ func (w *reconWorld) GetUserTierConfig(_ context.Context, userID string) (tiers.
 }
 
 func (w *reconWorld) UserIDs(_ context.Context, userID string) ([]string, error) {
+	if members, ok := w.groups[userID]; ok {
+		return members, nil
+	}
 	return []string{userID}, nil
 }
 
@@ -837,6 +841,39 @@ func TestReconcilerHoldsAtOnceWithNoGrace(t *testing.T) {
 	r.cfg.PlanEndedGrace = 0
 	r.sweep(context.Background())
 	expectChanges(t, w, "schedule frequent paused:plan_ended", "row frequent paused:plan_ended")
+}
+
+// A quota group is walked against the best plan any member holds: a purchase
+// that moved to another account keeps covering the tasks of the account it
+// left, within the plan's limits for the whole group.
+func TestReconcilerWalksAGroupAgainstItsBestPlan(t *testing.T) {
+	w := newReconWorld()
+	w.owner("holder", oneDay, tiers.TierPro)
+	w.owner("former", oneDay, tiers.TierFree)
+	w.owner("alone", oneDay, tiers.TierFree)
+	w.groups = map[string][]string{"holder": {"former", "holder"}, "former": {"former", "holder"}}
+	// Every 15 minutes: over Free's limits, within Pro's.
+	w.task("covered", "former", "recurring", "*/15 * * * *", TaskStatusActive, 60*oneDay, &fakeSchedule{})
+	w.task("uncovered", "alone", "recurring", "*/15 * * * *", TaskStatusActive, 60*oneDay, &fakeSchedule{})
+	r := w.reconciler(ReconcilerEnforce, false)
+	r.cfg.PlanEndedGrace = 0
+	r.sweep(context.Background())
+	expectChanges(t, w, "schedule uncovered paused:plan_ended", "row uncovered paused:plan_ended")
+}
+
+// A hold on a group member's task lifts once the group's best plan has room,
+// even when the member's own plan does not.
+func TestReconcilerLiftsAHoldUnderTheGroupsBestPlan(t *testing.T) {
+	w := newReconWorld()
+	w.owner("holder", oneDay, tiers.TierPro)
+	w.owner("former", oneDay, tiers.TierFree)
+	w.groups = map[string][]string{"holder": {"former", "holder"}, "former": {"former", "holder"}}
+	w.task("held", "former", "recurring", "*/15 * * * *", TaskStatusPaused, 20*oneDay, &fakeSchedule{paused: true, note: "plan_ended: over the limits"})
+	w.setRow("held", func(r *pgdb.Task) { r.PauseReason = reasonPtr(PausePlanEnded) })
+	w.sweep(t, ReconcilerEnforce)
+	if w.rows["held"].Status != string(TaskStatusActive) || w.schedules["held"].paused {
+		t.Fatalf("row %s, schedule paused %v; want the hold lifted", w.rows["held"].Status, w.schedules["held"].paused)
+	}
 }
 
 // A schedule without a row is deleted only while it runs the task workflow

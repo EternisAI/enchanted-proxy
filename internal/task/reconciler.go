@@ -601,12 +601,15 @@ func oneTimeRunPassed(row pgdb.Task, now time.Time) bool {
 }
 
 // planHolds applies the plan_ended rule to each quota group: its running and
-// held recurring tasks are walked oldest first against the plan's limits. A
-// task is over the plan when it is past the plan's task count, runs more often
-// than the plan's floor, or would take the group past the plan's runs per day.
+// held recurring tasks are walked oldest first against the best plan any
+// member holds, as the group's usage is shared and that member's plan covers
+// it. A task is over the plan when it is past the plan's task count, runs more
+// often than the plan's floor, or would take the group past the plan's runs
+// per day.
 func (r *Reconciler) planHolds(ctx context.Context, snap snapshot, byOwner map[string][]holdCandidate, rep *Report) []action {
 	type group struct {
-		owner      string // whose plan applies
+		owner      string // the first task owner in the group, for messages
+		members    []string
 		candidates []holdCandidate
 	}
 	groups := map[string]*group{}
@@ -627,7 +630,7 @@ func (r *Reconciler) planHolds(ctx context.Context, snap snapshot, byOwner map[s
 		key := strings.Join(members, ",")
 		g, ok := groups[key]
 		if !ok {
-			g = &group{owner: owner}
+			g = &group{owner: owner, members: members}
 			groups[key] = g
 			keys = append(keys, key)
 		}
@@ -637,9 +640,9 @@ func (r *Reconciler) planHolds(ctx context.Context, snap snapshot, byOwner map[s
 	var actions []action
 	for _, key := range keys {
 		g := groups[key]
-		tier, _, err := r.s.tierLookup.GetUserTierConfig(ctx, g.owner)
+		tier, err := r.bestPlan(ctx, g.members)
 		if err != nil {
-			rep.fail("looking up the plan of %s: %v", g.owner, err)
+			rep.fail("looking up the plans in the quota group of %s: %v", g.owner, err)
 			continue
 		}
 		slices.SortFunc(g.candidates, func(a, b holdCandidate) int {
@@ -651,6 +654,22 @@ func (r *Reconciler) planHolds(ctx context.Context, snap snapshot, byOwner map[s
 		actions = append(actions, r.walkGroup(snap.now, tier, g.candidates)...)
 	}
 	return actions
+}
+
+// bestPlan returns the highest plan among the members. Any failed lookup fails
+// it: a plan read as lower than it is would hold tasks that fit.
+func (r *Reconciler) bestPlan(ctx context.Context, members []string) (tiers.Config, error) {
+	var best tiers.Config
+	for i, member := range members {
+		tier, _, err := r.s.tierLookup.GetUserTierConfig(ctx, member)
+		if err != nil {
+			return tiers.Config{}, err
+		}
+		if i == 0 || tiers.Rank(tiers.Tier(tier.Name)) > tiers.Rank(tiers.Tier(best.Name)) {
+			best = tier
+		}
+	}
+	return best, nil
 }
 
 func (r *Reconciler) walkGroup(now time.Time, tier tiers.Config, candidates []holdCandidate) []action {
@@ -903,8 +922,13 @@ func (r *Reconciler) apply(ctx context.Context, a action, enforce bool) (bool, e
 		// The row is set active as an owner's resume sets it: under the quota
 		// group's admission lock, after the plan's checks against the group's
 		// open tasks. A task created since the sweep's walk may have taken the
-		// room the walk found; then the hold stays.
-		tier, _, err := r.s.tierLookup.GetUserTierConfig(ctx, a.row.UserID)
+		// room the walk found; then the hold stays. The plan is the group's best,
+		// as in the walk.
+		members, err := r.s.groups.UserIDs(ctx, a.row.UserID)
+		if err != nil {
+			return false, fmt.Errorf("failed to look up quota group: %w", err)
+		}
+		tier, err := r.bestPlan(ctx, members)
 		if err != nil {
 			return false, fmt.Errorf("failed to look up plan: %w", err)
 		}
