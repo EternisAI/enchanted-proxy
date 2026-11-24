@@ -94,7 +94,25 @@ func TestResumeTaskRefusesWhenTheScheduleWasPausedByAnAdmin(t *testing.T) {
 	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); limitReason(err) != "paused_by_admin" {
 		t.Fatalf("err = %v, want refused as an admin pause", err)
 	}
-	expectEvents(t, w)
+	// The row takes the admin pause; the schedule stays paused.
+	expectEvents(t, w, "@row resumed", "row paused:admin")
+	if row := w.rows["task-1"]; row.Status != string(TaskStatusPaused) || *row.PauseReason != string(PauseAdmin) || !w.paused {
+		t.Fatalf("row %s/%s, schedule paused %v; want both paused by the admin", row.Status, *row.PauseReason, w.paused)
+	}
+}
+
+// An admin pause that lands while the row is being resumed is still seen: the
+// schedule is read right before it is resumed.
+func TestResumeTaskRefusesAnAdminPauseMadeDuringTheResume(t *testing.T) {
+	w := pausedWorld(PauseUser)
+	w.duringAdmission = func() { w.note = "admin: incident 2026-11" }
+	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); limitReason(err) != "paused_by_admin" {
+		t.Fatalf("err = %v, want refused as an admin pause", err)
+	}
+	expectEvents(t, w, "@row resumed", "row paused:admin")
+	if !w.paused || w.note != "admin: incident 2026-11" {
+		t.Fatalf("schedule paused %v with note %q; want the admin pause kept", w.paused, w.note)
+	}
 }
 
 // Resuming does not apply the creation limits again: this every-5-minutes task
@@ -134,7 +152,7 @@ func TestResumeTaskResumesAScheduleWhoseRowStayedActive(t *testing.T) {
 	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); limitReason(err) != "paused_by_admin" {
 		t.Fatalf("err = %v, want refused as an admin pause", err)
 	}
-	expectEvents(t, w)
+	expectEvents(t, w, "row paused:admin") // the row follows the schedule
 
 	w = newTaskWorld() // running: nothing to do
 	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); err != nil {
@@ -221,5 +239,53 @@ func TestPauseAndResumeHandlersAnswerWithReadableRefusals(t *testing.T) {
 		if rec.Code != tc.code || !strings.Contains(rec.Body.String(), tc.body) {
 			t.Errorf("%s: %d %s, want %d with %q", tc.path, rec.Code, rec.Body.String(), tc.code, tc.body)
 		}
+	}
+}
+
+// After a failed Unpause the schedule may have resumed: while its state is
+// unknown the row stays active, so the task keeps counting.
+func TestResumeTaskKeepsTheTaskCountedWhenTheOutcomeIsUnknown(t *testing.T) {
+	w := pausedWorld(PauseUser)
+	w.unpauseErr = serviceerror.NewDeadlineExceeded("late")
+	w.describeErrs = []error{nil, serviceerror.NewUnavailable("down")} // the check before, then the one after
+	if _, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1"); err == nil {
+		t.Fatal("ResumeTask succeeded with the schedule's state unknown")
+	}
+	expectEvents(t, w, "@row resumed")
+	if row := w.rows["task-1"]; row.Status != string(TaskStatusActive) {
+		t.Fatalf("row %s, want active and counted", row.Status)
+	}
+}
+
+func TestResumeTaskSucceedsWhenTheScheduleResumedDespiteAnError(t *testing.T) {
+	w := pausedWorld(PauseUser)
+	w.unpauseErr, w.unpauseApplies = serviceerror.NewDeadlineExceeded("late"), true
+	got, err := w.service(tiers.TierFree).ResumeTask(context.Background(), "user-1", "task-1")
+	if err != nil {
+		t.Fatalf("ResumeTask failed although the schedule resumed: %v", err)
+	}
+	expectEvents(t, w, "@row resumed")
+	if got.Status != string(TaskStatusActive) || w.paused {
+		t.Fatalf("task %+v, schedule paused %v; want both running", got, w.paused)
+	}
+}
+
+// Pause, resume and delete read and write a task only under its lock, so they
+// cannot interleave with each other or with the task's creation.
+func TestTaskChangesRunUnderTheTaskLock(t *testing.T) {
+	w := newTaskWorld()
+	s := w.service(tiers.TierFree)
+	ctx := context.Background()
+	if _, err := s.PauseTask(ctx, "user-1", "task-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ResumeTask(ctx, "user-1", "task-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteTask(ctx, "user-1", "task-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.events) == 0 || len(w.outsideLock) != 0 {
+		t.Fatalf("events %q; outside the lock %q", w.events, w.outsideLock)
 	}
 }

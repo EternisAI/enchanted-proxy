@@ -32,10 +32,19 @@ type taskWorld struct {
 	paused                          bool
 	note                            string
 	pauseErr, unpauseErr, deleteErr error
-	describeErr                     error // overrides the state above
+	describeErr                     error   // overrides the state above
+	describeErrs                    []error // one per Describe call, in order, before describeErr
+	unpauseApplies                  bool    // Unpause resumes the schedule even when it returns unpauseErr
+
+	duringAdmission func() // runs inside the admission lock
+	locked          bool   // inside the task's lock
+	outsideLock     []string
 }
 
 func (w *taskWorld) log(event string) {
+	if !w.locked {
+		w.outsideLock = append(w.outsideLock, event)
+	}
 	if w.inAdmission {
 		event = "@" + event
 	}
@@ -43,6 +52,9 @@ func (w *taskWorld) log(event string) {
 }
 
 func (w *taskWorld) GetTaskForUser(_ context.Context, arg pgdb.GetTaskForUserParams) (pgdb.Task, error) {
+	if !w.locked {
+		w.outsideLock = append(w.outsideLock, "read row")
+	}
 	row, ok := w.rows[arg.TaskID]
 	if !ok || row.UserID != arg.UserID {
 		return pgdb.Task{}, sql.ErrNoRows
@@ -102,7 +114,13 @@ type taskHandle struct {
 
 func (h *taskHandle) Describe(context.Context) (*client.ScheduleDescription, error) {
 	w := h.world
-	if w.describeErr != nil {
+	if len(w.describeErrs) > 0 {
+		err := w.describeErrs[0]
+		w.describeErrs = w.describeErrs[1:]
+		if err != nil {
+			return nil, err
+		}
+	} else if w.describeErr != nil {
 		return nil, w.describeErr
 	}
 	if w.missing {
@@ -124,6 +142,9 @@ func (h *taskHandle) Pause(_ context.Context, o client.SchedulePauseOptions) err
 func (h *taskHandle) Unpause(context.Context, client.ScheduleUnpauseOptions) error {
 	w := h.world
 	if w.unpauseErr != nil {
+		if w.unpauseApplies {
+			w.paused = false
+		}
 		return w.unpauseErr
 	}
 	w.log("schedule resumed")
@@ -162,7 +183,15 @@ func (w *taskWorld) service(tier tiers.Tier) *Service {
 		admission: func(_ context.Context, _ []string, fn func(pgdb.Querier) error) error {
 			w.inAdmission = true
 			defer func() { w.inAdmission = false }()
+			if w.duringAdmission != nil {
+				w.duringAdmission()
+			}
 			return fn(w)
+		},
+		taskLock: func(_ context.Context, _ string, fn func() error) error {
+			w.locked = true
+			defer func() { w.locked = false }()
+			return fn()
 		},
 	}
 }

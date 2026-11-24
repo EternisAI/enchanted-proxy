@@ -106,6 +106,9 @@ type Querier interface {
 	// One lock covers the whole service: starts are rare, and the service-wide
 	// daily ceiling counts every account's runs.
 	LockDeepResearchAdmission(ctx context.Context) error
+	// Holds one task's lock until the transaction ends, so creating, pausing,
+	// resuming and deleting the same task cannot interleave.
+	LockTask(ctx context.Context, taskID string) error
 	// Holds an account's task admission lock until the transaction ends, so the
 	// limit checks and the new task's rows cannot interleave with another
 	// admission for the same account.

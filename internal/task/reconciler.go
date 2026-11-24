@@ -542,13 +542,6 @@ func oneTimeRunPassed(row pgdb.Task, now time.Time) bool {
 	return !next.IsZero() && !next.After(now)
 }
 
-func rowReason(row pgdb.Task) PauseReason {
-	if row.PauseReason == nil {
-		return ""
-	}
-	return PauseReason(*row.PauseReason)
-}
-
 // planHolds applies the plan_ended rule to each quota group: its running and
 // held recurring tasks are walked oldest first against the plan's limits. A
 // task is over the plan when it is past the plan's task count, runs more often

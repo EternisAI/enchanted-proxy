@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -118,6 +119,9 @@ type limitQuerier struct {
 	deleteCtxErr     error // the context's state when the task row was deleted
 	statusUpdates    []string
 	createdAt        time.Time // the inserted row's created_at; the test clock's now when zero
+	// deletedMeanwhile: the owner deleted the pending task after its admission,
+	// before its schedule was created.
+	deletedMeanwhile bool
 }
 
 func (q *limitQuerier) write(name string) {
@@ -150,6 +154,13 @@ func (q *limitQuerier) DeleteTask(ctx context.Context, arg pgdb.DeleteTaskParams
 	q.deleteCtxErr = ctx.Err()
 	q.deletedTasks = append(q.deletedTasks, arg.TaskID)
 	return driver.RowsAffected(1), nil
+}
+
+func (q *limitQuerier) GetTaskByID(_ context.Context, taskID string) (pgdb.Task, error) {
+	if q.deletedMeanwhile || slices.Contains(q.deletedTasks, taskID) {
+		return pgdb.Task{}, sql.ErrNoRows
+	}
+	return pgdb.Task{TaskID: taskID, Status: string(TaskStatusPending)}, nil
 }
 
 func (q *limitQuerier) DeleteTaskCreation(_ context.Context, taskID string) error {

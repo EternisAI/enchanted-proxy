@@ -43,12 +43,49 @@ func detached(ctx context.Context, timeout time.Duration) (context.Context, cont
 	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
 }
 
+// taskLocker runs fn while holding one task's lock, so that creating, pausing,
+// resuming and deleting the same task do not interleave on any server
+// instance.
+type taskLocker func(ctx context.Context, taskID string, fn func() error) error
+
+// lockedTasks is the taskLocker backed by a Postgres advisory lock, held in a
+// transaction while fn runs. fn's own writes are not in that transaction.
+func lockedTasks(db *sql.DB) taskLocker {
+	return func(ctx context.Context, taskID string, fn func() error) error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to begin task lock: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		if err := pgdb.New(tx).LockTask(ctx, taskID); err != nil {
+			return fmt.Errorf("failed to lock task: %w", err)
+		}
+		if err := fn(); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+}
+
+// withTaskLock runs fn under the task's lock. Pass a context detached from
+// the request: the lock ends with it.
+func (s *Service) withTaskLock(ctx context.Context, taskID string, fn func() error) error {
+	if s.taskLock == nil {
+		return fn() // tests without a database
+	}
+	return s.taskLock(ctx, taskID, fn)
+}
+
 // ErrInvalidChatID is returned when a task's chat ID is malformed.
 var ErrInvalidChatID = errors.New("invalid chat_id")
 
 // ErrTaskNotFound is returned when the task does not exist or belongs to
 // another account.
 var ErrTaskNotFound = errors.New("task not found or unauthorized")
+
+// errDeletedDuringCreate is returned when the owner deleted a task while it
+// was being created, before its schedule was.
+var errDeletedDuringCreate = errors.New("the task was deleted while it was being created")
 
 // Service handles task scheduling operations.
 type Service struct {
@@ -59,6 +96,7 @@ type Service struct {
 	tierLookup     TierLookup
 	groups         GroupLookup
 	admission      admissionTx
+	taskLock       taskLocker
 	clock          func() time.Time // time.Now outside tests
 }
 
@@ -115,6 +153,7 @@ func NewService(endpoint, namespace, apiKey string, db *sql.DB, queries pgdb.Que
 		tierLookup:     tierLookup,
 		groups:         groups,
 		admission:      lockedAdmission(db),
+		taskLock:       lockedTasks(db),
 		clock:          time.Now,
 	}, nil
 }
@@ -301,68 +340,86 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 	log.Info("creating temporal schedule",
 		slog.String("schedule_id", taskID),
 		slog.String("task_queue", "task-queue"))
-	schedules := s.temporalClient.ScheduleClient()
-	setupCtx, cancelSetup := detached(ctx, scheduleSetupTimeout)
-	defer cancelSetup()
-	scheduleHandle, err := schedules.Create(setupCtx, scheduleOptions)
-	if err != nil {
-		log.Error("failed to create temporal schedule",
-			slog.String("error", err.Error()),
-			slog.String("task_id", taskID))
-		// The schedule may have been created even so, or may still be. Its task
-		// is released only when Temporal refused the request outright and holds
-		// no schedule. Otherwise it stays pending and counted; the owner can
-		// delete it, and the reconciler removes pending tasks that have no
-		// schedule.
-		exists, checkErr := s.scheduleExists(ctx, taskID)
-		switch {
-		case checkErr != nil:
-			log.Error("could not confirm whether the schedule exists; the task stays counted",
-				slog.String("error", checkErr.Error()),
-				slog.String("task_id", taskID))
-			return nil, fmt.Errorf("failed to create schedule: %w", err)
-		case !exists && rejectedOutright(err):
-			log.Info("cleaning up database entry due to schedule creation failure")
-			s.releaseTask(ctx, taskID, userID)
-			return nil, fmt.Errorf("failed to create schedule: %w", err)
-		case !exists:
-			log.Warn("schedule not found, but the request may still be processed; the task stays counted",
-				slog.String("task_id", taskID))
-			return nil, fmt.Errorf("failed to create schedule: %w", err)
+	// The task's lock is held until the task is active or released, so a delete,
+	// pause or resume of the pending task waits for the outcome. A task deleted
+	// before the lock was taken gets no schedule.
+	lockCtx, cancelLock := detached(ctx, scheduleSetupTimeout+3*cleanupTimeout)
+	defer cancelLock()
+	err = s.withTaskLock(lockCtx, taskID, func() error {
+		if current, err := s.queries.GetTaskByID(lockCtx, taskID); err != nil || current.Status != string(TaskStatusPending) {
+			if err == nil || errors.Is(err, sql.ErrNoRows) {
+				log.Warn("task deleted while it was being created; no schedule created", slog.String("task_id", taskID))
+				return errDeletedDuringCreate
+			}
+			return fmt.Errorf("failed to read task: %w", err)
 		}
-		log.Warn("the schedule was created despite the error; continuing", slog.String("task_id", taskID))
-		scheduleHandle = schedules.GetHandle(ctx, taskID)
-	}
+		schedules := s.temporalClient.ScheduleClient()
+		setupCtx, cancelSetup := detached(ctx, scheduleSetupTimeout)
+		defer cancelSetup()
+		scheduleHandle, err := schedules.Create(setupCtx, scheduleOptions)
+		if err != nil {
+			log.Error("failed to create temporal schedule",
+				slog.String("error", err.Error()),
+				slog.String("task_id", taskID))
+			// The schedule may have been created even so, or may still be. Its task
+			// is released only when Temporal refused the request outright and holds
+			// no schedule. Otherwise it stays pending and counted; the owner can
+			// delete it, and the reconciler removes pending tasks that have no
+			// schedule.
+			exists, checkErr := s.scheduleExists(ctx, taskID)
+			switch {
+			case checkErr != nil:
+				log.Error("could not confirm whether the schedule exists; the task stays counted",
+					slog.String("error", checkErr.Error()),
+					slog.String("task_id", taskID))
+				return fmt.Errorf("failed to create schedule: %w", err)
+			case !exists && rejectedOutright(err):
+				log.Info("cleaning up database entry due to schedule creation failure")
+				s.releaseTask(ctx, taskID, userID)
+				return fmt.Errorf("failed to create schedule: %w", err)
+			case !exists:
+				log.Warn("schedule not found, but the request may still be processed; the task stays counted",
+					slog.String("task_id", taskID))
+				return fmt.Errorf("failed to create schedule: %w", err)
+			}
+			log.Warn("the schedule was created despite the error; continuing", slog.String("task_id", taskID))
+			scheduleHandle = schedules.GetHandle(ctx, taskID)
+		}
 
-	log.Info("temporal schedule created successfully",
-		slog.String("task_id", taskID),
-		slog.String("task_type", req.Type),
-		slog.String("schedule_id", scheduleHandle.GetID()))
+		log.Info("temporal schedule created successfully",
+			slog.String("task_id", taskID),
+			slog.String("task_type", req.Type),
+			slog.String("schedule_id", scheduleHandle.GetID()))
 
-	// Update task status to active
-	log.Info("updating task status to active")
-	activateCtx, cancelActivate := detached(ctx, cleanupTimeout)
-	defer cancelActivate()
-	err = s.queries.UpdateTaskStatus(activateCtx, pgdb.UpdateTaskStatusParams{
-		TaskID: taskID,
-		Status: string(TaskStatusActive),
+		// Update task status to active
+		log.Info("updating task status to active")
+		activateCtx, cancelActivate := detached(ctx, cleanupTimeout)
+		defer cancelActivate()
+		err = s.queries.UpdateTaskStatus(activateCtx, pgdb.UpdateTaskStatusParams{
+			TaskID: taskID,
+			Status: string(TaskStatusActive),
+		})
+		if err != nil {
+			log.Error("failed to update task status to active",
+				slog.String("error", err.Error()),
+				slog.String("task_id", taskID))
+			// Status update failed - try to clean up the schedule
+			deleteCtx, cancelDelete := detached(ctx, cleanupTimeout)
+			defer cancelDelete()
+			if delErr := scheduleHandle.Delete(deleteCtx); delErr != nil {
+				// The schedule may still run, so its rows stay and keep it counted.
+				log.Error("failed to delete schedule during cleanup",
+					slog.String("error", delErr.Error()),
+					slog.String("task_id", taskID))
+				return fmt.Errorf("failed to update task status: %w", err)
+			}
+			s.releaseTask(ctx, taskID, userID)
+			return fmt.Errorf("failed to update task status: %w", err)
+		}
+		return nil
 	})
 	if err != nil {
-		log.Error("failed to update task status to active",
-			slog.String("error", err.Error()),
-			slog.String("task_id", taskID))
-		// Status update failed - try to clean up the schedule
-		deleteCtx, cancelDelete := detached(ctx, cleanupTimeout)
-		defer cancelDelete()
-		if delErr := scheduleHandle.Delete(deleteCtx); delErr != nil {
-			// The schedule may still run, so its rows stay and keep it counted.
-			log.Error("failed to delete schedule during cleanup",
-				slog.String("error", delErr.Error()),
-				slog.String("task_id", taskID))
-			return nil, fmt.Errorf("failed to update task status: %w", err)
-		}
-		s.releaseTask(ctx, taskID, userID)
-		return nil, fmt.Errorf("failed to update task status: %w", err)
+		return nil, err
 	}
 
 	task := &Task{
@@ -435,32 +492,37 @@ func (s *Service) deleteSchedule(ctx context.Context, scheduleID string) error {
 func (s *Service) DeleteTask(ctx context.Context, userID, taskID string) error {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
 
-	if _, err := getOwnedTask(ctx, s.queries, userID, taskID); err != nil {
-		if errors.Is(err, ErrTaskNotFound) {
-			log.Warn("task not found or unauthorized",
-				slog.String("task_id", taskID),
-				slog.String("user_id", userID))
-		}
-		return err
-	}
-
-	// The steps do not stop when the client disconnects.
+	// The steps do not stop when the client disconnects, and run under the
+	// task's lock, so a deletion cannot overlap the task's creation, pause or
+	// resume.
 	opCtx, cancel := detached(ctx, scheduleSetupTimeout)
 	defer cancel()
-	if err := s.deleteSchedule(opCtx, taskID); err != nil {
-		log.Error("failed to delete temporal schedule; the task is kept",
-			slog.String("error", err.Error()),
-			slog.String("task_id", taskID))
-		return fmt.Errorf("failed to delete the task's schedule: %w", err)
-	}
-
-	// A row already gone was deleted by a concurrent request; the outcome is the same.
-	if _, err := s.queries.DeleteTask(opCtx, pgdb.DeleteTaskParams{TaskID: taskID, UserID: userID}); err != nil {
-		log.Error("failed to delete task from database after its schedule",
-			slog.String("error", err.Error()),
-			slog.String("task_id", taskID),
-			slog.String("user_id", userID))
-		return fmt.Errorf("failed to delete task: %w", err)
+	err := s.withTaskLock(opCtx, taskID, func() error {
+		if _, err := getOwnedTask(opCtx, s.queries, userID, taskID); err != nil {
+			if errors.Is(err, ErrTaskNotFound) {
+				log.Warn("task not found or unauthorized",
+					slog.String("task_id", taskID),
+					slog.String("user_id", userID))
+			}
+			return err
+		}
+		if err := s.deleteSchedule(opCtx, taskID); err != nil {
+			log.Error("failed to delete temporal schedule; the task is kept",
+				slog.String("error", err.Error()),
+				slog.String("task_id", taskID))
+			return fmt.Errorf("failed to delete the task's schedule: %w", err)
+		}
+		if _, err := s.queries.DeleteTask(opCtx, pgdb.DeleteTaskParams{TaskID: taskID, UserID: userID}); err != nil {
+			log.Error("failed to delete task from database after its schedule",
+				slog.String("error", err.Error()),
+				slog.String("task_id", taskID),
+				slog.String("user_id", userID))
+			return fmt.Errorf("failed to delete task: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	log.Info("task deleted successfully",

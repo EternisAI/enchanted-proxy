@@ -171,3 +171,16 @@ func TestCreateTaskIgnoresAClientThatLeaves(t *testing.T) {
 		t.Errorf("cleanup context error %v, released %v; want the task released", q.deleteCtxErr, q.releasedCreation)
 	}
 }
+
+// A task the owner deleted after its admission, before its schedule was
+// created, gets no schedule: the row is read again under the task's lock.
+func TestCreateTaskCreatesNoScheduleForATaskDeletedMeanwhile(t *testing.T) {
+	q := &limitQuerier{deletedMeanwhile: true}
+	schedules := &scriptedSchedules{}
+	if _, err := scriptedService(q, schedules).CreateTask(context.Background(), "user-1", request("recurring", "0 9 * * *")); err == nil {
+		t.Fatal("CreateTask succeeded for a task deleted while it was being created")
+	}
+	if schedules.options.ID != "" {
+		t.Fatalf("created schedule %q for a deleted task", schedules.options.ID)
+	}
+}
