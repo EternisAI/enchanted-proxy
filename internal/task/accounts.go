@@ -15,6 +15,8 @@ type Account struct {
 	// LastActive is the latest of the account's creation, last sign-in and last
 	// token refresh. Zero when Firebase reported none of them.
 	LastActive time.Time
+	// Created is when the account was created. Zero when Firebase did not say.
+	Created time.Time
 }
 
 // AccountLookup looks up task owners. An ID with no entry in the result could
@@ -57,7 +59,7 @@ func (f firebaseAccounts) LookupAccounts(ctx context.Context, userIDs []string) 
 			if u == nil || u.UserInfo == nil {
 				continue
 			}
-			accounts[u.UID] = Account{Exists: true, Disabled: u.Disabled, LastActive: lastActive(u.UserMetadata)}
+			accounts[u.UID] = Account{Exists: true, Disabled: u.Disabled, LastActive: lastActive(u.UserMetadata), Created: created(u.UserMetadata)}
 		}
 		for _, id := range result.NotFound {
 			if uid, ok := id.(fbauth.UIDIdentifier); ok {
@@ -83,6 +85,13 @@ func (f firebaseAccounts) LookupAccounts(ctx context.Context, userIDs []string) 
 		return nil, err
 	}
 	return accounts, nil
+}
+
+func created(m *fbauth.UserMetadata) time.Time {
+	if m == nil || m.CreationTimestamp <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(m.CreationTimestamp).UTC()
 }
 
 func lastActive(m *fbauth.UserMetadata) time.Time {

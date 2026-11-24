@@ -22,13 +22,15 @@ Firebase Auth. It then:
 | Schedule without a row | Schedule deleted |
 | Owner deleted or disabled | Schedule and row paused, reason `account_missing` |
 | Owner of a recurring task inactive for `TASK_INACTIVE_DAYS` | Schedule and row paused, reason `inactive` |
-| Recurring task over the owner's current plan | First seen time recorded; after `TASK_PLAN_ENDED_GRACE_HOURS`, paused with reason `plan_ended` (at once when the grace is 0) |
+| Recurring task over its quota group's current plan | First seen time recorded; after `TASK_PLAN_ENDED_GRACE_HOURS`, paused with reason `plan_ended` (at once when the grace is 0) |
 | `plan_ended` task that fits the plan again | Row set `active`, then the schedule resumed. The row is set as an owner's resume sets it: under the quota group's admission lock, if the plan still has room. This is the only pause the reconciler lifts. |
 
-Inactive means no sign-in and no token refresh. An owner's tasks are walked oldest
-first against the plan: a task is over when it is past the plan's number of recurring
-tasks, runs more often than the plan's shortest interval, or takes the owner past the
-plan's runs per day.
+Inactive means no sign-in and no token refresh. The tasks of a quota group (the
+accounts a purchase has been attached to; an account alone otherwise) are walked
+oldest first against the best plan any member holds: a task is over when it is past
+the plan's number of recurring tasks, runs more often than the plan's shortest
+interval, or takes the group past the plan's runs per day. Lifting a hold uses the
+same plan.
 
 Pause notes start with the reason and a colon (`inactive: owner inactive for 90 days
 (task reconciler)`). Pauses made by hand with the Temporal CLI should follow the same

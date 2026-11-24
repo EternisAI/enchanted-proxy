@@ -16,8 +16,15 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
 )
 
+// GroupLookup returns the accounts whose usage counts toward an account's
+// limits: its quota group.
+type GroupLookup interface {
+	UserIDs(ctx context.Context, userID string) ([]string, error)
+}
+
 type Service struct {
 	queries              pgdb.Querier
+	groups               GroupLookup
 	logChan              chan logRequest
 	workerPool           sync.WaitGroup
 	shutdown             chan struct{}
@@ -36,10 +43,14 @@ type logRequest struct {
 	info RequestInfo
 }
 
-func NewService(queries pgdb.Querier, logger *logger.Logger) *Service {
+// NewService starts the request logging workers. Usage limits count over
+// the quota groups from groups; with nil groups every account is a group of
+// one.
+func NewService(queries pgdb.Querier, groups GroupLookup, logger *logger.Logger) *Service {
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	s := &Service{
 		queries:      queries,
+		groups:       groups,
 		logChan:      make(chan logRequest, config.AppConfig.RequestTrackingBufferSize),
 		shutdown:     make(chan struct{}),
 		logger:       logger,
@@ -429,41 +440,74 @@ func (s *Service) LogRequestWithPlanTokensAsync(
 	return s.LogRequestAsync(ctx, info)
 }
 
-// GetUserPlanTokensThisWeek returns plan tokens used this week.
+// QuotaGroup returns the accounts whose usage counts toward userID's limits,
+// userID included.
+func (s *Service) QuotaGroup(ctx context.Context, userID string) ([]string, error) {
+	if s.groups == nil {
+		return []string{userID}, nil
+	}
+	userIDs, err := s.groups.UserIDs(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up quota group: %w", err)
+	}
+	return userIDs, nil
+}
+
+// GetUserPlanTokensThisWeek returns plan tokens used this week by the
+// account's quota group.
 func (s *Service) GetUserPlanTokensThisWeek(ctx context.Context, userID string) (int64, error) {
-	result, err := s.queries.GetUserPlanTokensThisWeek(ctx, userID)
+	userIDs, err := s.QuotaGroup(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	result, err := s.queries.GetUserPlanTokensThisWeek(ctx, userIDs)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get weekly plan tokens: %w", err)
 	}
 	return result, nil
 }
 
-// GetUserPlanTokensThisMonth returns plan tokens used this month.
+// GetUserPlanTokensThisMonth returns plan tokens used this month by the
+// account's quota group.
 func (s *Service) GetUserPlanTokensThisMonth(ctx context.Context, userID string) (int64, error) {
-	result, err := s.queries.GetUserPlanTokensThisMonth(ctx, userID)
+	userIDs, err := s.QuotaGroup(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	result, err := s.queries.GetUserPlanTokensThisMonth(ctx, userIDs)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get monthly plan tokens: %w", err)
 	}
 	return result, nil
 }
 
-// GetUserPlanTokensToday returns plan tokens used today.
+// GetUserPlanTokensToday returns plan tokens used today by the account's
+// quota group.
 func (s *Service) GetUserPlanTokensToday(ctx context.Context, userID string) (int64, error) {
-	result, err := s.queries.GetUserPlanTokensToday(ctx, userID)
+	userIDs, err := s.QuotaGroup(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	result, err := s.queries.GetUserPlanTokensToday(ctx, userIDs)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get daily plan tokens: %w", err)
 	}
 	return result, nil
 }
 
-// GetUserFallbackPlanTokensToday returns plan tokens used today on the fallback model.
+// GetUserFallbackPlanTokensToday returns plan tokens used today on the
+// fallback model by the account's quota group.
 func (s *Service) GetUserFallbackPlanTokensToday(ctx context.Context, userID string, fallbackModel string) (int64, error) {
 	if fallbackModel == "" {
 		return 0, nil
 	}
+	userIDs, err := s.QuotaGroup(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
 	result, err := s.queries.GetUserFallbackPlanTokensToday(ctx, pgdb.GetUserFallbackPlanTokensTodayParams{
-		UserID: userID,
-		Model:  &fallbackModel,
+		UserIds: userIDs,
+		Model:   &fallbackModel,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to get daily fallback plan tokens: %w", err)

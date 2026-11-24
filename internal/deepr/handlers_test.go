@@ -124,7 +124,7 @@ func TestStartMarksRunFailedWhenBackendUnreachable(t *testing.T) {
 
 	log := testLogger()
 	q := &runQuerier{}
-	tracking := request_tracking.NewService(q, log)
+	tracking := request_tracking.NewService(q, nil, log)
 	t.Cleanup(func() { _ = tracking.Shutdown(context.Background()) })
 
 	engine := gin.New()
@@ -170,7 +170,7 @@ func TestRefusedStartGeneratesNoTitle(t *testing.T) {
 
 	log := testLogger()
 	q := &titleCheckQuerier{}
-	tracking := request_tracking.NewService(q, log)
+	tracking := request_tracking.NewService(q, nil, log)
 	t.Cleanup(func() { _ = tracking.Shutdown(context.Background()) })
 
 	engine := gin.New()

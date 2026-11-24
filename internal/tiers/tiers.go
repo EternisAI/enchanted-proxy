@@ -220,6 +220,15 @@ var ranks = map[Tier]int{
 	TierPro:  2,
 }
 
+// Rank orders tiers from least to most privileged, as MeetsMinTier does. An
+// unknown tier ranks below Free.
+func Rank(t Tier) int {
+	if r, ok := ranks[t]; ok {
+		return r
+	}
+	return -1
+}
+
 // MeetsMinTier reports whether this tier is at least minTier. An empty minTier means the
 // model has no floor and every tier passes.
 func (c Config) MeetsMinTier(minTier string) bool {

@@ -17,9 +17,16 @@ type Querier interface {
 	ActivatePendingTask(ctx context.Context, taskID string) (int64, error)
 	AddDeepResearchMessage(ctx context.Context, arg AddDeepResearchMessageParams) error
 	AtomicUseInviteCode(ctx context.Context, arg AtomicUseInviteCodeParams) error
+	BackupEntitlements(ctx context.Context, runID int64) (int64, error)
+	// Blocks a purchase, with when Apple revoked it if that is the reason.
+	BlockApplePurchase(ctx context.Context, arg BlockApplePurchaseParams) error
 	ClearTaskOverLimit(ctx context.Context, taskID string) error
 	CompleteDeepResearchRun(ctx context.Context, arg CompleteDeepResearchRunParams) error
 	CompleteOneTimeTask(ctx context.Context, taskID string) (int64, error)
+	// The accounts a purchase was attached to since a time, or since it was last
+	// unblocked if that is later: each account it was attached or moved to, and
+	// each account it was moved away from.
+	CountApplePurchaseAccountsSince(ctx context.Context, arg CountApplePurchaseAccountsSinceParams) (int32, error)
 	// All accounts, for the service-wide daily ceiling.
 	CountDeepResearchRunsToday(ctx context.Context) (int64, error)
 	CountInviteCodesByRedeemedBy(ctx context.Context, redeemedBy *string) (int64, error)
@@ -48,10 +55,14 @@ type Querier interface {
 	FailStaleDeepResearchRuns(ctx context.Context, startedBefore time.Time) (int64, error)
 	// The run is started and finished in one transaction, whose NOW() is its
 	// start, so the finish takes the wall clock.
+	FinishEntitlementReviewRun(ctx context.Context, arg FinishEntitlementReviewRunParams) error
+	// The run is started and finished in one transaction, whose NOW() is its
+	// start, so the finish takes the wall clock.
 	FinishTaskReconcilerRun(ctx context.Context, arg FinishTaskReconcilerRunParams) error
 	GetActiveDeepResearchRun(ctx context.Context, arg GetActiveDeepResearchRunParams) (GetActiveDeepResearchRunRow, error)
 	GetAllActiveTasks(ctx context.Context) ([]Task, error)
 	GetAllInviteCodes(ctx context.Context) ([]InviteCode, error)
+	GetApplePurchase(ctx context.Context, originalTransactionID string) (ApplePurchase, error)
 	GetDeepResearchRunCountForChat(ctx context.Context, arg GetDeepResearchRunCountForChatParams) (int64, error)
 	GetEntitlement(ctx context.Context, userID string) (GetEntitlementRow, error)
 	GetExpiredPendingFaiPaymentIntents(ctx context.Context, limit int32) ([]FaiPaymentIntent, error)
@@ -61,6 +72,8 @@ type Querier interface {
 	GetInviteCodeByCodeHash(ctx context.Context, codeHash string) (InviteCode, error)
 	GetInviteCodeByID(ctx context.Context, id int64) (InviteCode, error)
 	GetProblemReportByID(ctx context.Context, id string) (ProblemReport, error)
+	// An account's group; an account in no group is its own group.
+	GetQuotaGroupID(ctx context.Context, userID string) (string, error)
 	GetSessionMessageCount(ctx context.Context, sessionID string) (int64, error)
 	GetSessionMessages(ctx context.Context, sessionID string) ([]DeepResearchMessage, error)
 	GetStripeCustomerID(ctx context.Context, userID string) (*string, error)
@@ -83,14 +96,15 @@ type Querier interface {
 	// Note: Queries request_logs directly (not materialized view) because monthly buckets aren't pre-aggregated.
 	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
 	// Month starts on 1st at 00:00 UTC per PostgreSQL DATE_TRUNC('month') behavior.
-	GetUserPlanTokensThisMonth(ctx context.Context, userID string) (int64, error)
+	GetUserPlanTokensThisMonth(ctx context.Context, userIds []string) (int64, error)
 	// Note: Queries request_logs directly (not materialized view) because weekly buckets aren't pre-aggregated.
 	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast (<100ms).
 	// Week starts Monday at 00:00 UTC per PostgreSQL DATE_TRUNC('week') behavior.
-	GetUserPlanTokensThisWeek(ctx context.Context, userID string) (int64, error)
+	GetUserPlanTokensThisWeek(ctx context.Context, userIds []string) (int64, error)
+	// Counts over the given accounts: the caller's quota group.
 	// Queries request_logs directly for real-time data (not materialized view).
 	// Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast.
-	GetUserPlanTokensToday(ctx context.Context, userID string) (int64, error)
+	GetUserPlanTokensToday(ctx context.Context, userIds []string) (int64, error)
 	GetUserTier(ctx context.Context, userID string) (GetUserTierRow, error)
 	GetZcashInvoice(ctx context.Context, id uuid.UUID) (ZcashInvoice, error)
 	// Row-locking read used to serialise concurrent payment callbacks for one invoice.
@@ -98,16 +112,41 @@ type Querier interface {
 	GetZcashInvoiceForUser(ctx context.Context, arg GetZcashInvoiceForUserParams) (ZcashInvoice, error)
 	GetZcashInvoicesByUserAndStatus(ctx context.Context, arg GetZcashInvoicesByUserAndStatusParams) ([]ZcashInvoice, error)
 	HasActiveDeepResearchRun(ctx context.Context, userIds []string) (bool, error)
+	// Whether an enforced run has finished without errors. A run that hit an error
+	// reset nothing, so the review may run again.
+	HasEnforcedEntitlementReview(ctx context.Context) (bool, error)
+	// Records a purchase seen for the first time, and reports whether it did. A
+	// purchase recorded meanwhile by another request is left as it is; the caller
+	// then locks and reads it.
+	InsertApplePurchase(ctx context.Context, arg InsertApplePurchaseParams) (int64, error)
 	// Tasks that may still run, for the limit checks: the caller's quota group.
 	ListOpenTasksForUsers(ctx context.Context, userIds []string) ([]ListOpenTasksForUsersRow, error)
+	// The accounts in the same quota group as the given one. Empty when the
+	// account is in no group, which makes it a group of one.
+	ListQuotaGroupMembers(ctx context.Context, userID string) ([]string, error)
 	// Tasks that may still run or be resumed, oldest first.
 	ListTasksToReconcile(ctx context.Context) ([]Task, error)
 	ListTelegramChats(ctx context.Context) ([]TelegramChat, error)
+	// Active Apple Plus entitlements with no purchase on record.
+	ListUnrecordedApplePlusEntitlements(ctx context.Context) ([]string, error)
+	// Holds an account's entitlement lock until the transaction ends, so plan
+	// writes for one account are made one at a time, also while the account has
+	// no entitlement row for FOR UPDATE to lock.
+	LockAccountEntitlement(ctx context.Context, userID string) error
+	// Reads a purchase and holds its row until the transaction ends, so attaches
+	// of the same purchase are made one at a time.
+	LockApplePurchase(ctx context.Context, originalTransactionID string) (ApplePurchase, error)
 	// Holds the deep research admission lock until the transaction ends, so the
 	// limit checks and the new run's row cannot interleave with another start.
 	// One lock covers the whole service: starts are rare, and the service-wide
 	// daily ceiling counts every account's runs.
 	LockDeepResearchAdmission(ctx context.Context) error
+	// Reads an account's entitlement and holds its row until the transaction ends.
+	LockEntitlement(ctx context.Context, userID string) (LockEntitlementRow, error)
+	// Holds the quota group lock until the transaction ends. Joining two groups
+	// moves every member of one; one lock for all groups keeps two joins from
+	// splitting a group. Joins happen only when a purchase reaches a new account.
+	LockQuotaGroups(ctx context.Context) error
 	// Holds one task's lock until the transaction ends, so creating, pausing,
 	// resuming and deleting the same task cannot interleave.
 	LockTask(ctx context.Context, taskID string) error
@@ -126,16 +165,35 @@ type Querier interface {
 	// Records that a paused task's schedule runs again. Only a task still paused
 	// for the reason the caller checked is changed.
 	MarkTaskResumed(ctx context.Context, arg MarkTaskResumedParams) (int64, error)
+	// Moves every member of one group into another.
+	MoveQuotaGroupMembers(ctx context.Context, arg MoveQuotaGroupMembersParams) error
 	// Whether a sweep that finished started within the last given seconds, by the
 	// database's clock.
 	RecentTaskReconcilerRun(ctx context.Context, seconds float64) (bool, error)
+	RecordApplePurchaseEvent(ctx context.Context, arg RecordApplePurchaseEventParams) error
 	RecordTaskCreation(ctx context.Context, arg RecordTaskCreationParams) error
+	// Sets one account back to Free, if its entitlement came from the purchase.
+	ResetApplePurchaseEntitlement(ctx context.Context, arg ResetApplePurchaseEntitlementParams) (int64, error)
+	// Sets every account whose entitlement came from the purchase back to Free.
+	ResetApplePurchaseEntitlements(ctx context.Context, appleOriginalTransactionID *string) ([]string, error)
 	ResetInviteCode(ctx context.Context, codeHash string) error
+	// Sets the given accounts to Free, each only if its entitlement is still an
+	// Apple Plus entitlement with no purchase on record.
+	ResetUnrecordedApplePlusEntitlements(ctx context.Context, userIds []string) ([]string, error)
+	// Writes an entitlement granted by an Apple purchase. A Stripe customer ID on
+	// the row is kept.
+	SetAppleEntitlement(ctx context.Context, arg SetAppleEntitlementParams) error
+	SetQuotaGroup(ctx context.Context, arg SetQuotaGroupParams) error
 	SoftDeleteInviteCode(ctx context.Context, id int64) error
+	StartEntitlementReviewRun(ctx context.Context, mode string) (int64, error)
 	StartTaskReconcilerRun(ctx context.Context, mode string) (int64, error)
+	// Takes the entitlement review lock until the transaction ends, if no other
+	// server instance holds it.
+	TryLockEntitlementReview(ctx context.Context) (bool, error)
 	// Takes the reconciler's lock until the transaction ends, if no other server
 	// instance holds it.
 	TryLockTaskReconciler(ctx context.Context) (bool, error)
+	UpdateApplePurchase(ctx context.Context, arg UpdateApplePurchaseParams) error
 	UpdateDeepResearchRunTokens(ctx context.Context, arg UpdateDeepResearchRunTokensParams) error
 	// Claims an intent for a payment made at payment_time (its block time). Each
 	// payment event is delivered to every replica and again by the historical sync,

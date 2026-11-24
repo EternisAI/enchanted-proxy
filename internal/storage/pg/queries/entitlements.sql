@@ -15,6 +15,9 @@ ON CONFLICT (user_id) DO UPDATE SET
   subscription_expires_at = EXCLUDED.subscription_expires_at,
   subscription_provider = EXCLUDED.subscription_provider,
   stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, entitlements.stripe_customer_id),
+  -- Only Apple purchases set this (SetAppleEntitlement); a grant from another
+  -- provider replaces the Apple one.
+  apple_original_transaction_id = NULL,
   updated_at = NOW();
 
 -- name: GetUserTier :one
@@ -23,7 +26,7 @@ FROM entitlements
 WHERE user_id = $1;
 
 -- name: GetEntitlement :one
-SELECT user_id, subscription_expires_at, subscription_provider, stripe_customer_id, subscription_tier, updated_at
+SELECT user_id, subscription_expires_at, subscription_provider, stripe_customer_id, subscription_tier, updated_at, apple_original_transaction_id
 FROM entitlements
 WHERE user_id = $1;
 
@@ -60,4 +63,5 @@ ON CONFLICT (user_id) DO UPDATE SET
     END,
   subscription_provider = sqlc.arg(subscription_provider),
   stripe_customer_id = COALESCE(sqlc.arg(stripe_customer_id), entitlements.stripe_customer_id),
+  apple_original_transaction_id = NULL,
   updated_at = NOW();

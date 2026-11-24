@@ -3,6 +3,7 @@ package deepr
 import (
 	"context"
 	"database/sql"
+	stderrors "errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -200,6 +201,20 @@ func (s *Service) checkRunAllowed(ctx context.Context, q pgdb.Querier, userID st
 	// person (Apple, Google), not anonymous or unverified email accounts.
 	if tier.DeepResearchLifetimeRuns > 0 && (identity == nil || !identity.SignedInWith(s.cfg.FreeRunProviders...)) {
 		return refuse(errors.DeepResearchSignInRequired(tier.Name))
+	}
+
+	// Runs count over the quota group of the purchase behind a plan, so an App
+	// Store plan needs its purchase on record. Plans from before purchases were
+	// recorded get it when the iOS app sends the purchase at launch.
+	if tier.Name != string(tiers.TierFree) {
+		ent, err := q.GetEntitlement(ctx, userID)
+		switch {
+		case stderrors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			return failed("entitlement", err)
+		case ent.SubscriptionProvider == "apple" && ent.AppleOriginalTransactionID == nil:
+			return refuse(errors.DeepResearchPurchaseUnconfirmed(tier.Name))
+		}
 	}
 
 	userIDs, err := s.cfg.Groups.UserIDs(ctx, userID)

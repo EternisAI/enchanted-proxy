@@ -146,8 +146,12 @@ func main() {
 
 	// Initialize services
 	inviteCodeService := invitecode.NewService(db.Queries)
-	requestTrackingService := request_tracking.NewService(db.Queries, logger.WithComponent("request_tracking"))
-	iapService := iap.NewService(db.Queries)
+	// Accounts that share limits: every account a purchase has been attached to.
+	quotaGroups := quota.NewGroups(db.Queries)
+	requestTrackingService := request_tracking.NewService(db.Queries, quotaGroups, logger.WithComponent("request_tracking"))
+	iapPolicy := iap.LoadPolicy()
+	log.Info("app store purchase policy", slog.String("policy", iapPolicy.String()))
+	iapService := iap.NewService(db.DB, db.Queries, iapPolicy, quotaGroups, logger.WithComponent("iap"))
 	stripeService := stripe.NewService(db.Queries, logger.WithComponent("stripe"))
 
 	// Initialize zcash service with Firestore client for real-time updates
@@ -171,9 +175,6 @@ func main() {
 
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
-
-	// Accounts that share limits (a purchase's accounts, once purchases are bound).
-	quotaGroups := quota.NewGroups()
 
 	var taskService *task.Service
 	if config.AppConfig.TemporalEndpoint != "" && config.AppConfig.TemporalNamespace != "" && config.AppConfig.TemporalAPIKey != "" {
@@ -287,6 +288,35 @@ func main() {
 		}
 		runningReconciler = reconciler.Start()
 		defer runningReconciler.Stop(0) // cancels it on any exit; the shutdown below waits for it
+	}
+
+	// Review the Apple entitlements written before purchases were recorded,
+	// once (off, dry-run or enforce).
+	reviewConfig, err := iap.LoadReviewConfig()
+	if err != nil {
+		log.Error("invalid entitlement review settings", slog.String("error", err.Error()))
+	}
+	if reviewConfig.Mode != iap.ReviewOff {
+		var reviewAccounts iap.AccountLookup
+		if firebaseClient != nil {
+			firebaseAccounts := task.FirebaseAccounts(firebaseClient.GetAuthClient())
+			reviewAccounts = func(ctx context.Context, userIDs []string) (map[string]iap.Account, error) {
+				found, err := firebaseAccounts.LookupAccounts(ctx, userIDs)
+				if err != nil {
+					return nil, err
+				}
+				accounts := make(map[string]iap.Account, len(found))
+				for id, a := range found {
+					accounts[id] = iap.Account{Exists: a.Exists, Created: a.Created}
+				}
+				return accounts, nil
+			}
+		} else {
+			log.Warn("firebase client not available - the entitlement review cannot look up accounts")
+		}
+		reviewCtx, reviewCancel := context.WithCancel(context.Background())
+		defer reviewCancel()
+		iap.NewReviewer(db.DB, reviewAccounts, reviewConfig, logger.WithComponent("entitlement-review")).Start(reviewCtx)
 	}
 
 	// Initialize tool system

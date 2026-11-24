@@ -10,11 +10,12 @@ INSERT INTO request_logs (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
 
 -- name: GetUserPlanTokensToday :one
+-- Counts over the given accounts: the caller's quota group.
 -- Queries request_logs directly for real-time data (not materialized view).
 -- Performance: The idx_request_logs_plan_tokens index on (user_id, created_at, plan_tokens) keeps this fast.
 SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
 FROM request_logs
-WHERE user_id = $1
+WHERE user_id = ANY(sqlc.arg(user_ids)::text[])
   AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
   AND plan_tokens IS NOT NULL;
 
@@ -24,7 +25,7 @@ WHERE user_id = $1
 -- Week starts Monday at 00:00 UTC per PostgreSQL DATE_TRUNC('week') behavior.
 SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
 FROM request_logs
-WHERE user_id = $1
+WHERE user_id = ANY(sqlc.arg(user_ids)::text[])
   AND created_at >= DATE_TRUNC('week', NOW() AT TIME ZONE 'UTC')
   AND plan_tokens IS NOT NULL;
 
@@ -34,7 +35,7 @@ WHERE user_id = $1
 -- Month starts on 1st at 00:00 UTC per PostgreSQL DATE_TRUNC('month') behavior.
 SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
 FROM request_logs
-WHERE user_id = $1
+WHERE user_id = ANY(sqlc.arg(user_ids)::text[])
   AND created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')
   AND plan_tokens IS NOT NULL;
 
@@ -43,7 +44,7 @@ WHERE user_id = $1
 -- Used for tracking fallback quota when normal quota is exceeded.
 SELECT COALESCE(SUM(plan_tokens), 0)::BIGINT as plan_tokens
 FROM request_logs
-WHERE user_id = $1
+WHERE user_id = ANY(sqlc.arg(user_ids)::text[])
   AND created_at >= DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
   AND plan_tokens IS NOT NULL
-  AND model = $2;
+  AND model = sqlc.arg(model);
