@@ -12,7 +12,7 @@ Firebase Auth. It then:
 
 | Finding | Action |
 |---|---|
-| Schedule paused in Temporal, row `active` | Row set `paused`, reason from the first word of the pause note |
+| Schedule paused in Temporal, row `active` | Pause made again with the same note, then row set `paused`, reason from the first word of the note |
 | Both paused, row's reason differs from the note's | Row takes the note's reason |
 | Schedule running, row `paused` | Row set `active` |
 | Row `pending` for over an hour with a schedule | Row set `active` |
@@ -40,6 +40,12 @@ only when its row is still absent, and a schedule paused since the listing keeps
 pause and note. Each check and change holds the task's lock, the same Postgres
 advisory lock that creating, pausing, resuming and deleting a task hold, so they cannot
 interleave with an owner's change to the same task.
+
+A schedule can read paused while an Unpause that returned an error may still apply,
+after an owner's resume failed. In that case the row stays `active`,
+so the task keeps counting. Before the reconciler sets such a row `paused`, it makes
+the pause again with the same note. Temporal applies a schedule's changes in the order
+it accepts them, so the earlier Unpause cannot undo that pause.
 
 ## Settings
 

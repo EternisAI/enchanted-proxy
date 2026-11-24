@@ -775,6 +775,13 @@ func (r *Reconciler) apply(ctx context.Context, a action, enforce bool) (bool, e
 		reason := string(a.reason)
 		switch a.kind {
 		case actMarkPaused:
+			// The schedule may read paused while an Unpause that failed can still
+			// apply, as after a failed resume, whose row stays active. The pause is
+			// made again with its own note before the row stops counting the task:
+			// Temporal applies a schedule's changes in the order it accepts them.
+			if err := handle().Pause(ctx, client.SchedulePauseOptions{Note: state.Note}); err != nil {
+				return false, err
+			}
 			return changed(q.MarkTaskPaused(ctx, pgdb.MarkTaskPausedParams{TaskID: a.taskID, PauseReason: &reason}))
 		case actUpdateReason:
 			return changed(q.UpdateTaskPauseReason(ctx, pgdb.UpdateTaskPauseReasonParams{TaskID: a.taskID, PauseReason: &reason}))

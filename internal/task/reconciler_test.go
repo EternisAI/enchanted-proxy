@@ -45,6 +45,12 @@ type reconWorld struct {
 
 	locked      bool     // inside a task's lock
 	outsideLock []string // changes made outside one
+
+	// unpauseErr is returned by Unpause; with unpauseLate the Unpause still
+	// applies later, at the schedule's next change or applyLateUnpauses.
+	unpauseErr     error
+	unpauseLate    bool
+	pendingUnpause map[string]bool
 }
 
 type fakeSchedule struct {
@@ -57,6 +63,7 @@ func newReconWorld() *reconWorld {
 	return &reconWorld{
 		rows: map[string]pgdb.Task{}, creations: map[string]bool{}, schedules: map[string]*fakeSchedule{},
 		lateRows: map[string]pgdb.Task{}, accounts: map[string]Account{}, tiers: map[string]tiers.Tier{}, now: now,
+		pendingUnpause: map[string]bool{},
 	}
 }
 
@@ -231,15 +238,36 @@ func (h reconHandle) Describe(context.Context) (*client.ScheduleDescription, err
 }
 
 func (h reconHandle) Pause(_ context.Context, o client.SchedulePauseOptions) error {
+	h.w.applyLateUnpause(h.id) // Temporal applies a schedule's changes in order
 	h.w.log("schedule %s paused:%s", h.id, strings.SplitN(o.Note, ":", 2)[0])
 	h.w.schedules[h.id].paused, h.w.schedules[h.id].note = true, o.Note
 	return nil
 }
 
 func (h reconHandle) Unpause(context.Context, client.ScheduleUnpauseOptions) error {
+	if h.w.unpauseErr != nil {
+		if h.w.unpauseLate {
+			h.w.pendingUnpause[h.id] = true
+		}
+		return h.w.unpauseErr
+	}
 	h.w.log("schedule %s resumed", h.id)
 	h.w.schedules[h.id].paused = false
 	return nil
+}
+
+func (w *reconWorld) applyLateUnpause(id string) {
+	if w.pendingUnpause[id] {
+		delete(w.pendingUnpause, id)
+		w.log("schedule %s resumed late", id)
+		w.schedules[id].paused = false
+	}
+}
+
+func (w *reconWorld) applyLateUnpauses() {
+	for id := range w.pendingUnpause {
+		w.applyLateUnpause(id)
+	}
 }
 
 func (h reconHandle) Delete(context.Context) error {
@@ -329,7 +357,23 @@ func TestReconcilerRecordsPausesAndResumesMadeInTemporal(t *testing.T) {
 	w.setRow("unpaused", func(r *pgdb.Task) { r.PauseReason = reasonPtr(PauseUser) })
 
 	w.sweep(t, ReconcilerEnforce)
-	expectChanges(t, w, "row admin-paused paused:admin", "row reason-changed reason:account_missing", "row unpaused resumed")
+	expectChanges(t, w, "schedule admin-paused paused:admin", "row admin-paused paused:admin", "row reason-changed reason:account_missing", "row unpaused resumed")
+}
+
+// After a failed resume the row stays active while the schedule reads paused,
+// and the failed Unpause can still apply. Recording the pause must not leave
+// the schedule running once it does, with a row that no longer counts it.
+func TestReconcilerOutlastsAFailedUnpauseThatAppliesLate(t *testing.T) {
+	w := newReconWorld()
+	w.owner("u", oneDay, tiers.TierFree)
+	w.task("resuming", "u", "recurring", "0 9 * * *", TaskStatusActive, 30*oneDay, &fakeSchedule{paused: true, note: "user: paused by the owner"})
+	w.pendingUnpause["resuming"] = true
+
+	w.sweep(t, ReconcilerEnforce)
+	w.applyLateUnpauses()
+	if !w.schedules["resuming"].paused || w.rows["resuming"].Status != string(TaskStatusPaused) {
+		t.Fatalf("schedule paused %v, row %s; want both paused", w.schedules["resuming"].paused, w.rows["resuming"].Status)
+	}
 }
 
 func TestReconcilerSettlesRowsWithoutSchedules(t *testing.T) {
