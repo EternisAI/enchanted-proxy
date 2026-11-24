@@ -53,7 +53,7 @@ func TestPauseTaskKeepsAPauseMadeInTemporal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectEvents(t, w, "row paused:admin")
+	expectEvents(t, w, "schedule paused:admin: incident 2026-11", "row paused:admin")
 	if got.PauseReason != string(PauseAdmin) || w.note != "admin: incident 2026-11" {
 		t.Fatalf("task %+v, note %q; want the admin pause kept", got, w.note)
 	}
@@ -276,6 +276,26 @@ func TestPauseAndResumeHandlersAnswerWithReadableRefusals(t *testing.T) {
 			t.Errorf("%s: %d %s, want %d with %q", tc.path, rec.Code, rec.Body.String(), tc.code, tc.body)
 		}
 	}
+}
+
+// A failed Unpause can still apply after a lookup shows the schedule paused.
+// An owner's pause made before then must stay in force once it applies, or the
+// schedule would run while its row, paused, no longer counts.
+func TestPauseTaskOutlastsAFailedUnpauseThatAppliesLate(t *testing.T) {
+	w := pausedWorld(PauseUser)
+	w.unpauseErr, w.unpauseLate = serviceerror.NewDeadlineExceeded("late"), true
+	s := w.service(tiers.TierFree)
+	if _, err := s.ResumeTask(context.Background(), "user-1", "task-1"); err == nil {
+		t.Fatal("ResumeTask succeeded although Unpause failed")
+	}
+	if _, err := s.PauseTask(context.Background(), "user-1", "task-1"); err != nil {
+		t.Fatal(err)
+	}
+	w.applyLateUnpause()
+	if row := w.rows["task-1"]; !w.paused || row.Status != string(TaskStatusPaused) {
+		t.Fatalf("schedule paused %v, row %s; want both paused", w.paused, row.Status)
+	}
+	expectEvents(t, w, "@row resumed", "schedule resumed late", "schedule paused:user: test", "row paused:user")
 }
 
 // After a failed Unpause the schedule may have resumed: while its state is

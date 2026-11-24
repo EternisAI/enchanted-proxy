@@ -35,6 +35,8 @@ type taskWorld struct {
 	describeErr                     error   // overrides the state above
 	describeErrs                    []error // one per Describe call, in order, before describeErr
 	unpauseApplies                  bool    // Unpause resumes the schedule even when it returns unpauseErr
+	unpauseLate                     bool    // Unpause returns unpauseErr and resumes the schedule later
+	pendingUnpause                  bool    // a late Unpause that has not applied yet
 
 	duringAdmission func() // runs inside the admission lock
 	locked          bool   // inside the task's lock
@@ -134,6 +136,7 @@ func (h *taskHandle) Pause(_ context.Context, o client.SchedulePauseOptions) err
 	if w.pauseErr != nil {
 		return w.pauseErr
 	}
+	w.applyLateUnpause() // Temporal applies a schedule's changes in order
 	w.log("schedule paused:" + o.Note)
 	w.paused, w.note = true, o.Note
 	return nil
@@ -145,11 +148,21 @@ func (h *taskHandle) Unpause(context.Context, client.ScheduleUnpauseOptions) err
 		if w.unpauseApplies {
 			w.paused = false
 		}
+		w.pendingUnpause = w.unpauseLate
 		return w.unpauseErr
 	}
 	w.log("schedule resumed")
 	w.paused = false
 	return nil
+}
+
+// applyLateUnpause applies an Unpause that returned an error and is still
+// pending.
+func (w *taskWorld) applyLateUnpause() {
+	if w.pendingUnpause {
+		w.log("schedule resumed late")
+		w.paused, w.pendingUnpause = false, false
+	}
 }
 
 func (h *taskHandle) Delete(context.Context) error {

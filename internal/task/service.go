@@ -48,28 +48,39 @@ func detached(ctx context.Context, timeout time.Duration) (context.Context, cont
 // instance.
 type taskLocker func(ctx context.Context, taskID string, fn func() error) error
 
-// The longest wait for a task's lock, and the longest it is then held: the
-// steps under it and the recovery after a failed step, each bounded on its own.
-const (
-	taskLockWait = scheduleSetupTimeout
-	taskLockHold = scheduleSetupTimeout + 3*cleanupTimeout
-)
+// taskLockWait is the longest wait for a task's lock. Once taken, the lock is
+// held until its holder returns, however long that takes: each step under it
+// is bounded on its own, so the holder returns by itself, and a separate limit
+// on the hold could only end the lock while a step still runs.
+const taskLockWait = scheduleSetupTimeout
+
+// minTaskLockPool is the smallest connection pool task locks work with: a
+// holder keeps one connection for the lock and needs another for its work.
+const minTaskLockPool = 2
 
 // lockedTasks is the taskLocker backed by a Postgres advisory lock, held in a
 // transaction while fn runs. fn's own reads and writes go through the pool,
-// outside that transaction.
-func lockedTasks(db *sql.DB, log *logger.Logger) taskLocker {
-	// A holder keeps one pool connection for the lock and takes others for its
-	// work. Holders are limited to a third of the pool, so they cannot take every
+// outside that transaction. It refuses a pool too small to hold a lock and
+// do the work under it.
+func lockedTasks(db *sql.DB, log *logger.Logger) (taskLocker, error) {
+	return lockedTasksWaiting(db, log, taskLockWait)
+}
+
+func lockedTasksWaiting(db *sql.DB, log *logger.Logger, wait time.Duration) (taskLocker, error) {
+	n := db.Stats().MaxOpenConnections
+	if n > 0 && n < minTaskLockPool {
+		return nil, fmt.Errorf("task locks need a database pool of at least %d connections (DB_MAX_OPEN_CONNS), not %d", minTaskLockPool, n)
+	}
+	// Holders are limited to a third of the pool, so they cannot take every
 	// connection and then wait for one another.
 	var slots chan struct{}
-	if n := db.Stats().MaxOpenConnections; n > 0 {
+	if n > 0 {
 		slots = make(chan struct{}, max(1, n/3))
 	}
 	return func(ctx context.Context, taskID string, fn func() error) error {
 		// The lock does not follow the request's cancellation: a client that
 		// disconnects must not release it halfway through.
-		waitCtx, cancelWait := detached(ctx, taskLockWait)
+		waitCtx, cancelWait := detached(ctx, wait)
 		defer cancelWait()
 		if slots != nil {
 			select {
@@ -79,11 +90,10 @@ func lockedTasks(db *sql.DB, log *logger.Logger) taskLocker {
 				return fmt.Errorf("timed out waiting to lock task: %w", waitCtx.Err())
 			}
 		}
-		// database/sql ends the transaction, and with it the lock, when this
-		// context ends, so it covers the wait and the full hold.
-		holdCtx, cancelHold := detached(ctx, taskLockWait+taskLockHold)
-		defer cancelHold()
-		tx, err := db.BeginTx(holdCtx, nil)
+		// database/sql ends a transaction, and with it the lock, when the
+		// transaction's context ends. This one has no deadline, so the lock ends
+		// only once fn has returned.
+		tx, err := db.BeginTx(context.WithoutCancel(ctx), nil)
 		if err != nil {
 			return fmt.Errorf("failed to begin task lock: %w", err)
 		}
@@ -100,11 +110,12 @@ func lockedTasks(db *sql.DB, log *logger.Logger) taskLocker {
 			log.Warn("failed to release a task lock cleanly", slog.String("error", err.Error()), slog.String("task_id", taskID))
 		}
 		return nil
-	}
+	}, nil
 }
 
-// withTaskLock runs fn under the task's lock. The lock's wait and hold are
-// bounded on their own, apart from ctx's cancellation; fn bounds its own steps.
+// withTaskLock runs fn under the task's lock. The wait for the lock is bounded
+// on its own, apart from ctx's cancellation; the lock is then held until fn
+// returns, and fn bounds its own steps.
 func (s *Service) withTaskLock(ctx context.Context, taskID string, fn func() error) error {
 	if s.taskLock == nil {
 		return fn() // tests without a database
@@ -154,6 +165,11 @@ func NewService(endpoint, namespace, apiKey string, db *sql.DB, queries pgdb.Que
 			endpoint, namespace, "***")
 	}
 
+	taskLock, err := lockedTasks(db, log)
+	if err != nil {
+		return nil, err
+	}
+
 	// Create Temporal client options
 	clientOptions := client.Options{
 		HostPort:  endpoint,
@@ -189,7 +205,7 @@ func NewService(endpoint, namespace, apiKey string, db *sql.DB, queries pgdb.Que
 		tierLookup:     tierLookup,
 		groups:         groups,
 		admission:      lockedAdmission(db),
-		taskLock:       lockedTasks(db, log),
+		taskLock:       taskLock,
 		clock:          time.Now,
 	}, nil
 }
@@ -379,7 +395,9 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 	// The task's lock is held until the task is active or released, so a delete,
 	// pause or resume of the pending task waits for the outcome. A task deleted
 	// before the lock was taken gets no schedule.
+	lockHeld := false
 	err = s.withTaskLock(ctx, taskID, func() error {
+		lockHeld = true
 		readCtx, cancelRead := detached(ctx, cleanupTimeout)
 		defer cancelRead()
 		if current, err := s.queries.GetTaskByID(readCtx, taskID); err != nil || current.Status != string(TaskStatusPending) {
@@ -455,6 +473,11 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 		return nil
 	})
 	if err != nil {
+		if !lockHeld {
+			// No schedule was attempted, so the task does not count.
+			log.Error("failed to lock the new task; releasing it", slog.String("error", err.Error()), slog.String("task_id", taskID))
+			s.releaseTask(ctx, taskID, userID)
+		}
 		return nil, err
 	}
 
