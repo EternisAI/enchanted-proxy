@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -159,7 +160,7 @@ func TestDeleteDuringCreateLeavesNoScheduleWithoutARow(t *testing.T) {
 		tierLookup:     fixedTier{tier: tiers.TierPro},
 		groups:         soloGroup{},
 		admission:      lockedAdmission(db),
-		taskLock:       lockedTasks(db),
+		taskLock:       lockedTasks(db, logger.New(logger.Config{Level: slog.LevelError + 4})),
 		clock:          time.Now,
 	}
 	ctx := context.Background()
@@ -207,5 +208,41 @@ func TestDeleteDuringCreateLeavesNoScheduleWithoutARow(t *testing.T) {
 	}
 	if scheduled || rowErr == nil {
 		t.Fatalf("schedule %v, row error %v; want both deleted", scheduled, rowErr)
+	}
+}
+
+// Holders of task locks each keep a pool connection and need another for their
+// work. Many at once on a small pool, all on one task, must still finish
+// rather than wait for one another until their deadlines.
+func TestTaskLocksDoNotExhaustTheConnectionPool(t *testing.T) {
+	openTestDB(t) // migrations
+	small, err := sql.Open("postgres", os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = small.Close() })
+	small.SetMaxOpenConns(3)
+	lock := lockedTasks(small, logger.New(logger.Config{Level: slog.LevelError + 4}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	errs := make(chan error, 10)
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- lock(ctx, "pool-test-task", func() error {
+				var one int
+				return small.QueryRowContext(ctx, "SELECT 1").Scan(&one)
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("a lock holder could not get a connection: %v", err)
+		}
 	}
 }

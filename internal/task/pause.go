@@ -110,10 +110,10 @@ func (s *Service) PauseTask(ctx context.Context, userID, taskID string) (*Task, 
 	// The steps do not stop when the client disconnects, and run under the
 	// task's lock, so a pause cannot interleave with a resume or a deletion of
 	// the same task.
-	opCtx, cancel := detached(ctx, scheduleSetupTimeout)
-	defer cancel()
 	var paused *Task
-	err := s.withTaskLock(opCtx, taskID, func() error {
+	err := s.withTaskLock(ctx, taskID, func() error {
+		opCtx, cancel := detached(ctx, scheduleSetupTimeout)
+		defer cancel()
 		row, err := getOwnedTask(opCtx, s.queries, userID, taskID)
 		if err != nil {
 			return err
@@ -228,10 +228,10 @@ func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task,
 	// The steps do not stop when the client disconnects, and run under the
 	// task's lock, so a resume cannot interleave with a pause or a deletion of
 	// the same task.
-	opCtx, cancel := detached(ctx, scheduleSetupTimeout)
-	defer cancel()
 	var resumed *Task
-	err = s.withTaskLock(opCtx, taskID, func() error {
+	err = s.withTaskLock(ctx, taskID, func() error {
+		opCtx, cancel := detached(ctx, scheduleSetupTimeout)
+		defer cancel()
 		row, err := getOwnedTask(opCtx, s.queries, userID, taskID)
 		if err != nil {
 			return err
