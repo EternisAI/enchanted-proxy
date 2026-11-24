@@ -16,7 +16,9 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/config"
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	"github.com/eternisai/enchanted-proxy/internal/request_tracking"
+	"github.com/eternisai/enchanted-proxy/internal/routing"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
+	"github.com/eternisai/enchanted-proxy/internal/title_generation"
 	"github.com/gin-gonic/gin"
 )
 
@@ -145,6 +147,52 @@ func TestStartMarksRunFailedWhenBackendUnreachable(t *testing.T) {
 	}
 	if got := q.completed[42]; got != "failed" {
 		t.Errorf("run 42 status = %q, want \"failed\"", got)
+	}
+}
+
+// titleCheckQuerier is a free-tier user with no history that records whether
+// the start looked for an earlier run in the chat, which is the first step of
+// generating its title.
+type titleCheckQuerier struct {
+	runQuerier
+	titleChecked bool
+}
+
+func (q *titleCheckQuerier) GetDeepResearchRunCountForChat(context.Context, pgdb.GetDeepResearchRunCountForChatParams) (int64, error) {
+	q.titleChecked = true
+	return 1, nil
+}
+
+// A refused start must cost nothing: no title-model call for the chat.
+func TestRefusedStartGeneratesNoTitle(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	config.AppConfig = &config.Config{RequestTrackingWorkerPoolSize: 1, RequestTrackingBufferSize: 1}
+
+	log := testLogger()
+	q := &titleCheckQuerier{}
+	tracking := request_tracking.NewService(q, log)
+	t.Cleanup(func() { _ = tracking.Shutdown(context.Background()) })
+
+	engine := gin.New()
+	engine.Use(withUser)
+	// Limits on and no admission configured: every start is refused.
+	engine.POST("/start", StartDeepResearchHandler(log, tracking, nil, nil, NewSessionManager(log), q, true, nil,
+		&title_generation.Service{}, &routing.ModelRouter{}, &Config{}))
+
+	req := httptest.NewRequest(http.MethodPost, "/start", strings.NewReader(
+		`{"query":"q","chat_id":"0d6f6b3e-8a54-4c1e-9a1f-2f4b6c7d8e9f","user_message_id":"5b0c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (body %s)", w.Code, w.Body.String())
+	}
+	if q.titleChecked {
+		t.Error("a refused start went on to generate the chat's title")
+	}
+	if q.created != 0 {
+		t.Errorf("runs created = %d, want 0", q.created)
 	}
 }
 
