@@ -436,7 +436,22 @@ func TestConcurrentGrantsToANewAccountKeepTheBetterPlan(t *testing.T) {
 		}
 		done <- second.Commit()
 	}()
-	time.Sleep(300 * time.Millisecond) // the second grant reaches its lock
+	// Commit the first grant only once the second waits on the account's lock
+	// while the first is open.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		var waiting int
+		if err := w.db.QueryRow(`SELECT COUNT(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event = 'advisory'
+			  AND query LIKE '%entitlement:%'`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the second grant never waited on the account's entitlement lock")
+		}
+	}
 	if err := first.Commit(); err != nil {
 		t.Fatal(err)
 	}
