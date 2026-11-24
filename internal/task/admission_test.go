@@ -184,3 +184,20 @@ func TestCreateTaskCreatesNoScheduleForATaskDeletedMeanwhile(t *testing.T) {
 		t.Fatalf("created schedule %q for a deleted task", schedules.options.ID)
 	}
 }
+
+// A task whose lock was never taken has no schedule, so it is released.
+func TestCreateTaskReleasesATaskItCouldNotLock(t *testing.T) {
+	q := &limitQuerier{}
+	schedules := &scriptedSchedules{}
+	s := scriptedService(q, schedules)
+	s.taskLock = func(context.Context, string, func() error) error { return context.DeadlineExceeded }
+	if _, err := s.CreateTask(context.Background(), "user-1", request("recurring", "0 9 * * *")); err == nil {
+		t.Fatal("CreateTask succeeded without the task's lock")
+	}
+	if schedules.options.ID != "" {
+		t.Fatalf("created schedule %q without the task's lock", schedules.options.ID)
+	}
+	if len(q.deletedTasks) != 1 || !slices.Equal(q.deletedTasks, q.releasedCreation) {
+		t.Fatalf("deleted tasks %v, released creations %v; want the admitted task released", q.deletedTasks, q.releasedCreation)
+	}
+}

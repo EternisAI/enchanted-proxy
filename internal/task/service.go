@@ -379,7 +379,9 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 	// The task's lock is held until the task is active or released, so a delete,
 	// pause or resume of the pending task waits for the outcome. A task deleted
 	// before the lock was taken gets no schedule.
+	lockHeld := false
 	err = s.withTaskLock(ctx, taskID, func() error {
+		lockHeld = true
 		readCtx, cancelRead := detached(ctx, cleanupTimeout)
 		defer cancelRead()
 		if current, err := s.queries.GetTaskByID(readCtx, taskID); err != nil || current.Status != string(TaskStatusPending) {
@@ -455,6 +457,11 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 		return nil
 	})
 	if err != nil {
+		if !lockHeld {
+			// No schedule was attempted, so the task does not count.
+			log.Error("failed to lock the new task; releasing it", slog.String("error", err.Error()), slog.String("task_id", taskID))
+			s.releaseTask(ctx, taskID, userID)
+		}
 		return nil, err
 	}
 
