@@ -858,9 +858,22 @@ func (r *Reconciler) apply(ctx context.Context, a action, enforce bool) (bool, e
 		// it after a failed resume, which may still apply. If the schedule stays
 		// paused, the next sweep puts the hold back on the row, and the pause it
 		// makes again voids the resume.
-		held := string(PausePlanEnded)
-		if resumed, err := changed(q.MarkTaskResumed(ctx, pgdb.MarkTaskResumedParams{TaskID: a.taskID, PauseReason: &held})); !resumed {
-			return false, err // the row changed since the check, or the write failed
+		//
+		// The row is set active as an owner's resume sets it: under the quota
+		// group's admission lock, after the plan's checks against the group's
+		// open tasks. A task created since the sweep's walk may have taken the
+		// room the walk found; then the hold stays.
+		tier, _, err := r.s.tierLookup.GetUserTierConfig(ctx, a.row.UserID)
+		if err != nil {
+			return false, fmt.Errorf("failed to look up plan: %w", err)
+		}
+		if err := r.s.markResumed(ctx, a.row.UserID, a.row, tier, r.s.currentTime()); err != nil {
+			var limit *LimitError
+			var invalid *ValidationError
+			if errors.As(err, &limit) || errors.As(err, &invalid) {
+				return false, nil // no room any more, or the row changed since the check
+			}
+			return false, err
 		}
 		if err := r.s.resumeAsRead(ctx, a.taskID, read, "plan_ended hold lifted by the task reconciler"); err != nil {
 			return true, err

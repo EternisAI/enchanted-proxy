@@ -361,6 +361,16 @@ func (w *reconWorld) UserIDs(_ context.Context, userID string) ([]string, error)
 	return []string{userID}, nil
 }
 
+func (w *reconWorld) ListOpenTasksForUsers(_ context.Context, userIDs []string) ([]pgdb.ListOpenTasksForUsersRow, error) {
+	var open []pgdb.ListOpenTasksForUsersRow
+	for _, row := range w.rows {
+		if slices.Contains(userIDs, row.UserID) && (row.Status == string(TaskStatusPending) || row.Status == string(TaskStatusActive)) {
+			open = append(open, pgdb.ListOpenTasksForUsersRow{TaskID: row.TaskID, Type: row.Type, Time: row.Time, Status: row.Status, CreatedAt: row.CreatedAt})
+		}
+	}
+	return open, nil
+}
+
 func (w *reconWorld) SendTaskPausedNotification(_ context.Context, userID, chatID, title, body string) error {
 	w.pushes = append(w.pushes, fmt.Sprintf("%s|%s|%s|%s", userID, chatID, title, body))
 	return nil
@@ -375,6 +385,9 @@ func (w *reconWorld) reconciler(mode ReconcilerMode, notify bool) *Reconciler {
 		groups:         w,
 		logger:         logger.New(logger.Config{Level: slog.LevelError + 4}),
 		clock:          func() time.Time { return w.now },
+		admission: func(_ context.Context, _ []string, fn func(pgdb.Querier) error) error {
+			return fn(w)
+		},
 		taskLock: func(_ context.Context, _ string, fn func() error) error {
 			w.locked = true
 			defer func() { w.locked = false }()
@@ -828,5 +841,27 @@ func TestReconcilerDeletesOnlyTaskSchedules(t *testing.T) {
 	expectChanges(t, w)
 	if len(rep.Skipped["delete_schedule"]) != 1 {
 		t.Fatalf("skipped %v, want the orphan's deletion skipped", rep.Skipped)
+	}
+}
+
+// A hold lifts only if the owner's plan still has room for the task when the
+// lift is made: a task created after the sweep's walk may have taken it.
+func TestReconcilerLiftsAHoldOnlyIntoRoomStillFree(t *testing.T) {
+	w := newReconWorld()
+	w.owner("u", oneDay, tiers.TierFree) // 10 active recurring tasks
+	for i := range 9 {
+		w.task(fmt.Sprintf("daily-%d", i), "u", "recurring", fmt.Sprintf("0 %d * * *", i), TaskStatusActive, time.Duration(40-i)*oneDay, &fakeSchedule{})
+	}
+	w.task("held", "u", "recurring", "0 10 * * *", TaskStatusPaused, 20*oneDay, &fakeSchedule{paused: true, note: "plan_ended: over the limits"})
+	w.setRow("held", func(r *pgdb.Task) { r.PauseReason = reasonPtr(PausePlanEnded) })
+	// The tenth slot is taken by a task created while the sweep runs.
+	w.lateRows["late"] = pgdb.Task{TaskID: "late", UserID: "u", Type: "recurring", Time: "0 11 * * *", Status: string(TaskStatusActive), CreatedAt: w.now}
+
+	rep := w.sweep(t, ReconcilerEnforce)
+	if w.rows["held"].Status != string(TaskStatusPaused) || !w.schedules["held"].paused {
+		t.Fatalf("row %s, schedule paused %v; want the hold kept", w.rows["held"].Status, w.schedules["held"].paused)
+	}
+	if len(rep.Skipped["lift_hold:plan_ended"]) != 1 {
+		t.Fatalf("skipped %v, want the lift skipped", rep.Skipped)
 	}
 }
