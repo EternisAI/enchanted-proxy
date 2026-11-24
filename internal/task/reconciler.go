@@ -705,15 +705,18 @@ func (r *Reconciler) execute(ctx context.Context, actions []action, rep *Report)
 // creation, pause, resume and deletion hold, so the check and the change
 // cannot interleave with an owner's change to the same task.
 func (r *Reconciler) applyOne(ctx context.Context, a action, enforce bool) (bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, scheduleSetupTimeout)
-	defer cancel()
 	if !enforce {
-		return r.apply(ctx, a, false)
+		stepCtx, cancel := context.WithTimeout(ctx, scheduleSetupTimeout)
+		defer cancel()
+		return r.apply(stepCtx, a, false)
 	}
 	var applied bool
 	err := r.s.withTaskLock(ctx, a.taskID, func() error {
+		// The step's time starts once the lock is held.
+		stepCtx, cancel := context.WithTimeout(ctx, scheduleSetupTimeout)
+		defer cancel()
 		var err error
-		applied, err = r.apply(ctx, a, true)
+		applied, err = r.apply(stepCtx, a, true)
 		return err
 	})
 	return applied, err
