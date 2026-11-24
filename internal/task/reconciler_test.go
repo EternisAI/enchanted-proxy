@@ -865,3 +865,17 @@ func TestReconcilerLiftsAHoldOnlyIntoRoomStillFree(t *testing.T) {
 		t.Fatalf("skipped %v, want the lift skipped", rep.Skipped)
 	}
 }
+
+// A pending task is activated only while its schedule still exists, not on a
+// listing that shows a schedule deleted since.
+func TestReconcilerActivatesAPendingTaskOnlyWithItsSchedule(t *testing.T) {
+	w := newReconWorld()
+	w.owner("u", oneDay, tiers.TierFree)
+	w.task("pending", "u", "recurring", "0 9 * * *", TaskStatusPending, 2*time.Hour, nil)
+	w.listed = []string{"pending"}
+	w.stale = map[string]fakeSchedule{"pending": {workflow: scheduledTaskWorkflow}}
+	rep := w.sweep(t, ReconcilerEnforce)
+	if w.rows["pending"].Status != string(TaskStatusPending) || len(rep.Skipped["activate"]) != 1 {
+		t.Fatalf("row %s, skipped %v; want the row left pending", w.rows["pending"].Status, rep.Skipped)
+	}
+}

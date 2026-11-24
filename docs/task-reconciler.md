@@ -15,7 +15,7 @@ Firebase Auth. It then:
 | Schedule paused in Temporal, row `active` | Pause made again with the same note, then row set `paused`, reason from the first word of the note |
 | Both paused, row's reason differs from the note's | Row takes the note's reason |
 | Schedule running, row `paused` | Row set `active` |
-| Row `pending` for over an hour with a schedule | Row set `active` |
+| Row `pending` for over an hour with a schedule | Row set `active`, once the schedule is described again |
 | Row `pending` for over an hour without a schedule | Row and its creation record deleted, so the attempt stops counting |
 | One-time task whose run has passed | Row set `completed` |
 | Any other row without a schedule | Row deleted |

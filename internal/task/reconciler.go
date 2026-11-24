@@ -881,6 +881,12 @@ func (r *Reconciler) apply(ctx context.Context, a action, enforce bool) (bool, e
 		return true, q.ClearTaskOverLimit(ctx, a.taskID)
 
 	case actActivate:
+		// A schedule deleted since the listing leaves the row pending, so a later
+		// sweep releases the task as never scheduled.
+		state, err := describe()
+		if err != nil || state == nil {
+			return false, err
+		}
 		if !enforce {
 			return true, nil
 		}
