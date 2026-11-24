@@ -72,6 +72,8 @@ egress:
   - firestore.googleapis.com
   # Firebase Cloud Messaging (push notifications)
   - fcm.googleapis.com
+  # Google OAuth token endpoint (access tokens for FCM and Firebase Auth)
+  - oauth2.googleapis.com
   # Linear API (problem reports)
   - api.linear.app
   # Slack webhooks (problem report notifications)
