@@ -74,6 +74,8 @@ egress:
   - fcm.googleapis.com
   # Google OAuth token endpoint (access tokens for FCM and Firebase Auth)
   - oauth2.googleapis.com
+  # Firebase Auth (the task reconciler looks up task owners)
+  - identitytoolkit.googleapis.com
   # Linear API (problem reports)
   - api.linear.app
   # Slack webhooks (problem report notifications)
