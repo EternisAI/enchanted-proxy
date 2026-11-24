@@ -22,7 +22,7 @@ Firebase Auth. It then:
 | Schedule without a row | Schedule deleted |
 | Owner deleted or disabled | Schedule and row paused, reason `account_missing` |
 | Owner of a recurring task inactive for `TASK_INACTIVE_DAYS` | Schedule and row paused, reason `inactive` |
-| Recurring task over the owner's current plan | First seen time recorded; after `TASK_PLAN_ENDED_GRACE_HOURS`, paused with reason `plan_ended` |
+| Recurring task over the owner's current plan | First seen time recorded; after `TASK_PLAN_ENDED_GRACE_HOURS`, paused with reason `plan_ended` (at once when the grace is 0) |
 | `plan_ended` task that fits the plan again | Row set `active`, then the schedule resumed. This is the only pause the reconciler lifts. |
 
 Inactive means no sign-in and no token refresh. An owner's tasks are walked oldest

@@ -648,6 +648,9 @@ func (r *Reconciler) walkGroup(now time.Time, tier tiers.Config, candidates []ho
 			add(actLiftHold, PausePlanEnded, c.row)
 		case c.held:
 			// Stays on hold.
+		case over && r.cfg.PlanEndedGrace == 0:
+			// No grace: held on the first sweep that finds it over.
+			add(actPause, PausePlanEnded, c.row)
 		case over && !since.Valid:
 			add(actMarkOver, "", c.row)
 		case over && now.Sub(since.Time) >= r.cfg.PlanEndedGrace:

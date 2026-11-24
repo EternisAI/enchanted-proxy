@@ -802,3 +802,15 @@ func TestReconcilerKeepsHoldsWhileTheAccountsAreUnknown(t *testing.T) {
 		t.Fatalf("row %s, schedule paused %v; want the hold lifted without an account lookup", w.rows["held"].Status, w.schedules["held"].paused)
 	}
 }
+
+// With no grace period, a task over the plan is held on the first sweep that
+// finds it over, not marked first.
+func TestReconcilerHoldsAtOnceWithNoGrace(t *testing.T) {
+	w := newReconWorld()
+	w.owner("u", oneDay, tiers.TierFree)
+	w.task("frequent", "u", "recurring", "*/10 * * * *", TaskStatusActive, 60*oneDay, &fakeSchedule{})
+	r := w.reconciler(ReconcilerEnforce, false)
+	r.cfg.PlanEndedGrace = 0
+	r.sweep(context.Background())
+	expectChanges(t, w, "schedule frequent paused:plan_ended", "row frequent paused:plan_ended")
+}
