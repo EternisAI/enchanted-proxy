@@ -1,8 +1,10 @@
 package task
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,9 +16,12 @@ import (
 	"github.com/eternisai/enchanted-proxy/internal/logger"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
+	schedulepb "go.temporal.io/api/schedule/v1"
 	"go.temporal.io/api/serviceerror"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/workflow"
+	"google.golang.org/grpc"
 )
 
 // reconWorld is task rows, their schedules, accounts and plans, logging every
@@ -46,24 +51,28 @@ type reconWorld struct {
 	locked      bool     // inside a task's lock
 	outsideLock []string // changes made outside one
 
-	// unpauseErr is returned by Unpause; with unpauseLate the Unpause still
-	// applies later, at the schedule's next change or applyLateUnpauses.
-	unpauseErr     error
-	unpauseLate    bool
-	pendingUnpause map[string]bool
+	// resumeErr is returned by a resume; with resumeLate the resume still
+	// reaches its schedule later, at deliverLateResumes. As in Temporal, every
+	// change to a schedule bumps its conflict token, and a resume sent with an
+	// out-of-date token is dropped.
+	resumeErr      error
+	resumeLate     bool
+	pendingResumes map[string]*workflowservice.UpdateScheduleRequest
+	beforePause    func() // runs when a pause is sent, before it applies
 }
 
 type fakeSchedule struct {
 	paused   bool
 	note     string
 	workflow string
+	token    int64
 }
 
 func newReconWorld() *reconWorld {
 	return &reconWorld{
 		rows: map[string]pgdb.Task{}, creations: map[string]bool{}, schedules: map[string]*fakeSchedule{},
 		lateRows: map[string]pgdb.Task{}, accounts: map[string]Account{}, tiers: map[string]tiers.Tier{}, now: now,
-		pendingUnpause: map[string]bool{},
+		pendingResumes: map[string]*workflowservice.UpdateScheduleRequest{},
 	}
 }
 
@@ -238,35 +247,82 @@ func (h reconHandle) Describe(context.Context) (*client.ScheduleDescription, err
 }
 
 func (h reconHandle) Pause(_ context.Context, o client.SchedulePauseOptions) error {
-	h.w.applyLateUnpause(h.id) // Temporal applies a schedule's changes in order
+	if h.w.beforePause != nil {
+		h.w.beforePause()
+	}
 	h.w.log("schedule %s paused:%s", h.id, strings.SplitN(o.Note, ":", 2)[0])
-	h.w.schedules[h.id].paused, h.w.schedules[h.id].note = true, o.Note
+	sch := h.w.schedules[h.id]
+	sch.paused, sch.note = true, o.Note
+	sch.token++
 	return nil
 }
 
-func (h reconHandle) Unpause(context.Context, client.ScheduleUnpauseOptions) error {
-	if h.w.unpauseErr != nil {
-		if h.w.unpauseLate {
-			h.w.pendingUnpause[h.id] = true
+func (w *reconWorld) WorkflowService() workflowservice.WorkflowServiceClient {
+	return reconService{w: w}
+}
+
+// reconService serves the schedule calls a resume makes directly.
+type reconService struct {
+	workflowservice.WorkflowServiceClient
+	w *reconWorld
+}
+
+func tokenBytes(token int64) []byte { return binary.BigEndian.AppendUint64(nil, uint64(token)) }
+
+func (s reconService) DescribeSchedule(_ context.Context, req *workflowservice.DescribeScheduleRequest, _ ...grpc.CallOption) (*workflowservice.DescribeScheduleResponse, error) {
+	sch, ok := s.w.schedules[req.ScheduleId]
+	if !ok {
+		return nil, serviceerror.NewNotFound("no schedule")
+	}
+	return &workflowservice.DescribeScheduleResponse{
+		Schedule:      &schedulepb.Schedule{State: &schedulepb.ScheduleState{Paused: sch.paused, Notes: sch.note}},
+		ConflictToken: tokenBytes(sch.token),
+	}, nil
+}
+
+func (s reconService) UpdateSchedule(_ context.Context, req *workflowservice.UpdateScheduleRequest, _ ...grpc.CallOption) (*workflowservice.UpdateScheduleResponse, error) {
+	if s.w.resumeErr != nil {
+		if s.w.resumeLate {
+			s.w.pendingResumes[req.ScheduleId] = req
 		}
-		return h.w.unpauseErr
+		return nil, s.w.resumeErr
 	}
-	h.w.log("schedule %s resumed", h.id)
-	h.w.schedules[h.id].paused = false
-	return nil
+	if s.w.applyUpdate(req) {
+		s.w.log("schedule %s resumed", req.ScheduleId)
+	}
+	return &workflowservice.UpdateScheduleResponse{}, nil
 }
 
-func (w *reconWorld) applyLateUnpause(id string) {
-	if w.pendingUnpause[id] {
-		delete(w.pendingUnpause, id)
-		w.log("schedule %s resumed late", id)
-		w.schedules[id].paused = false
+// applyUpdate applies an update unless its conflict token is out of date, and
+// reports whether it did.
+func (w *reconWorld) applyUpdate(req *workflowservice.UpdateScheduleRequest) bool {
+	sch, ok := w.schedules[req.ScheduleId]
+	if !ok || (req.ConflictToken != nil && !bytes.Equal(req.ConflictToken, tokenBytes(sch.token))) {
+		return false
 	}
+	sch.paused, sch.note = req.Schedule.GetState().GetPaused(), req.Schedule.GetState().GetNotes()
+	sch.token++
+	return true
 }
 
-func (w *reconWorld) applyLateUnpauses() {
-	for id := range w.pendingUnpause {
-		w.applyLateUnpause(id)
+// lateResume leaves a resume of the schedule as it reads now on its way, as
+// one whose call failed.
+func (w *reconWorld) lateResume(id string) {
+	w.pendingResumes[id] = &workflowservice.UpdateScheduleRequest{ScheduleId: id,
+		Schedule:      &schedulepb.Schedule{State: &schedulepb.ScheduleState{Notes: "resumed by the owner"}},
+		ConflictToken: tokenBytes(w.schedules[id].token)}
+}
+
+// deliverLateResumes lets the resumes whose calls failed reach their
+// schedules now.
+func (w *reconWorld) deliverLateResumes() {
+	for id, req := range w.pendingResumes {
+		delete(w.pendingResumes, id)
+		if w.applyUpdate(req) {
+			w.log("schedule %s resumed late", id)
+		} else {
+			w.log("late resume of %s dropped", id)
+		}
 	}
 }
 
@@ -361,41 +417,48 @@ func TestReconcilerRecordsPausesAndResumesMadeInTemporal(t *testing.T) {
 }
 
 // After a failed resume the row stays active while the schedule reads paused,
-// and the failed Unpause can still apply. Recording the pause must not leave
-// the schedule running once it does, with a row that no longer counts it.
-func TestReconcilerOutlastsAFailedUnpauseThatAppliesLate(t *testing.T) {
-	w := newReconWorld()
-	w.owner("u", oneDay, tiers.TierFree)
-	w.task("resuming", "u", "recurring", "0 9 * * *", TaskStatusActive, 30*oneDay, &fakeSchedule{paused: true, note: "user: paused by the owner"})
-	w.pendingUnpause["resuming"] = true
+// and the resume can still reach Temporal. Recording the pause must not leave
+// the schedule running once it does, before the pause is made again or after,
+// with a row that no longer counts it.
+func TestReconcilerOutlastsAFailedResumeThatArrivesLate(t *testing.T) {
+	for _, beforePause := range []bool{true, false} {
+		w := newReconWorld()
+		w.owner("u", oneDay, tiers.TierFree)
+		w.task("resuming", "u", "recurring", "0 9 * * *", TaskStatusActive, 30*oneDay, &fakeSchedule{paused: true, note: "user: paused by the owner"})
+		w.lateResume("resuming")
+		if beforePause {
+			w.beforePause = w.deliverLateResumes
+		}
 
-	w.sweep(t, ReconcilerEnforce)
-	w.applyLateUnpauses()
-	if !w.schedules["resuming"].paused || w.rows["resuming"].Status != string(TaskStatusPaused) {
-		t.Fatalf("schedule paused %v, row %s; want both paused", w.schedules["resuming"].paused, w.rows["resuming"].Status)
+		w.sweep(t, ReconcilerEnforce)
+		w.deliverLateResumes()
+		if !w.schedules["resuming"].paused || w.rows["resuming"].Status != string(TaskStatusPaused) {
+			t.Fatalf("resume arriving before the pause %v: schedule paused %v, row %s; want both paused",
+				beforePause, w.schedules["resuming"].paused, w.rows["resuming"].Status)
+		}
 	}
 }
 
 // Lifting a hold counts the task before its schedule resumes, and a failed
-// Unpause, which may still apply, keeps it counted.
-func TestReconcilerKeepsALiftedHoldCountedWhileItsUnpauseMayApply(t *testing.T) {
+// resume, which may still apply, keeps it counted.
+func TestReconcilerKeepsALiftedHoldCountedWhileItsResumeMayApply(t *testing.T) {
 	w := newReconWorld()
 	w.owner("u", oneDay, tiers.TierPro)
 	w.task("held", "u", "recurring", "*/10 * * * *", TaskStatusPaused, 60*oneDay, &fakeSchedule{paused: true, note: "plan_ended: over the limits"})
 	w.setRow("held", func(r *pgdb.Task) { r.PauseReason = reasonPtr(PausePlanEnded) })
-	w.unpauseErr, w.unpauseLate = serviceerror.NewDeadlineExceeded("late"), true
+	w.resumeErr, w.resumeLate = serviceerror.NewDeadlineExceeded("late"), true
 
 	rep := w.sweep(t, ReconcilerEnforce)
 	if len(rep.Errors) == 0 {
-		t.Fatal("the failed Unpause was not reported")
+		t.Fatal("the failed resume was not reported")
 	}
 	if row := w.rows["held"]; row.Status != string(TaskStatusActive) {
-		t.Fatalf("row %s, want active and counted while the Unpause may apply", row.Status)
+		t.Fatalf("row %s, want active and counted while the resume may apply", row.Status)
 	}
 
 	// It applies: the next sweep finds nothing to change in the row.
-	w.applyLateUnpauses()
-	w.unpauseErr = nil
+	w.deliverLateResumes()
+	w.resumeErr = nil
 	w.sweep(t, ReconcilerEnforce)
 	if row := w.rows["held"]; row.Status != string(TaskStatusActive) || w.schedules["held"].paused {
 		t.Fatalf("row %s, schedule paused %v; want both running", row.Status, w.schedules["held"].paused)

@@ -41,11 +41,12 @@ pause and note. Each check and change holds the task's lock, the same Postgres
 advisory lock that creating, pausing, resuming and deleting a task hold, so they cannot
 interleave with an owner's change to the same task.
 
-A schedule can read paused while an Unpause that returned an error may still apply,
-after an owner's resume or a lifted hold failed. In that case the row stays `active`,
-so the task keeps counting. Before the reconciler sets such a row `paused`, it makes
-the pause again with the same note. Temporal applies a schedule's changes in the order
-it accepts them, so the earlier Unpause cannot undo that pause.
+A schedule can read paused while a resume that returned an error may still reach
+Temporal, after an owner's resume or a lifted hold failed. In that case the row stays
+`active`, so the task keeps counting. Before the reconciler sets such a row `paused`,
+it makes the pause again with the same note. A resume is an update conditional on the
+schedule's conflict token from the read it was decided on, and every pause changes that
+token, so Temporal drops or refuses the earlier resume whenever it arrives.
 
 ## Settings
 

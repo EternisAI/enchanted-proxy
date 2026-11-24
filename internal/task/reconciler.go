@@ -784,10 +784,11 @@ func (r *Reconciler) apply(ctx context.Context, a action, enforce bool) (bool, e
 		reason := string(a.reason)
 		switch a.kind {
 		case actMarkPaused:
-			// The schedule may read paused while an Unpause that failed can still
-			// apply, as after a failed resume, whose row stays active. The pause is
-			// made again with its own note before the row stops counting the task:
-			// Temporal applies a schedule's changes in the order it accepts them.
+			// The schedule may read paused while a resume whose call failed can
+			// still reach Temporal, as after a failed resume, whose row stays
+			// active. The pause is made again with its own note before the row
+			// stops counting the task: a resume applies only to the schedule as it
+			// was read (resumeAsRead), so this pause voids it.
 			if err := handle().Pause(ctx, client.SchedulePauseOptions{Note: state.Note}); err != nil {
 				return false, err
 			}
@@ -818,21 +819,22 @@ func (r *Reconciler) apply(ctx context.Context, a action, enforce bool) (bool, e
 		return true, nil
 
 	case actLiftHold:
-		state, err := describe()
-		if err != nil || state == nil || !state.Paused || pauseReasonFromNote(state.Note) != PausePlanEnded {
+		read, err := r.s.readForResume(ctx, a.taskID)
+		if err != nil || read == nil || !read.paused() || pauseReasonFromNote(read.note()) != PausePlanEnded {
 			return false, err
 		}
 		if !enforce {
 			return true, nil
 		}
 		// The row counts the task before its schedule resumes, and keeps counting
-		// it after a failed Unpause, which may still apply. If the schedule stays
-		// paused, the next sweep puts the hold back on the row.
+		// it after a failed resume, which may still apply. If the schedule stays
+		// paused, the next sweep puts the hold back on the row, and the pause it
+		// makes again voids the resume.
 		held := string(PausePlanEnded)
 		if resumed, err := changed(q.MarkTaskResumed(ctx, pgdb.MarkTaskResumedParams{TaskID: a.taskID, PauseReason: &held})); !resumed {
 			return false, err // the row changed since the check, or the write failed
 		}
-		if err := handle().Unpause(ctx, client.ScheduleUnpauseOptions{Note: "plan_ended hold lifted by the task reconciler"}); err != nil {
+		if err := r.s.resumeAsRead(ctx, a.taskID, read, "plan_ended hold lifted by the task reconciler"); err != nil {
 			return true, err
 		}
 		return true, q.ClearTaskOverLimit(ctx, a.taskID)
