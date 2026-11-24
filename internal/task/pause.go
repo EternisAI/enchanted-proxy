@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
+	"github.com/eternisai/enchanted-proxy/internal/tiers"
 	"go.temporal.io/sdk/client"
 )
 
@@ -160,7 +162,9 @@ func (s *Service) PauseTask(ctx context.Context, userID, taskID string) (*Task, 
 // ResumeTask lets a paused task of the caller's run again on its schedule. It
 // refuses a task paused by an admin or held because the plan ended, and a
 // task that would take the caller over the plan's number of tasks. The other
-// creation limits are not applied again, so that pausing stays reversible.
+// creation limits are not applied again, so that pausing stays reversible. A
+// row that says active is checked against its schedule, which may be paused
+// if recording a pause failed.
 func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task, error) {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
 
@@ -168,11 +172,8 @@ func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task,
 	if err != nil {
 		return nil, err
 	}
-	switch TaskStatus(row.Status) {
-	case TaskStatusActive:
-		return taskFromRow(row), nil
-	case TaskStatusPaused:
-	default:
+	rowPaused := row.Status == string(TaskStatusPaused)
+	if !rowPaused && row.Status != string(TaskStatusActive) {
 		return nil, &ValidationError{Message: "Only a paused task can be resumed."}
 	}
 
@@ -196,13 +197,17 @@ func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task,
 	if err != nil {
 		return nil, fmt.Errorf("failed to read schedule: %w", err)
 	}
+	schedulePaused := desc.Schedule.State != nil && desc.Schedule.State.Paused
+	if !rowPaused && !schedulePaused {
+		return taskFromRow(row), nil // running already
+	}
 	var reason PauseReason
 	var reasons []PauseReason
-	if row.PauseReason != nil && *row.PauseReason != "" {
+	if rowPaused && row.PauseReason != nil && *row.PauseReason != "" {
 		reason = PauseReason(*row.PauseReason)
 		reasons = append(reasons, reason)
 	}
-	if desc.Schedule.State != nil && desc.Schedule.State.Paused {
+	if schedulePaused {
 		reasons = append(reasons, pauseReasonFromNote(desc.Schedule.State.Note))
 	}
 	for _, r := range reasons {
@@ -227,13 +232,46 @@ func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task,
 		}
 	}
 
+	// A row that stayed active while its schedule was paused counts already;
+	// only the schedule needs resuming.
+	if rowPaused {
+		if err := s.markResumed(ctx, userID, row, tier, now); err != nil {
+			return nil, err
+		}
+	}
+	if schedulePaused {
+		if err := handle.Unpause(opCtx, client.ScheduleUnpauseOptions{Note: "resumed by the owner"}); err != nil {
+			log.Error("failed to resume a task's schedule", slog.String("error", err.Error()), slog.String("task_id", taskID))
+			// Put the pause back on the row, so the task stops counting as active. If
+			// the schedule did resume after all, the reconciler sets the row active.
+			if rowPaused {
+				revertCtx, cancelRevert := detached(ctx, cleanupTimeout)
+				defer cancelRevert()
+				if _, revertErr := s.queries.MarkTaskPaused(revertCtx, pgdb.MarkTaskPausedParams{TaskID: taskID, PauseReason: row.PauseReason}); revertErr != nil {
+					log.Error("failed to restore a task's pause", slog.String("error", revertErr.Error()), slog.String("task_id", taskID))
+				}
+			}
+			if isNotFound(err) {
+				return nil, errScheduleGone
+			}
+			return nil, fmt.Errorf("failed to resume schedule: %w", err)
+		}
+	}
+	log.Info("task resumed", slog.String("task_id", taskID), slog.String("user_id", userID), slog.String("reason", string(reason)))
+
+	row.Status = string(TaskStatusActive)
+	row.PauseReason = nil
+	return taskFromRow(row), nil
+}
+
+// markResumed sets a paused row active under the admission lock, after
+// checking the plan's task count, so a task created at the same time sees it.
+func (s *Service) markResumed(ctx context.Context, userID string, row pgdb.Task, tier tiers.Config, now time.Time) error {
 	userIDs, err := s.groups.UserIDs(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to look up quota group: %w", err)
+		return fmt.Errorf("failed to look up quota group: %w", err)
 	}
-	// Under the admission lock the task counts as soon as the row is active, so a
-	// task created at the same time sees it.
-	err = s.admission(ctx, userIDs, func(q pgdb.Querier) error {
+	return s.admission(ctx, userIDs, func(q pgdb.Querier) error {
 		rows, err := q.ListOpenTasksForUsers(ctx, userIDs)
 		if err != nil {
 			return fmt.Errorf("failed to list tasks: %w", err)
@@ -249,7 +287,7 @@ func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task,
 				"The limit of %d scheduled one-time tasks on the %s plan has been reached. Delete another one-time task first.",
 				tier.TaskMaxPendingOneTime, tier.DisplayName)}
 		}
-		changed, err := q.MarkTaskResumed(ctx, pgdb.MarkTaskResumedParams{TaskID: taskID, PauseReason: row.PauseReason})
+		changed, err := q.MarkTaskResumed(ctx, pgdb.MarkTaskResumedParams{TaskID: row.TaskID, PauseReason: row.PauseReason})
 		if err != nil {
 			return fmt.Errorf("failed to record the resume: %w", err)
 		}
@@ -258,27 +296,4 @@ func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task,
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	if err := handle.Unpause(opCtx, client.ScheduleUnpauseOptions{Note: "resumed by the owner"}); err != nil {
-		log.Error("failed to resume a task's schedule", slog.String("error", err.Error()), slog.String("task_id", taskID))
-		// Put the pause back on the row, so the task stops counting as active. If
-		// the schedule did resume after all, the reconciler sets the row active.
-		revertCtx, cancelRevert := detached(ctx, cleanupTimeout)
-		defer cancelRevert()
-		if _, revertErr := s.queries.MarkTaskPaused(revertCtx, pgdb.MarkTaskPausedParams{TaskID: taskID, PauseReason: row.PauseReason}); revertErr != nil {
-			log.Error("failed to restore a task's pause", slog.String("error", revertErr.Error()), slog.String("task_id", taskID))
-		}
-		if isNotFound(err) {
-			return nil, errScheduleGone
-		}
-		return nil, fmt.Errorf("failed to resume schedule: %w", err)
-	}
-	log.Info("task resumed", slog.String("task_id", taskID), slog.String("user_id", userID), slog.String("reason", string(reason)))
-
-	row.Status = string(TaskStatusActive)
-	row.PauseReason = nil
-	return taskFromRow(row), nil
 }
