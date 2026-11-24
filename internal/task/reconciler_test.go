@@ -58,7 +58,8 @@ type reconWorld struct {
 	resumeErr      error
 	resumeLate     bool
 	pendingResumes map[string]*workflowservice.UpdateScheduleRequest
-	beforePause    func() // runs when a pause is sent, before it applies
+	beforePause    func()              // runs when a pause is sent, before it applies
+	rowAtResume    map[string][]string // a task's row status at each resume of its schedule
 }
 
 type fakeSchedule struct {
@@ -284,6 +285,10 @@ func (s reconService) DescribeSchedule(_ context.Context, req *workflowservice.D
 }
 
 func (s reconService) UpdateSchedule(_ context.Context, req *workflowservice.UpdateScheduleRequest, _ ...grpc.CallOption) (*workflowservice.UpdateScheduleResponse, error) {
+	if s.w.rowAtResume == nil {
+		s.w.rowAtResume = map[string][]string{}
+	}
+	s.w.rowAtResume[req.ScheduleId] = append(s.w.rowAtResume[req.ScheduleId], s.w.rows[req.ScheduleId].Status)
 	if s.w.resumeErr != nil {
 		if s.w.resumeLate {
 			s.w.pendingResumes[req.ScheduleId] = req
@@ -467,6 +472,9 @@ func TestReconcilerKeepsALiftedHoldCountedWhileItsResumeMayApply(t *testing.T) {
 	rep := w.sweep(t, ReconcilerEnforce)
 	if len(rep.Errors) == 0 {
 		t.Fatal("the failed resume was not reported")
+	}
+	if got := w.rowAtResume["held"]; len(got) == 0 || slices.ContainsFunc(got, func(s string) bool { return s != string(TaskStatusActive) }) {
+		t.Fatalf("row %q at each resume sent, want active already", got)
 	}
 	if row := w.rows["held"]; row.Status != string(TaskStatusActive) {
 		t.Fatalf("row %s, want active and counted while the resume may apply", row.Status)

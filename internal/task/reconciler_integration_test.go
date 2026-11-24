@@ -88,8 +88,8 @@ func TestReconcilerWritesAgainstPostgres(t *testing.T) {
 	}
 
 	recurring := newTask("recurring", TaskStatusActive)
-	if n, _ := q.CompleteOneTimeTask(ctx, recurring); n != 0 {
-		t.Fatal("completed a recurring task")
+	if n, err := q.CompleteOneTimeTask(ctx, recurring); err != nil || n != 0 {
+		t.Fatalf("complete a recurring task: %d rows, %v; want none and no error", n, err)
 	}
 	oneTime := newTask("one_time", TaskStatusActive)
 	if n, err := q.CompleteOneTimeTask(ctx, oneTime); err != nil || n != 1 || read(oneTime).Status != "completed" {
