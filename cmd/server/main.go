@@ -149,7 +149,9 @@ func main() {
 	// Accounts that share limits: every account a purchase has been attached to.
 	quotaGroups := quota.NewGroups(db.Queries)
 	requestTrackingService := request_tracking.NewService(db.Queries, quotaGroups, logger.WithComponent("request_tracking"))
-	iapService := iap.NewService(db.Queries)
+	iapPolicy := iap.LoadPolicy()
+	log.Info("app store purchase policy", slog.String("policy", iapPolicy.String()))
+	iapService := iap.NewService(db.Queries, iapPolicy)
 	stripeService := stripe.NewService(db.Queries, logger.WithComponent("stripe"))
 
 	// Initialize zcash service with Firestore client for real-time updates

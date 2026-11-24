@@ -1,6 +1,8 @@
 package iap
 
 import (
+	stderrors "errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/eternisai/enchanted-proxy/internal/auth"
@@ -35,8 +37,19 @@ func (h *Handler) AttachAppStoreSubscription(c *gin.Context) {
 		return
 	}
 
-	payload, expiresAt, err := h.service.AttachAppStoreSubscription(c.Request.Context(), userID, body.JWSTransactionInfo)
-	if err != nil {
+	var identity *auth.Identity
+	if id, ok := auth.GetIdentity(c); ok {
+		identity = &id
+	}
+
+	payload, expiresAt, err := h.service.AttachAppStoreSubscription(c.Request.Context(), userID, identity, body.JWSTransactionInfo)
+	var refusal *Refusal
+	switch {
+	case stderrors.As(err, &refusal):
+		h.logger.WithContext(c.Request.Context()).Info("purchase refused", slog.String("reason", refusal.Reason))
+		errors.AbortWithForbidden(c, errors.NewForbiddenError(errors.ReasonPurchaseRefused, refusal.Message, refusal.Message, "", nil))
+		return
+	case err != nil:
 		errors.BadRequest(c, "invalid jwsTransactionInfo", nil)
 		return
 	}

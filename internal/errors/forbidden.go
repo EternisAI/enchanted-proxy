@@ -33,6 +33,9 @@ const (
 	// Scheduled tasks
 	ReasonTaskLimit ForbiddenReason = "task_limit"
 
+	// Purchases
+	ReasonPurchaseRefused ForbiddenReason = "purchase_refused"
+
 	// Subscription/Tier
 	ReasonTierValidationFailed ForbiddenReason = "tier_validation_failed"
 	ReasonSubscriptionExpired  ForbiddenReason = "subscription_expired"
