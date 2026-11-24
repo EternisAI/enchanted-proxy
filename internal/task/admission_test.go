@@ -2,8 +2,10 @@ package task
 
 import (
 	"context"
+	stderrors "errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
 	"go.temporal.io/api/serviceerror"
@@ -199,5 +201,42 @@ func TestCreateTaskReleasesATaskItCouldNotLock(t *testing.T) {
 	}
 	if len(q.deletedTasks) != 1 || !slices.Equal(q.deletedTasks, q.releasedCreation) {
 		t.Fatalf("deleted tasks %v, released creations %v; want the admitted task released", q.deletedTasks, q.releasedCreation)
+	}
+}
+
+// A one-time run that passes while the task's lock is awaited would never
+// fire, as Temporal does not backfill a new schedule, so the task is released
+// instead. A run still ahead once the lock is held is scheduled.
+func TestCreateTaskRechecksAOneTimeRunOnceItHoldsTheLock(t *testing.T) {
+	for _, tc := range []struct {
+		waited    time.Duration
+		scheduled bool
+	}{{2 * time.Minute, false}, {30 * time.Second, true}} {
+		q := &limitQuerier{}
+		schedules := &scriptedSchedules{}
+		s := scriptedService(q, schedules)
+		current := now
+		s.clock = func() time.Time { return current }
+		s.taskLock = func(_ context.Context, _ string, fn func() error) error {
+			current = now.Add(tc.waited)
+			return fn()
+		}
+		_, err := s.CreateTask(context.Background(), "user-1", request("one_time", "31 10 22 11 *")) // a minute after now
+		if tc.scheduled {
+			if err != nil || schedules.options.ID == "" {
+				t.Fatalf("waited %s: err = %v, schedule %q; want the run scheduled", tc.waited, err, schedules.options.ID)
+			}
+			continue
+		}
+		var invalid *ValidationError
+		if !stderrors.As(err, &invalid) {
+			t.Fatalf("waited %s: err = %v, want a ValidationError", tc.waited, err)
+		}
+		if schedules.options.ID != "" {
+			t.Fatalf("waited %s: created schedule %q for a run that passed", tc.waited, schedules.options.ID)
+		}
+		if len(q.deletedTasks) != 1 || !slices.Equal(q.deletedTasks, q.releasedCreation) {
+			t.Fatalf("waited %s: deleted tasks %v, released creations %v; want the admitted task released", tc.waited, q.deletedTasks, q.releasedCreation)
+		}
 	}
 }
