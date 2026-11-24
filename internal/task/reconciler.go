@@ -146,11 +146,18 @@ type sweepGate func(ctx context.Context, mode ReconcilerMode, minGap time.Durati
 // that transaction.
 func lockedSweeps(db *sql.DB) sweepGate {
 	return func(ctx context.Context, mode ReconcilerMode, minGap time.Duration, fn func(ctx context.Context) *Report) (bool, error) {
+		// Waiting for a connection follows ctx, so a reconciler being stopped
+		// does not wait for one.
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			return false, fmt.Errorf("failed to get a connection for the reconciler: %w", err)
+		}
+		defer func() { _ = conn.Close() }()
 		// database/sql rolls a transaction back when its context ends, so the
 		// transaction outlives the sweep's deadline long enough to record it.
 		txCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sweepTimeout+cleanupTimeout)
 		defer cancel()
-		tx, err := db.BeginTx(txCtx, nil)
+		tx, err := conn.BeginTx(txCtx, nil)
 		if err != nil {
 			return false, fmt.Errorf("failed to begin reconciler transaction: %w", err)
 		}
@@ -163,6 +170,9 @@ func lockedSweeps(db *sql.DB) sweepGate {
 		recent, err := q.RecentTaskReconcilerRun(txCtx, minGap.Seconds())
 		if err != nil || recent {
 			return false, err
+		}
+		if err := ctx.Err(); err != nil {
+			return false, err // stopped meanwhile: no sweep is started
 		}
 		id, err := q.StartTaskReconcilerRun(txCtx, string(mode))
 		if err != nil {

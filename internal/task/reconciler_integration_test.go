@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -63,6 +64,38 @@ func TestReconcilerSweepsOncePerIntervalAcrossInstances(t *testing.T) {
 	}
 	if took < 0.2 {
 		t.Fatalf("the run took %.3fs by its record; the sweep slept 0.2s", took)
+	}
+}
+
+// A reconciler being stopped does not wait for a database connection held by
+// other work, and starts no sweep.
+func TestReconcilerGateFollowsCancellationWhileWaitingForAConnection(t *testing.T) {
+	openTestDB(t) // migrations
+	small, err := sql.Open("postgres", os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = small.Close() })
+	small.SetMaxOpenConns(1)
+	other, err := small.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The other work ends after a while, so a gate that waits for it returns
+	// late rather than never.
+	freed := time.AfterFunc(2*time.Second, func() { _ = other.Close() })
+	t.Cleanup(func() { freed.Stop(); _ = other.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	swept := false
+	started := time.Now()
+	ran, err := lockedSweeps(small)(ctx, ReconcilerDryRun, 0, func(context.Context) *Report {
+		swept = true
+		return &Report{Mode: ReconcilerDryRun, Actions: map[string][]string{}}
+	})
+	if waited := time.Since(started); ran || swept || err == nil || waited > time.Second {
+		t.Fatalf("ran %v, swept %v, err %v after %s; want no sweep, soon after the cancellation", ran, swept, err, waited)
 	}
 }
 
