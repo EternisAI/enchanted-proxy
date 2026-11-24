@@ -261,7 +261,11 @@ func TestTaskLocksDoNotExhaustTheConnectionPool(t *testing.T) {
 
 func testTaskLocks(t *testing.T, db *sql.DB, wait time.Duration) taskLocker {
 	t.Helper()
-	return lockedTasksWaiting(db, logger.New(logger.Config{Level: slog.LevelError + 4}), wait)
+	lock, err := lockedTasksWaiting(db, logger.New(logger.Config{Level: slog.LevelError + 4}), wait)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lock
 }
 
 // A task's lock is held until its holder returns, also when the holder's

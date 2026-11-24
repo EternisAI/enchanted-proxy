@@ -54,19 +54,27 @@ type taskLocker func(ctx context.Context, taskID string, fn func() error) error
 // on the hold could only end the lock while a step still runs.
 const taskLockWait = scheduleSetupTimeout
 
+// minTaskLockPool is the smallest connection pool task locks work with: a
+// holder keeps one connection for the lock and needs another for its work.
+const minTaskLockPool = 2
+
 // lockedTasks is the taskLocker backed by a Postgres advisory lock, held in a
 // transaction while fn runs. fn's own reads and writes go through the pool,
-// outside that transaction.
-func lockedTasks(db *sql.DB, log *logger.Logger) taskLocker {
+// outside that transaction. It refuses a pool too small to hold a lock and
+// do the work under it.
+func lockedTasks(db *sql.DB, log *logger.Logger) (taskLocker, error) {
 	return lockedTasksWaiting(db, log, taskLockWait)
 }
 
-func lockedTasksWaiting(db *sql.DB, log *logger.Logger, wait time.Duration) taskLocker {
-	// A holder keeps one pool connection for the lock and takes others for its
-	// work. Holders are limited to a third of the pool, so they cannot take every
+func lockedTasksWaiting(db *sql.DB, log *logger.Logger, wait time.Duration) (taskLocker, error) {
+	n := db.Stats().MaxOpenConnections
+	if n > 0 && n < minTaskLockPool {
+		return nil, fmt.Errorf("task locks need a database pool of at least %d connections (DB_MAX_OPEN_CONNS), not %d", minTaskLockPool, n)
+	}
+	// Holders are limited to a third of the pool, so they cannot take every
 	// connection and then wait for one another.
 	var slots chan struct{}
-	if n := db.Stats().MaxOpenConnections; n > 0 {
+	if n > 0 {
 		slots = make(chan struct{}, max(1, n/3))
 	}
 	return func(ctx context.Context, taskID string, fn func() error) error {
@@ -102,7 +110,7 @@ func lockedTasksWaiting(db *sql.DB, log *logger.Logger, wait time.Duration) task
 			log.Warn("failed to release a task lock cleanly", slog.String("error", err.Error()), slog.String("task_id", taskID))
 		}
 		return nil
-	}
+	}, nil
 }
 
 // withTaskLock runs fn under the task's lock. The wait for the lock is bounded
@@ -157,6 +165,11 @@ func NewService(endpoint, namespace, apiKey string, db *sql.DB, queries pgdb.Que
 			endpoint, namespace, "***")
 	}
 
+	taskLock, err := lockedTasks(db, log)
+	if err != nil {
+		return nil, err
+	}
+
 	// Create Temporal client options
 	clientOptions := client.Options{
 		HostPort:  endpoint,
@@ -192,7 +205,7 @@ func NewService(endpoint, namespace, apiKey string, db *sql.DB, queries pgdb.Que
 		tierLookup:     tierLookup,
 		groups:         groups,
 		admission:      lockedAdmission(db),
-		taskLock:       lockedTasks(db, log),
+		taskLock:       taskLock,
 		clock:          time.Now,
 	}, nil
 }
