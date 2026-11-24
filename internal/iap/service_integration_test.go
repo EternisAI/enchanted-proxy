@@ -332,6 +332,32 @@ func TestARevokedPurchaseIsBlocked(t *testing.T) {
 	}
 }
 
+// A revocation of a purchase not on record yet is recorded, blocked: an
+// attach confirmed by the App Store just before the refund, which arrives
+// after the revocation, grants nothing.
+func TestARevocationBeforeTheFirstAttachIsKept(t *testing.T) {
+	w := newWorld(t)
+	a, b := newID("a"), newID("b")
+	tx, token := w.lifetime() // the App Store still answers with the unrevoked transaction
+
+	revoked := *tx
+	revoked.RevocationDate = testNow.Add(-time.Hour).UnixMilli()
+	w.store.tokens["revoked"] = &revoked
+	var refusal *Refusal
+	if _, err := w.s.AttachAppStoreSubscription(context.Background(), a, nil, "revoked"); !errors.As(err, &refusal) || refusal.Reason != refusedRevoked {
+		t.Fatalf("err %v, want a revoked refusal", err)
+	}
+	row, err := w.q.GetApplePurchase(context.Background(), tx.OriginalTransactionId)
+	if err != nil || !row.BlockedAt.Valid || !row.RevokedAt.Valid {
+		t.Fatalf("purchase %+v, %v; want it recorded blocked", row, err)
+	}
+
+	if got := w.attach(b, token); !got.Blocked {
+		t.Fatal("a revoked purchase granted a plan on its first attach")
+	}
+	w.expectPlan(b, "none", "")
+}
+
 // A purchase refunded since it was attached is blocked when the App Store
 // reports the refund while confirming a move, though the moving account sent
 // a transaction from before the refund.

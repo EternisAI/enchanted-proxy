@@ -284,19 +284,37 @@ func (s *Service) attach(ctx context.Context, userID string, tx *appstore.JWSTra
 	return result, nil
 }
 
-// revoke blocks a purchase Apple reports refunded or revoked, if it is on
-// record, and returns the refusal.
+// revoke blocks a purchase Apple reports refunded or revoked and returns the
+// refusal. A purchase not on record yet is recorded blocked, with the account
+// that reported it as holder: an attach whose App Store confirmation came just
+// before the refund then finds it blocked and grants nothing.
 func (s *Service) revoke(ctx context.Context, userID string, tx *appstore.JWSTransaction, refusal *Refusal) error {
 	purchaseID := tx.OriginalTransactionId
 	if purchaseID == "" {
 		return refusal
 	}
+	prod, ok := s.policy.product(tx.ProductID)
+	if !ok {
+		return refusal
+	}
+	var expiresAt sql.NullTime
+	if !prod.lifetime && tx.ExpiresDate > 0 {
+		expiresAt = sql.NullTime{Time: time.UnixMilli(tx.ExpiresDate).UTC(), Valid: true}
+	}
 	blocked := false
 	err := s.inTx(ctx, func(q pgdb.Querier) error {
-		row, err := q.LockApplePurchase(ctx, purchaseID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil // nothing was granted from it here
+		if _, err := q.InsertApplePurchase(ctx, pgdb.InsertApplePurchaseParams{
+			OriginalTransactionID: purchaseID,
+			ProductID:             tx.ProductID,
+			Environment:           string(tx.Environment),
+			Tier:                  string(prod.tier),
+			ExpiresAt:             expiresAt,
+			HolderUserID:          userID,
+			LastTransactionID:     tx.TransactionID,
+		}); err != nil {
+			return fmt.Errorf("failed to record purchase: %w", err)
 		}
+		row, err := q.LockApplePurchase(ctx, purchaseID)
 		if err != nil {
 			return fmt.Errorf("failed to lock purchase: %w", err)
 		}
