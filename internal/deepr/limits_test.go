@@ -330,7 +330,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 		t.Setenv(name, "")
 	}
 	c := LoadConfig(pairGroup{})
-	if c.MaxRunsPerDay != 25 || c.RunMaxLLMCalls != 300 || c.RunMaxTokens != 6_500_000 || c.RunMaxSeconds != 12_600 {
+	if c.MaxRunsPerDay != 25 || c.RunMaxLLMCalls != 500 || c.RunMaxTokens != 6_500_000 || c.RunMaxSeconds != 12_600 {
 		t.Errorf("defaults = %+v", c)
 	}
 	if strings.Join(c.FreeRunProviders, ",") != "apple.com,google.com" {
