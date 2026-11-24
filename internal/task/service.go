@@ -90,10 +90,17 @@ func lockedTasksWaiting(db *sql.DB, log *logger.Logger, wait time.Duration) (tas
 				return fmt.Errorf("timed out waiting to lock task: %w", waitCtx.Err())
 			}
 		}
+		// Waiting for a connection, when other work holds them all, is part of
+		// the wait for the lock. The connection is then kept until the lock ends.
+		conn, err := db.Conn(waitCtx)
+		if err != nil {
+			return fmt.Errorf("failed to get a connection to lock task: %w", err)
+		}
+		defer func() { _ = conn.Close() }()
 		// database/sql ends a transaction, and with it the lock, when the
 		// transaction's context ends. This one has no deadline, so the lock ends
 		// only once fn has returned.
-		tx, err := db.BeginTx(context.WithoutCancel(ctx), nil)
+		tx, err := conn.BeginTx(context.WithoutCancel(ctx), nil)
 		if err != nil {
 			return fmt.Errorf("failed to begin task lock: %w", err)
 		}
