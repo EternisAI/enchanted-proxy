@@ -46,6 +46,10 @@ func detached(ctx context.Context, timeout time.Duration) (context.Context, cont
 // ErrInvalidChatID is returned when a task's chat ID is malformed.
 var ErrInvalidChatID = errors.New("invalid chat_id")
 
+// ErrTaskNotFound is returned when the task does not exist or belongs to
+// another account.
+var ErrTaskNotFound = errors.New("task not found or unauthorized")
+
 // Service handles task scheduling operations.
 type Service struct {
 	temporalClient client.Client
@@ -157,6 +161,12 @@ func (s *Service) scheduleExists(ctx context.Context, scheduleID string) (bool, 
 	default:
 		return false, err
 	}
+}
+
+// isNotFound reports whether Temporal answered that the schedule does not exist.
+func isNotFound(err error) bool {
+	var notFound *serviceerror.NotFound
+	return errors.As(err, &notFound)
 }
 
 // rejectedOutright reports whether Temporal refused a request in a way that
@@ -403,47 +413,65 @@ func (s *Service) GetTasksByUserID(ctx context.Context, userID string) ([]*Task,
 	return tasks, nil
 }
 
-// DeleteTask deletes a task by task ID with ownership verification.
+// getOwnedTask reads a task row of the caller's.
+func getOwnedTask(ctx context.Context, q pgdb.Querier, userID, taskID string) (pgdb.Task, error) {
+	row, err := q.GetTaskForUser(ctx, pgdb.GetTaskForUserParams{TaskID: taskID, UserID: userID})
+	if errors.Is(err, sql.ErrNoRows) {
+		return pgdb.Task{}, ErrTaskNotFound
+	}
+	if err != nil {
+		return pgdb.Task{}, fmt.Errorf("failed to read task: %w", err)
+	}
+	return row, nil
+}
+
+// deleteSchedule removes a task's schedule. A schedule that does not exist
+// counts as removed. After a failed call the schedule may be gone even so,
+// which a lookup settles; while it may still exist, the error is returned.
+func (s *Service) deleteSchedule(ctx context.Context, scheduleID string) error {
+	err := s.temporalClient.ScheduleClient().GetHandle(ctx, scheduleID).Delete(ctx)
+	if err == nil || isNotFound(err) {
+		return nil
+	}
+	if exists, checkErr := s.scheduleExists(ctx, scheduleID); checkErr == nil && !exists {
+		return nil
+	}
+	return err
+}
+
+// DeleteTask deletes one of the caller's tasks. The schedule goes first: the
+// row is removed only once the schedule is gone, so a schedule cannot keep
+// running without a row that counts it. When the schedule may still exist,
+// the row stays and an error is returned.
 func (s *Service) DeleteTask(ctx context.Context, userID, taskID string) error {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
 
-	// Delete from database with ownership enforcement
-	result, err := s.queries.DeleteTask(ctx, pgdb.DeleteTaskParams{
-		TaskID: taskID,
-		UserID: userID,
-	})
-	if err != nil {
-		log.Error("failed to delete task from database",
+	if _, err := getOwnedTask(ctx, s.queries, userID, taskID); err != nil {
+		if errors.Is(err, ErrTaskNotFound) {
+			log.Warn("task not found or unauthorized",
+				slog.String("task_id", taskID),
+				slog.String("user_id", userID))
+		}
+		return err
+	}
+
+	// The steps do not stop when the client disconnects.
+	opCtx, cancel := detached(ctx, scheduleSetupTimeout)
+	defer cancel()
+	if err := s.deleteSchedule(opCtx, taskID); err != nil {
+		log.Error("failed to delete temporal schedule; the task is kept",
+			slog.String("error", err.Error()),
+			slog.String("task_id", taskID))
+		return fmt.Errorf("failed to delete the task's schedule: %w", err)
+	}
+
+	// A row already gone was deleted by a concurrent request; the outcome is the same.
+	if _, err := s.queries.DeleteTask(opCtx, pgdb.DeleteTaskParams{TaskID: taskID, UserID: userID}); err != nil {
+		log.Error("failed to delete task from database after its schedule",
 			slog.String("error", err.Error()),
 			slog.String("task_id", taskID),
 			slog.String("user_id", userID))
 		return fmt.Errorf("failed to delete task: %w", err)
-	}
-
-	// Check if any rows were affected (task exists and belongs to user)
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		log.Error("failed to get rows affected",
-			slog.String("error", err.Error()),
-			slog.String("task_id", taskID))
-		return fmt.Errorf("failed to verify task deletion: %w", err)
-	}
-
-	if rowsAffected == 0 {
-		log.Warn("task not found or unauthorized",
-			slog.String("task_id", taskID),
-			slog.String("user_id", userID))
-		return fmt.Errorf("task not found or unauthorized")
-	}
-
-	// Delete the Temporal schedule (only after successful DB deletion)
-	scheduleHandle := s.temporalClient.ScheduleClient().GetHandle(ctx, taskID)
-	err = scheduleHandle.Delete(ctx)
-	if err != nil {
-		log.Warn("failed to delete temporal schedule",
-			slog.String("error", err.Error()),
-			slog.String("task_id", taskID))
-		// Schedule deletion failure is not critical since DB record is already gone
 	}
 
 	log.Info("task deleted successfully",

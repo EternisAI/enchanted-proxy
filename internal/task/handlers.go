@@ -142,8 +142,7 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 	// Delete the task with ownership verification
 	err := h.service.DeleteTask(c.Request.Context(), userID, taskID)
 	if err != nil {
-		// Check if task not found or unauthorized
-		if err.Error() == "task not found or unauthorized" {
+		if stderrors.Is(err, ErrTaskNotFound) {
 			log.Warn("task not found or unauthorized",
 				slog.String("task_id", taskID),
 				slog.String("user_id", userID))

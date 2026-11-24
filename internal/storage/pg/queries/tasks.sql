@@ -55,3 +55,7 @@ SELECT pg_advisory_xact_lock(hashtextextended('task_admission:' || sqlc.arg(user
 -- name: DeleteTaskCreation :exec
 -- Releases the creation recorded for a task whose schedule could not be set up.
 DELETE FROM task_creations WHERE task_id = $1;
+
+-- name: GetTaskForUser :one
+SELECT * FROM tasks
+WHERE task_id = $1 AND user_id = $2;

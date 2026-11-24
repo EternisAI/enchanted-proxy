@@ -162,6 +162,34 @@ func (q *Queries) GetTaskByID(ctx context.Context, taskID string) (Task, error) 
 	return i, err
 }
 
+const getTaskForUser = `-- name: GetTaskForUser :one
+SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at FROM tasks
+WHERE task_id = $1 AND user_id = $2
+`
+
+type GetTaskForUserParams struct {
+	TaskID string `json:"taskId"`
+	UserID string `json:"userId"`
+}
+
+func (q *Queries) GetTaskForUser(ctx context.Context, arg GetTaskForUserParams) (Task, error) {
+	row := q.db.QueryRowContext(ctx, getTaskForUser, arg.TaskID, arg.UserID)
+	var i Task
+	err := row.Scan(
+		&i.TaskID,
+		&i.UserID,
+		&i.ChatID,
+		&i.TaskName,
+		&i.TaskText,
+		&i.Type,
+		&i.Time,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getTasksByChatID = `-- name: GetTasksByChatID :many
 SELECT task_id, user_id, chat_id, task_name, task_text, type, time, status, created_at, updated_at FROM tasks
 WHERE chat_id = $1

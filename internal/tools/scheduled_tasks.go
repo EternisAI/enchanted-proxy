@@ -235,7 +235,7 @@ func (t *ScheduledTasksTool) executeDelete(ctx context.Context, userID string, t
 	// Call task service
 	err := t.taskService.DeleteTask(ctx, userID, taskID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "unauthorized") {
+		if errors.Is(err, task.ErrTaskNotFound) {
 			return "", fmt.Errorf("task not found or you don't have permission to delete it (ID: %s)", taskID)
 		}
 		return "", fmt.Errorf("failed to delete task: %w", err)

@@ -57,6 +57,7 @@ type Querier interface {
 	GetSessionMessages(ctx context.Context, sessionID string) ([]DeepResearchMessage, error)
 	GetStripeCustomerID(ctx context.Context, userID string) (*string, error)
 	GetTaskByID(ctx context.Context, taskID string) (Task, error)
+	GetTaskForUser(ctx context.Context, arg GetTaskForUserParams) (Task, error)
 	GetTasksByChatID(ctx context.Context, chatID string) ([]Task, error)
 	GetTasksByUserID(ctx context.Context, userID string) ([]Task, error)
 	GetTelegramChatByChatID(ctx context.Context, chatID int64) (TelegramChat, error)
