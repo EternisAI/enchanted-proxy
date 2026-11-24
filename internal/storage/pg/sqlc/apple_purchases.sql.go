@@ -38,6 +38,10 @@ CROSS JOIN LATERAL (VALUES (e.user_id), (e.previous_user_id)) AS a(account)
 WHERE e.original_transaction_id = $1
   AND e.kind IN ('attach', 'move')
   AND e.created_at >= $2
+  AND e.created_at > COALESCE(
+      (SELECT MAX(u.created_at) FROM apple_purchase_events u
+       WHERE u.original_transaction_id = $1 AND u.kind = 'unblock'),
+      '-infinity'::timestamptz)
 `
 
 type CountApplePurchaseAccountsSinceParams struct {
@@ -45,8 +49,9 @@ type CountApplePurchaseAccountsSinceParams struct {
 	Since      time.Time `json:"since"`
 }
 
-// The accounts a purchase was attached to since a time: each account it was
-// attached or moved to, and each account it was moved away from.
+// The accounts a purchase was attached to since a time, or since it was last
+// unblocked if that is later: each account it was attached or moved to, and
+// each account it was moved away from.
 func (q *Queries) CountApplePurchaseAccountsSince(ctx context.Context, arg CountApplePurchaseAccountsSinceParams) (int32, error) {
 	row := q.db.QueryRowContext(ctx, countApplePurchaseAccountsSince, arg.PurchaseID, arg.Since)
 	var accounts int32

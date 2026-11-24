@@ -23,8 +23,9 @@ type Querier interface {
 	ClearTaskOverLimit(ctx context.Context, taskID string) error
 	CompleteDeepResearchRun(ctx context.Context, arg CompleteDeepResearchRunParams) error
 	CompleteOneTimeTask(ctx context.Context, taskID string) (int64, error)
-	// The accounts a purchase was attached to since a time: each account it was
-	// attached or moved to, and each account it was moved away from.
+	// The accounts a purchase was attached to since a time, or since it was last
+	// unblocked if that is later: each account it was attached or moved to, and
+	// each account it was moved away from.
 	CountApplePurchaseAccountsSince(ctx context.Context, arg CountApplePurchaseAccountsSinceParams) (int32, error)
 	// All accounts, for the service-wide daily ceiling.
 	CountDeepResearchRunsToday(ctx context.Context) (int64, error)

@@ -49,14 +49,19 @@ VALUES (
 );
 
 -- name: CountApplePurchaseAccountsSince :one
--- The accounts a purchase was attached to since a time: each account it was
--- attached or moved to, and each account it was moved away from.
+-- The accounts a purchase was attached to since a time, or since it was last
+-- unblocked if that is later: each account it was attached or moved to, and
+-- each account it was moved away from.
 SELECT COUNT(DISTINCT a.account)::int AS accounts
 FROM apple_purchase_events e
 CROSS JOIN LATERAL (VALUES (e.user_id), (e.previous_user_id)) AS a(account)
 WHERE e.original_transaction_id = sqlc.arg(purchase_id)
   AND e.kind IN ('attach', 'move')
-  AND e.created_at >= sqlc.arg(since);
+  AND e.created_at >= sqlc.arg(since)
+  AND e.created_at > COALESCE(
+      (SELECT MAX(u.created_at) FROM apple_purchase_events u
+       WHERE u.original_transaction_id = sqlc.arg(purchase_id) AND u.kind = 'unblock'),
+      '-infinity'::timestamptz);
 
 -- name: LockEntitlement :one
 -- Reads an account's entitlement and holds its row until the transaction ends.

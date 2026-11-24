@@ -272,6 +272,29 @@ func TestTheSixthAccountBlocksAPurchase(t *testing.T) {
 	}
 }
 
+// A purchase unblocked by hand (docs/apple-purchases.md) counts its accounts
+// afresh from the unblock, so the accounts that blocked it do not block it
+// again at the next attach.
+func TestAnUnblockedPurchaseCountsAfresh(t *testing.T) {
+	w := newWorld(t)
+	tx, token := w.lifetime()
+	var last string
+	for i := range 6 {
+		last = newID(fmt.Sprintf("acct%d", i))
+		w.attach(last, token)
+	}
+	if _, err := w.db.Exec(`UPDATE apple_purchases SET blocked_at = NULL, block_reason = NULL WHERE original_transaction_id = $1`, tx.OriginalTransactionId); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.db.Exec(`INSERT INTO apple_purchase_events (original_transaction_id, kind, user_id, reason) VALUES ($1, 'unblock', $2, 'test')`,
+		tx.OriginalTransactionId, last); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.attach(newID("after"), token); got.Blocked {
+		t.Fatal("blocked again at once after an unblock")
+	}
+}
+
 // Moves back and forth between the two accounts of the routine case (the
 // onboarding account and the signed-in one) never block.
 func TestMovesBetweenTwoAccountsDoNotBlock(t *testing.T) {
