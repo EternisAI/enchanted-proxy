@@ -90,10 +90,17 @@ func lockedTasksWaiting(db *sql.DB, log *logger.Logger, wait time.Duration) (tas
 				return fmt.Errorf("timed out waiting to lock task: %w", waitCtx.Err())
 			}
 		}
+		// Waiting for a connection, when other work holds them all, is part of
+		// the wait for the lock. The connection is then kept until the lock ends.
+		conn, err := db.Conn(waitCtx)
+		if err != nil {
+			return fmt.Errorf("failed to get a connection to lock task: %w", err)
+		}
+		defer func() { _ = conn.Close() }()
 		// database/sql ends a transaction, and with it the lock, when the
 		// transaction's context ends. This one has no deadline, so the lock ends
 		// only once fn has returned.
-		tx, err := db.BeginTx(context.WithoutCancel(ctx), nil)
+		tx, err := conn.BeginTx(context.WithoutCancel(ctx), nil)
 		if err != nil {
 			return fmt.Errorf("failed to begin task lock: %w", err)
 		}
@@ -133,6 +140,11 @@ var ErrTaskNotFound = errors.New("task not found or unauthorized")
 // errDeletedDuringCreate is returned when the owner deleted a task while it
 // was being created, before its schedule was.
 var errDeletedDuringCreate = errors.New("the task was deleted while it was being created")
+
+// errRunPassedDuringCreate answers a one-time task whose run passed while it
+// was being created. Temporal does not backfill a new schedule, so it would
+// never run.
+var errRunPassedDuringCreate = &ValidationError{Message: "The scheduled time passed while the task was being created. Choose a later time."}
 
 // Service handles task scheduling operations.
 type Service struct {
@@ -342,6 +354,7 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 	}
 
 	// For one-time tasks, we need to limit execution to just once
+	var nextRun time.Time // a one-time task's only run
 	if req.Type == string(TaskTypeOneTime) {
 		log.Info("configuring one-time schedule with cron", slog.String("cron_expression", req.Time))
 		schedule, err := parseStrictSchedule(req.Time)
@@ -354,14 +367,13 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 		}
 		// The run is the first after the task row's creation time, which is
 		// also what pending accounting reads, so the two always agree.
-		nextRun := schedule.Next(dbTask.CreatedAt)
+		nextRun = schedule.Next(dbTask.CreatedAt)
 		if !nextRun.After(s.currentTime()) {
-			// The run passed while the task was being admitted. Temporal does not
-			// backfill a new schedule, so it would never run. No schedule exists
+			// The run passed while the task was being admitted. No schedule exists
 			// yet, so the task can be released.
 			log.Warn("one-time run passed during admission", slog.String("task_id", taskID))
 			s.releaseTask(ctx, taskID, userID)
-			return nil, &ValidationError{Message: "The scheduled time passed while the task was being created. Choose a later time."}
+			return nil, errRunPassedDuringCreate
 		}
 		// Start and end at that run (an inclusive interval), so the schedule
 		// fires exactly once.
@@ -394,7 +406,8 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 		slog.String("task_queue", "task-queue"))
 	// The task's lock is held until the task is active or released, so a delete,
 	// pause or resume of the pending task waits for the outcome. A task deleted
-	// before the lock was taken gets no schedule.
+	// before the lock was taken gets no schedule, nor does a one-time task whose
+	// run passed while the lock was awaited.
 	lockHeld := false
 	err = s.withTaskLock(ctx, taskID, func() error {
 		lockHeld = true
@@ -406,6 +419,12 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 				return errDeletedDuringCreate
 			}
 			return fmt.Errorf("failed to read task: %w", err)
+		}
+		if !nextRun.IsZero() && !nextRun.After(s.currentTime()) {
+			// The run passed while the lock was awaited.
+			log.Warn("one-time run passed while waiting for the task's lock", slog.String("task_id", taskID))
+			s.releaseTask(ctx, taskID, userID)
+			return errRunPassedDuringCreate
 		}
 		schedules := s.temporalClient.ScheduleClient()
 		setupCtx, cancelSetup := detached(ctx, scheduleSetupTimeout)

@@ -259,6 +259,48 @@ func TestTaskLocksDoNotExhaustTheConnectionPool(t *testing.T) {
 	}
 }
 
+// Waiting for a pool connection is part of the wait for a task's lock: while
+// other work holds every connection, taking the lock gives up when the wait
+// ends instead of waiting for a connection to come free.
+func TestTaskLockWaitsForAConnectionNoLongerThanForTheLock(t *testing.T) {
+	openTestDB(t) // migrations
+	small, err := sql.Open("postgres", os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = small.Close() })
+	small.SetMaxOpenConns(2)
+	lock := testTaskLocks(t, small, 100*time.Millisecond)
+
+	ctx := context.Background()
+	var others []*sql.Conn
+	for range 2 {
+		conn, err := small.Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		others = append(others, conn)
+	}
+	// The other work ends after a while, so a lock that waits for it returns
+	// late rather than never.
+	free := func() {
+		for _, conn := range others {
+			_ = conn.Close()
+		}
+	}
+	freed := time.AfterFunc(2*time.Second, free)
+	t.Cleanup(func() { freed.Stop(); free() })
+
+	started := time.Now()
+	err = lock(ctx, "pool-wait-"+uuid.NewString(), func() error { return nil })
+	if waited := time.Since(started); err == nil || waited > time.Second {
+		t.Fatalf("lock returned %v after %s; want a timeout soon after the 100ms wait", err, waited)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the wait's deadline", err)
+	}
+}
+
 func testTaskLocks(t *testing.T, db *sql.DB, wait time.Duration) taskLocker {
 	t.Helper()
 	lock, err := lockedTasksWaiting(db, logger.New(logger.Config{Level: slog.LevelError + 4}), wait)

@@ -10,7 +10,11 @@ import (
 
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
 	"github.com/eternisai/enchanted-proxy/internal/tiers"
+	"github.com/google/uuid"
+	schedulepb "go.temporal.io/api/schedule/v1"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"google.golang.org/protobuf/proto"
 )
 
 // PauseReason says why a task is paused. It is stored on the task row and
@@ -140,10 +144,11 @@ func (s *Service) PauseTask(ctx context.Context, userID, taskID string) (*Task, 
 		reason, note := PauseUser, pauseNote(PauseUser, "paused by the owner")
 		if state.Paused {
 			// Already paused in Temporal: by an admin before the row was updated, or
-			// still, after a resume whose Unpause failed but may yet apply. The pause
-			// keeps its note, so it cannot be turned into one the owner may lift, and
-			// is made again: Temporal applies a schedule's changes in the order it
-			// accepts them, so an Unpause accepted earlier cannot undo it.
+			// still, after a resume whose call failed but may yet reach Temporal.
+			// The pause keeps its note, so it cannot be turned into one the owner may
+			// lift, and is made again: a resume applies only to the schedule as it
+			// was read (resumeAsRead), and this pause changes it, so such a resume
+			// can no longer apply, however late it arrives.
 			reason, note = pauseReasonFromNote(state.Note), state.Note
 		}
 		if err := s.temporalClient.ScheduleClient().GetHandle(opCtx, taskID).Pause(opCtx,
@@ -170,6 +175,53 @@ func (s *Service) PauseTask(ctx context.Context, userID, taskID string) (*Task, 
 		return nil, err
 	}
 	return paused, nil
+}
+
+// scheduleRead is a schedule as read for a resume, with the conflict token
+// that makes the resume depend on it.
+type scheduleRead struct {
+	schedule *schedulepb.Schedule
+	token    []byte
+}
+
+func (r *scheduleRead) paused() bool { return r.schedule.GetState().GetPaused() }
+func (r *scheduleRead) note() string { return r.schedule.GetState().GetNotes() }
+
+// readForResume reads a task's schedule for resumeAsRead: nil when the
+// schedule does not exist.
+func (s *Service) readForResume(ctx context.Context, taskID string) (*scheduleRead, error) {
+	resp, err := s.temporalClient.WorkflowService().DescribeSchedule(ctx, &workflowservice.DescribeScheduleRequest{
+		Namespace: s.namespace, ScheduleId: taskID})
+	if isNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &scheduleRead{schedule: resp.GetSchedule(), token: resp.GetConflictToken()}, nil
+}
+
+// resumeAsRead resumes a schedule only while it is as it was read: the update
+// carries the read's conflict token. Temporal counts every change to a
+// schedule in that token, each pause and unpause included, and drops or
+// refuses an update whose token is out of date. So a resume whose call failed
+// can still apply only to the state it was read from, and any pause made after
+// the read voids it, whenever it reaches Temporal. (The SDK's own Update sends
+// no token, hence the direct call.)
+func (s *Service) resumeAsRead(ctx context.Context, taskID string, read *scheduleRead, note string) error {
+	schedule := proto.Clone(read.schedule).(*schedulepb.Schedule)
+	if schedule.State == nil {
+		schedule.State = &schedulepb.ScheduleState{}
+	}
+	schedule.State.Paused, schedule.State.Notes = false, note
+	_, err := s.temporalClient.WorkflowService().UpdateSchedule(ctx, &workflowservice.UpdateScheduleRequest{
+		Namespace:     s.namespace,
+		ScheduleId:    taskID,
+		Schedule:      schedule,
+		ConflictToken: read.token,
+		RequestId:     uuid.NewString(),
+	})
+	return err
 }
 
 // scheduleState reads a task's schedule state: nil when the schedule does not
@@ -285,27 +337,28 @@ func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task,
 		}
 
 		// The schedule's pause note is the authority on why it is paused: the row
-		// may not have caught up with a pause made in Temporal. It is read right
-		// before the schedule is resumed, so that as little time as possible is
-		// left for a pause made in Temporal to slip in between.
-		state, err := s.scheduleState(opCtx, taskID)
+		// may not have caught up with a pause made in Temporal. The schedule is
+		// resumed only as read here, so a pause made in Temporal after the read
+		// voids the resume. Temporal may then drop it without an error, which
+		// leaves the row active and counted while the schedule stays paused,
+		// until a retry or the reconciler settles it.
+		read, err := s.readForResume(opCtx, taskID)
 		switch {
 		case err != nil:
 			restoreRow()
 			return fmt.Errorf("failed to read schedule: %w", err)
-		case state == nil:
+		case read == nil:
 			restoreRow()
 			return errScheduleGone
-		case state.Paused:
-			noteReason := pauseReasonFromNote(state.Note)
+		case read.paused():
+			noteReason := pauseReasonFromNote(read.note())
 			if refusal := refuseResume(noteReason, tier); refusal != nil {
 				// The row follows the schedule's pause.
 				reasonText := string(noteReason)
 				setPaused(&reasonText)
 				return refusal
 			}
-			if err := s.temporalClient.ScheduleClient().GetHandle(opCtx, taskID).Unpause(opCtx,
-				client.ScheduleUnpauseOptions{Note: "resumed by the owner"}); err != nil {
+			if err := s.resumeAsRead(opCtx, taskID, read, "resumed by the owner"); err != nil {
 				if err := s.settleFailedResume(ctx, taskID, err, restoreRow); err != nil {
 					return err
 				}
@@ -323,14 +376,15 @@ func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task,
 	return resumed, nil
 }
 
-// settleFailedResume decides what a failed Unpause left behind. The call may
+// settleFailedResume decides what a failed resume left behind. The call may
 // still take effect after it failed, even after a lookup shows the schedule
 // paused, so the row stays active and counted unless the schedule is gone. A
-// retry resumes the schedule (the row says active, the schedule paused), and
-// otherwise the reconciler sets the row from the schedule's state.
-func (s *Service) settleFailedResume(ctx context.Context, taskID string, unpauseErr error, restoreRow func()) error {
+// retry resumes the schedule (the row says active, the schedule paused), an
+// owner's pause voids the resume, and otherwise the reconciler sets the row
+// from the schedule's state.
+func (s *Service) settleFailedResume(ctx context.Context, taskID string, resumeErr error, restoreRow func()) error {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
-	log.Error("failed to resume a task's schedule", slog.String("error", unpauseErr.Error()), slog.String("task_id", taskID))
+	log.Error("failed to resume a task's schedule", slog.String("error", resumeErr.Error()), slog.String("task_id", taskID))
 	checkCtx, cancel := detached(ctx, cleanupTimeout)
 	defer cancel()
 	state, err := s.scheduleState(checkCtx, taskID)
@@ -343,7 +397,7 @@ func (s *Service) settleFailedResume(ctx context.Context, taskID string, unpause
 		return nil
 	}
 	log.Warn("the schedule may still resume; the task stays counted", slog.String("task_id", taskID))
-	return fmt.Errorf("failed to resume schedule: %w", unpauseErr)
+	return fmt.Errorf("failed to resume schedule: %w", resumeErr)
 }
 
 // checkResumedSchedule applies the plan's recurring-task limits to a task
