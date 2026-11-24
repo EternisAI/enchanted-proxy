@@ -36,6 +36,9 @@ type Groups struct {
 
 	mu    sync.Mutex
 	cache map[string]cachedGroup
+	// generation counts Changed calls, so a read that overlapped one is not
+	// cached.
+	generation uint64
 }
 
 type cachedGroup struct {
@@ -59,6 +62,7 @@ func (g *Groups) UserIDs(ctx context.Context, userID string) ([]string, error) {
 	now := g.now()
 	g.mu.Lock()
 	c, ok := g.cache[userID]
+	generation := g.generation
 	g.mu.Unlock()
 	if ok && now.Before(c.until) {
 		return slices.Clone(c.userIDs), nil
@@ -75,6 +79,12 @@ func (g *Groups) UserIDs(ctx context.Context, userID string) ([]string, error) {
 	slices.Sort(userIDs)
 
 	g.mu.Lock()
+	defer g.mu.Unlock()
+	if generation != g.generation {
+		// A join was made during the read, which may predate it: use it for
+		// this lookup only.
+		return slices.Clone(userIDs), nil
+	}
 	if len(g.cache) >= maxCached {
 		for id, e := range g.cache {
 			if !now.Before(e.until) {
@@ -86,7 +96,6 @@ func (g *Groups) UserIDs(ctx context.Context, userID string) ([]string, error) {
 		}
 	}
 	g.cache[userID] = cachedGroup{userIDs: userIDs, until: now.Add(g.ttl)}
-	g.mu.Unlock()
 	return slices.Clone(userIDs), nil
 }
 
@@ -98,6 +107,7 @@ func (g *Groups) Changed() {
 		return
 	}
 	g.mu.Lock()
+	g.generation++
 	clear(g.cache)
 	g.mu.Unlock()
 }

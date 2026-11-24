@@ -12,6 +12,8 @@ type fakeMembers struct {
 	groups map[string][]string // user ID -> members of its group
 	calls  int
 	err    error
+	// during runs once, after the read and before it returns.
+	during func()
 }
 
 func (f *fakeMembers) ListQuotaGroupMembers(_ context.Context, userID string) ([]string, error) {
@@ -19,7 +21,12 @@ func (f *fakeMembers) ListQuotaGroupMembers(_ context.Context, userID string) ([
 	if f.err != nil {
 		return nil, f.err
 	}
-	return slices.Clone(f.groups[userID]), nil
+	read := slices.Clone(f.groups[userID])
+	if during := f.during; during != nil {
+		f.during = nil
+		during()
+	}
+	return read, nil
 }
 
 func TestUserIDsReturnsTheWholeGroupWithTheCaller(t *testing.T) {
@@ -104,5 +111,22 @@ func TestReturnedGroupsDoNotShareTheCache(t *testing.T) {
 	got[0] = "changed"
 	if again, _ := g.UserIDs(context.Background(), "a"); again[0] != "a" {
 		t.Fatalf("a caller's change reached the cache: %v", again)
+	}
+}
+
+// A read that overlaps a join may predate it, so it must not be cached: the
+// next lookup reads the joined group.
+func TestAReadOverlappingAJoinIsNotCached(t *testing.T) {
+	members := &fakeMembers{groups: map[string][]string{"a": {"a"}}}
+	g := NewGroups(members)
+	members.during = func() {
+		members.groups["a"] = []string{"a", "b"}
+		g.Changed()
+	}
+	if got, _ := g.UserIDs(context.Background(), "a"); len(got) != 1 {
+		t.Fatalf("the overlapping read = %v, want what it read", got)
+	}
+	if got, _ := g.UserIDs(context.Background(), "a"); len(got) != 2 {
+		t.Fatalf("after the join = %v, want the joined group", got)
 	}
 }
