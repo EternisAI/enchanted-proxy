@@ -179,6 +179,16 @@ func TestTheReviewResetsNothingWhenMostAccountsAreMissing(t *testing.T) {
 	if got := tiersByUser(t, db); !mapsEqual(got, before) {
 		t.Fatalf("entitlements changed: %v", got)
 	}
+
+	// The failed enforced runs stay on record and do not count as done: with
+	// a working lookup the review runs.
+	var failed int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM entitlement_review_runs WHERE mode = 'enforce' AND finished_at IS NOT NULL`).Scan(&failed); err != nil || failed != 3 {
+		t.Fatalf("%d finished enforced runs on record, %v; want the 3 failed ones", failed, err)
+	}
+	if rep, err := reviewer(db, ReviewEnforce, accounts).Run(context.Background()); err != nil || rep == nil || rep.Reset != 3 {
+		t.Fatalf("after the failed runs: %+v, %v; want the review to run", rep, err)
+	}
 }
 
 // Only one server instance runs the review at a time.
