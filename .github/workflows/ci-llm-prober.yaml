@@ -126,7 +126,17 @@ jobs:
         push: true
 
     - name: Cosign Image
-      run: cosign sign --yes "ghcr.io/eternisai/enchanted-proxy/llm-prober@${{ steps.build-image.outputs.digest }}"
+      env:
+        IMAGE: ghcr.io/eternisai/enchanted-proxy/llm-prober@${{ steps.build-image.outputs.digest }}
+      run: |
+        # Keyless signing fetches an OIDC token and a certificate over the
+        # network, which fails now and then (once: the token request answered
+        # with a body that was not JSON). Retry before failing the build.
+        for attempt in 1 2 3; do
+          cosign sign --yes "$IMAGE" && exit 0
+          [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
+        done
+        exit 1
 
   repush:
     name: Repush Image

@@ -214,7 +214,17 @@ jobs:
       run: docker load -i ${{ runner.temp }}/image.tar
 
     - name: Cosign App Image
-      run: cosign sign --yes "${{ steps.app-image.outputs.ref }}@${{ steps.build-app-image.outputs.digest }}"
+      env:
+        IMAGE: ${{ steps.app-image.outputs.ref }}@${{ steps.build-app-image.outputs.digest }}
+      run: |
+        # Keyless signing fetches an OIDC token and a certificate over the
+        # network, which fails now and then (once: the token request answered
+        # with a body that was not JSON). Retry before failing the build.
+        for attempt in 1 2 3; do
+          cosign sign --yes "$IMAGE" && exit 0
+          [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
+        done
+        exit 1
 
     - name: Verify Enclaver Odyn Image
       run: |
@@ -300,12 +310,20 @@ jobs:
         echo "digest=$DIGEST" | tee -a "$GITHUB_OUTPUT"
 
     - name: Cosign Enclave Image
-      run: >-
-        cosign sign --yes
-        -a awsNitroEnclavePCR0="${{ steps.build-enclave-image.outputs.pcr0 }}"
-        -a awsNitroEnclavePCR1="${{ steps.build-enclave-image.outputs.pcr1 }}"
-        -a awsNitroEnclavePCR2="${{ steps.build-enclave-image.outputs.pcr2 }}"
-        "${{ steps.build-enclave-image.outputs.image }}@${{ steps.push-enclave-image.outputs.digest }}"
+      env:
+        IMAGE: ${{ steps.build-enclave-image.outputs.image }}@${{ steps.push-enclave-image.outputs.digest }}
+        PCR0: ${{ steps.build-enclave-image.outputs.pcr0 }}
+        PCR1: ${{ steps.build-enclave-image.outputs.pcr1 }}
+        PCR2: ${{ steps.build-enclave-image.outputs.pcr2 }}
+      run: |
+        # Keyless signing fetches an OIDC token and a certificate over the
+        # network, which fails now and then (once: the token request answered
+        # with a body that was not JSON). Retry before failing the build.
+        for attempt in 1 2 3; do
+          cosign sign --yes -a awsNitroEnclavePCR0="$PCR0" -a awsNitroEnclavePCR1="$PCR1" -a awsNitroEnclavePCR2="$PCR2" "$IMAGE" && exit 0
+          [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
+        done
+        exit 1
 
     - name: Prepare Endorsement
       run: >-
@@ -315,10 +333,17 @@ jobs:
         | tee "${{ runner.temp }}/endorsement.json"
 
     - name: Sign Endorsement
-      run: >-
-        cosign sign-blob --yes
-        --bundle "${{ runner.temp }}/endorsement.json.sig"
-        "${{ runner.temp }}/endorsement.json"
+      env:
+        ENDORSEMENT: ${{ runner.temp }}/endorsement.json
+      run: |
+        # Keyless signing fetches an OIDC token and a certificate over the
+        # network, which fails now and then (once: the token request answered
+        # with a body that was not JSON). Retry before failing the build.
+        for attempt in 1 2 3; do
+          cosign sign-blob --yes --bundle "${ENDORSEMENT}.sig" "$ENDORSEMENT" && exit 0
+          [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
+        done
+        exit 1
 
     - name: Upload Endorsement
       run: |
