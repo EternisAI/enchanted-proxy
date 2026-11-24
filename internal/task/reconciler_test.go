@@ -741,3 +741,17 @@ func TestReconcilerChangesTasksUnderTheirLock(t *testing.T) {
 		t.Fatalf("changes %q; outside a task lock %q", w.events, w.outsideLock)
 	}
 }
+
+// A sweep whose context ends, as when the server shuts down, takes no further
+// actions.
+func TestReconcilerStopsWhenItsContextEnds(t *testing.T) {
+	w := newReconWorld()
+	w.owner("u", oneDay, tiers.TierFree)
+	w.task("admin-paused", "u", "recurring", "0 9 * * *", TaskStatusActive, 30*oneDay, &fakeSchedule{paused: true, note: "admin: incident 2026-11"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rep := w.reconciler(ReconcilerEnforce, false).sweep(ctx)
+	if len(w.events) != 0 || len(rep.Errors) != 1 || !strings.Contains(rep.Errors[0], "sweep stopped") {
+		t.Fatalf("changes %q, errors %q; want no changes and the stop reported", w.events, rep.Errors)
+	}
+}

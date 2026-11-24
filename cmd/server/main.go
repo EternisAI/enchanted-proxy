@@ -268,6 +268,7 @@ func main() {
 
 	// Reconcile task rows with their schedules and with their owners' accounts
 	// and plans (hourly; off, dry-run or enforce).
+	var stopReconciler func(timeout time.Duration)
 	if taskService != nil {
 		var accounts task.AccountLookup
 		if firebaseClient != nil {
@@ -285,8 +286,22 @@ func main() {
 			os.Exit(1)
 		}
 		reconcilerCtx, reconcilerCancel := context.WithCancel(context.Background())
-		go reconciler.Run(reconcilerCtx)
+		reconcilerDone := make(chan struct{})
+		go func() {
+			defer close(reconcilerDone)
+			reconciler.Run(reconcilerCtx)
+		}()
 		defer reconcilerCancel()
+		// stopReconciler ends a sweep in progress and waits for it, so that it
+		// does not use the Temporal client once that is closed.
+		stopReconciler = func(timeout time.Duration) {
+			reconcilerCancel()
+			select {
+			case <-reconcilerDone:
+			case <-time.After(timeout):
+				log.Warn("task reconciler did not stop in time")
+			}
+		}
 	}
 
 	// Initialize tool system
@@ -677,8 +692,12 @@ func main() {
 	rtCancel()
 	log.Info("request tracking service shutdown complete")
 
-	// Shutdown the task service (close Temporal client)
+	// Shutdown the task service (close Temporal client), once the reconciler,
+	// which uses it, has stopped.
 	if taskService != nil {
+		if stopReconciler != nil {
+			stopReconciler(time.Duration(config.AppConfig.ServerShutdownTimeoutSeconds) * time.Second)
+		}
 		taskService.Close()
 		log.Info("task service shutdown complete")
 	}

@@ -663,7 +663,12 @@ func (r *Reconciler) execute(ctx context.Context, actions []action, rep *Report)
 	}
 	notices := map[noticeKey][]action{}
 	var noticeOrder []noticeKey
-	for _, a := range actions {
+	for i, a := range actions {
+		if err := ctx.Err(); err != nil {
+			// The server is shutting down, or the sweep ran out of time.
+			rep.fail("sweep stopped with %d actions left: %v", len(actions)-i, err)
+			break
+		}
 		label := a.label()
 		applied, err := r.applyOne(ctx, a, enforce)
 		attrs := []any{
@@ -696,7 +701,7 @@ func (r *Reconciler) execute(ctx context.Context, actions []action, rep *Report)
 			}
 		}
 	}
-	if !enforce || !r.cfg.PauseNotifications || r.notifier == nil {
+	if !enforce || !r.cfg.PauseNotifications || r.notifier == nil || ctx.Err() != nil {
 		return
 	}
 	for _, key := range noticeOrder {
