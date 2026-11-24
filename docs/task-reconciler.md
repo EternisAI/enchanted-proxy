@@ -53,9 +53,9 @@ token, so Temporal drops or refuses the earlier resume whenever it arrives.
 | Variable | Default | Meaning |
 |---|---|---|
 | `TASK_RECONCILER_MODE` | `dry-run` | `off`, `dry-run` (report only) or `enforce`. An unknown value gives `dry-run`. |
-| `TASK_RECONCILER_INTERVAL_MINUTES` | `60` | Time between sweeps. The first sweep is two minutes after start. |
-| `TASK_INACTIVE_DAYS` | `90` | Days without sign-in or token refresh after which an owner's recurring tasks are paused. |
-| `TASK_PLAN_ENDED_GRACE_HOURS` | `168` | How long a task may stay over its owner's plan before it is held. |
+| `TASK_RECONCILER_INTERVAL_MINUTES` | `60` | Time between sweeps, 1 to 10080 (a week). The first sweep is two minutes after start. |
+| `TASK_INACTIVE_DAYS` | `90` | Days without sign-in or token refresh after which an owner's recurring tasks are paused, 1 to 3650. |
+| `TASK_PLAN_ENDED_GRACE_HOURS` | `168` | How long a task may stay over its owner's plan before it is held, 0 to 8760 (a year). |
 | `TASK_PAUSE_NOTIFICATIONS` | `false` | Push to the owner when tasks are paused as `inactive` or held as `plan_ended`, one push per owner and reason per sweep. |
 
 All five are in the enclave's `env` allowlist. Unless the mode is `off`, the proxy

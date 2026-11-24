@@ -724,6 +724,24 @@ func TestLoadReconcilerConfig(t *testing.T) {
 	if cfg != want {
 		t.Fatalf("config %+v, want %+v", cfg, want)
 	}
+
+	// Values that would overflow a duration, or just past the bounds, give the
+	// defaults.
+	t.Setenv("TASK_RECONCILER_INTERVAL_MINUTES", "9007199254740992")
+	t.Setenv("TASK_INACTIVE_DAYS", "3651")
+	t.Setenv("TASK_PLAN_ENDED_GRACE_HOURS", "8761")
+	cfg = LoadReconcilerConfig()
+	if cfg.Interval != time.Hour || cfg.InactiveAfter != 90*oneDay || cfg.PlanEndedGrace != 168*time.Hour {
+		t.Fatalf("config %+v, want the defaults for out-of-range values", cfg)
+	}
+	// The bounds themselves are accepted.
+	t.Setenv("TASK_RECONCILER_INTERVAL_MINUTES", "10080")
+	t.Setenv("TASK_INACTIVE_DAYS", "3650")
+	t.Setenv("TASK_PLAN_ENDED_GRACE_HOURS", "8760")
+	cfg = LoadReconcilerConfig()
+	if cfg.Interval != 7*oneDay || cfg.InactiveAfter != 3650*oneDay || cfg.PlanEndedGrace != 365*oneDay {
+		t.Fatalf("config %+v, want the bounds accepted", cfg)
+	}
 }
 
 // Every change holds the task's lock, like an owner's pause, resume or delete.

@@ -70,16 +70,17 @@ func LoadReconcilerConfig() ReconcilerConfig {
 	notify, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv("TASK_PAUSE_NOTIFICATIONS")))
 	return ReconcilerConfig{
 		Mode:               mode,
-		Interval:           time.Duration(envAtLeast("TASK_RECONCILER_INTERVAL_MINUTES", 60, 1)) * time.Minute,
-		InactiveAfter:      time.Duration(envAtLeast("TASK_INACTIVE_DAYS", 90, 1)) * 24 * time.Hour,
-		PlanEndedGrace:     time.Duration(envAtLeast("TASK_PLAN_ENDED_GRACE_HOURS", 168, 0)) * time.Hour,
+		Interval:           time.Duration(envBetween("TASK_RECONCILER_INTERVAL_MINUTES", 60, 1, 7*24*60)) * time.Minute,
+		InactiveAfter:      time.Duration(envBetween("TASK_INACTIVE_DAYS", 90, 1, 3650)) * 24 * time.Hour,
+		PlanEndedGrace:     time.Duration(envBetween("TASK_PLAN_ENDED_GRACE_HOURS", 168, 0, 365*24)) * time.Hour,
 		PauseNotifications: notify,
 	}
 }
 
-// envAtLeast reads a whole number of at least least; anything else gives def.
-func envAtLeast(name string, def, least int) int {
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name))); err == nil && v >= least {
+// envBetween reads a whole number from least to most; anything else gives
+// def. The upper bounds keep the durations made from it far from overflowing.
+func envBetween(name string, def, least, most int) int {
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name))); err == nil && v >= least && v <= most {
 		return v
 	}
 	return def
