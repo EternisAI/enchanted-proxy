@@ -23,6 +23,7 @@ const (
 	ReasonDeepResearchWeeklyLimit   ForbiddenReason = "deep_research_weekly_limit"
 	ReasonDeepResearchSignIn        ForbiddenReason = "deep_research_sign_in_required"
 	ReasonDeepResearchBusy          ForbiddenReason = "deep_research_busy"
+	ReasonDeepResearchUnconfirmed   ForbiddenReason = "deep_research_purchase_unconfirmed"
 
 	// Access Control
 	ReasonChatNotOwned      ForbiddenReason = "chat_not_owned"
@@ -196,6 +197,14 @@ func DeepResearchWeeklyLimit(tier, displayName string, used, limit int64, resets
 func DeepResearchSignInRequired(tier string) *ForbiddenError {
 	msg := "Sign in with Apple or Google to use your free deep research run."
 	return NewForbiddenError(ReasonDeepResearchSignIn, msg, msg, tier, nil)
+}
+
+// DeepResearchPurchaseUnconfirmed creates a ForbiddenError for an App Store
+// plan whose purchase the server has not seen yet; the iOS app sends it at
+// launch.
+func DeepResearchPurchaseUnconfirmed(tier string) *ForbiddenError {
+	msg := "Open the app on your iPhone once to confirm your purchase, then start deep research again."
+	return NewForbiddenError(ReasonDeepResearchUnconfirmed, msg, msg, tier, nil)
 }
 
 // DeepResearchBusy creates a ForbiddenError for when the service-wide ceiling is reached.

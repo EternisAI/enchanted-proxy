@@ -2,6 +2,7 @@ package deepr
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	stderrors "errors"
 	"net/http"
@@ -31,7 +32,22 @@ type runCountQuerier struct {
 	created                            int
 	reapedBefore                       time.Time
 	reapHasDeadline                    bool
+	entitlement                        *pgdb.GetEntitlementRow // nil: no entitlement row
 	mu                                 sync.Mutex
+}
+
+func (q *runCountQuerier) GetEntitlement(context.Context, string) (pgdb.GetEntitlementRow, error) {
+	if err := q.err(); err != nil {
+		return pgdb.GetEntitlementRow{}, err
+	}
+	if q.entitlement == nil {
+		return pgdb.GetEntitlementRow{}, sql.ErrNoRows
+	}
+	return *q.entitlement, nil
+}
+
+func entitlement(provider string, purchase *string) *pgdb.GetEntitlementRow {
+	return &pgdb.GetEntitlementRow{SubscriptionProvider: provider, AppleOriginalTransactionID: purchase}
 }
 
 func (q *runCountQuerier) err() error {
@@ -98,6 +114,8 @@ func limitService(q *runCountQuerier) *Service {
 	}
 }
 
+func ptr(s string) *string { return &s }
+
 func identity(provider string) *auth.Identity {
 	return &auth.Identity{UserID: "user-1", SignInProvider: provider}
 }
@@ -127,6 +145,11 @@ func TestStartRun(t *testing.T) {
 		{"pro active run", tiers.TierPro, apple, &runCountQuerier{active: true}, errors.ReasonActiveDeepResearchSession},
 		{"service-wide ceiling", tiers.TierPro, apple, &runCountQuerier{serviceWide: 25}, errors.ReasonDeepResearchBusy},
 		{"lookup failure refuses", tiers.TierPro, apple, &runCountQuerier{fail: true}, errors.ReasonTierValidationFailed},
+		{"plus from the App Store, purchase not on record", tiers.TierPlus, apple, &runCountQuerier{entitlement: entitlement("apple", nil)}, errors.ReasonDeepResearchUnconfirmed},
+		{"pro from the App Store, purchase not on record", tiers.TierPro, apple, &runCountQuerier{entitlement: entitlement("apple", nil)}, errors.ReasonDeepResearchUnconfirmed},
+		{"plus from the App Store, purchase on record", tiers.TierPlus, apple, &runCountQuerier{entitlement: entitlement("apple", ptr("1000"))}, ""},
+		{"plus from Stripe", tiers.TierPlus, apple, &runCountQuerier{entitlement: entitlement("stripe", nil)}, ""},
+		{"free, after an App Store plan ended", tiers.TierFree, apple, &runCountQuerier{entitlement: entitlement("apple", nil)}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
