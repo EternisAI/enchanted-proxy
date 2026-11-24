@@ -266,6 +266,25 @@ func main() {
 		}
 	}
 
+	// Reconcile task rows with their schedules and with their owners' accounts
+	// and plans (hourly; off, dry-run or enforce).
+	if taskService != nil {
+		var accounts task.AccountLookup
+		if firebaseClient != nil {
+			accounts = task.FirebaseAccounts(firebaseClient.GetAuthClient())
+		} else {
+			log.Warn("firebase client not available - the task reconciler will not check accounts")
+		}
+		var pauseNotifier task.PauseNotifier
+		if notificationService != nil {
+			pauseNotifier = notificationService
+		}
+		reconciler := task.NewReconciler(taskService, db.DB, accounts, pauseNotifier, task.LoadReconcilerConfig(), logger.WithComponent("task-reconciler"))
+		reconcilerCtx, reconcilerCancel := context.WithCancel(context.Background())
+		go reconciler.Run(reconcilerCtx)
+		defer reconcilerCancel()
+	}
+
 	// Initialize tool system
 	toolRegistry := tools.NewRegistry()
 	exaSearchTool := tools.NewExaSearchTool(searchService, logger.WithComponent("exa-search-tool"))

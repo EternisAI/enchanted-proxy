@@ -117,17 +117,18 @@ type RequestLog struct {
 }
 
 type Task struct {
-	TaskID      string    `json:"taskId"`
-	UserID      string    `json:"userId"`
-	ChatID      string    `json:"chatId"`
-	TaskName    string    `json:"taskName"`
-	TaskText    string    `json:"taskText"`
-	Type        string    `json:"type"`
-	Time        string    `json:"time"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-	PauseReason *string   `json:"pauseReason"`
+	TaskID         string       `json:"taskId"`
+	UserID         string       `json:"userId"`
+	ChatID         string       `json:"chatId"`
+	TaskName       string       `json:"taskName"`
+	TaskText       string       `json:"taskText"`
+	Type           string       `json:"type"`
+	Time           string       `json:"time"`
+	Status         string       `json:"status"`
+	CreatedAt      time.Time    `json:"createdAt"`
+	UpdatedAt      time.Time    `json:"updatedAt"`
+	PauseReason    *string      `json:"pauseReason"`
+	OverLimitSince sql.NullTime `json:"overLimitSince"`
 }
 
 type TaskCreation struct {
@@ -135,6 +136,14 @@ type TaskCreation struct {
 	UserID    string    `json:"userId"`
 	TaskID    string    `json:"taskId"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+type TaskReconcilerRun struct {
+	ID         int64        `json:"id"`
+	StartedAt  time.Time    `json:"startedAt"`
+	FinishedAt sql.NullTime `json:"finishedAt"`
+	Mode       string       `json:"mode"`
+	Report     *string      `json:"report"`
 }
 
 type TelegramChat struct {

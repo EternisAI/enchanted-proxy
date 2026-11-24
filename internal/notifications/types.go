@@ -6,6 +6,7 @@ type NotificationType string
 const (
 	TypeDeepResearch NotificationType = "deep_research"
 	TypeGPT5Pro      NotificationType = "gpt5_pro"
+	TypeTaskPaused   NotificationType = "task_paused"
 )
 
 // CompletionNotification represents a notification payload for a completed task.

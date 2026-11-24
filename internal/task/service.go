@@ -231,7 +231,7 @@ func (s *Service) CreateTask(ctx context.Context, userID string, req *CreateTask
 
 	// Create Temporal Schedule for the task
 	// The workflow name should match what you register in your worker service
-	workflowName := "ScheduledTaskWorkflow"
+	workflowName := scheduledTaskWorkflow
 	log.Info("preparing to create temporal schedule", slog.String("workflow_name", workflowName))
 
 	// Workflow input that will be passed to your worker service
