@@ -230,14 +230,11 @@ func (r *Reviewer) review(ctx context.Context, q pgdb.Querier, runID int64) *Rev
 	}
 	// Deleted accounts are expected to be a small share (8% when measured). A
 	// lookup in the wrong Firebase project finds none of them, and one that
-	// answers for few of them settles nothing. Either way the run fails, so it
-	// does not count as the enforced review.
-	if len(rep.Deleted) >= 5 && 2*len(rep.Deleted) > len(ids) {
-		rep.fail("%d of %d accounts not found; is the Firebase project right? Nothing reset", len(rep.Deleted), len(ids))
-		return rep
-	}
-	if len(rep.Unsettled) >= 5 && 2*len(rep.Unsettled) > len(ids) {
-		rep.fail("%d of %d accounts could not be looked up; nothing reset", len(rep.Unsettled), len(ids))
+	// answers for few of them settles nothing. When most owners are missing or
+	// unsettled, together, the run fails, so it does not count as the enforced
+	// review.
+	if unresolved := len(rep.Deleted) + len(rep.Unsettled); unresolved >= 5 && 2*unresolved > len(ids) {
+		rep.fail("%d of %d accounts not found or could not be looked up; is the Firebase project right? Nothing reset", unresolved, len(ids))
 		return rep
 	}
 	if r.cfg.Mode != ReviewEnforce {

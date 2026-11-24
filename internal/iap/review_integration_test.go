@@ -151,7 +151,7 @@ func TestTheReviewResetsLateAndDeletedAccounts(t *testing.T) {
 // project: nothing is reset, and the review may run again once it is fixed.
 func TestTheReviewResetsNothingWhenMostAccountsAreMissing(t *testing.T) {
 	db := openTestDB(t)
-	reviewFixture(t, db)
+	accounts := reviewFixture(t, db)
 	before := tiersByUser(t, db)
 
 	rep, err := reviewer(db, ReviewEnforce, map[string]Account{}).Run(context.Background())
@@ -170,8 +170,14 @@ func TestTheReviewResetsNothingWhenMostAccountsAreMissing(t *testing.T) {
 	if err != nil || rep == nil || len(rep.Errors) == 0 || rep.Reset != 0 {
 		t.Fatalf("all missing: %+v, %v; want the safeguard's error", rep, err)
 	}
-	if rep, err := reviewer(db, ReviewEnforce, reviewFixture(t, db)).Run(context.Background()); err != nil || rep == nil || rep.Reset != 3 {
-		t.Fatalf("after the failed runs: %+v, %v; want the review to run", rep, err)
+	// Most owners unresolved, but neither missing nor unsettled alone a majority.
+	mixed := map[string]Account{"deleted": {}, "later": {}, "on-the-cutoff-day": accounts["on-the-cutoff-day"]}
+	rep, err = reviewer(db, ReviewEnforce, mixed).Run(context.Background())
+	if err != nil || rep == nil || len(rep.Errors) == 0 || rep.Reset != 0 {
+		t.Fatalf("2 missing and 3 unsettled of 6: %+v, %v; want the safeguard's error", rep, err)
+	}
+	if got := tiersByUser(t, db); !mapsEqual(got, before) {
+		t.Fatalf("entitlements changed: %v", got)
 	}
 }
 
