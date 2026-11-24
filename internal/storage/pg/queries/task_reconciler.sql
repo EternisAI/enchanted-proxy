@@ -16,7 +16,9 @@ SELECT EXISTS (
 INSERT INTO task_reconciler_runs (mode) VALUES ($1) RETURNING id;
 
 -- name: FinishTaskReconcilerRun :exec
-UPDATE task_reconciler_runs SET finished_at = NOW(), report = $2 WHERE id = $1;
+-- The run is started and finished in one transaction, whose NOW() is its
+-- start, so the finish takes the wall clock.
+UPDATE task_reconciler_runs SET finished_at = clock_timestamp(), report = $2 WHERE id = $1;
 
 -- name: ListTasksToReconcile :many
 -- Tasks that may still run or be resumed, oldest first.

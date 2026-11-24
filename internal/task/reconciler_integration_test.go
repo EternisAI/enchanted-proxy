@@ -52,12 +52,17 @@ func TestReconcilerSweepsOncePerIntervalAcrossInstances(t *testing.T) {
 	}
 
 	var mode, report string
-	if err := db.QueryRow(`SELECT mode, report::text FROM task_reconciler_runs WHERE finished_at IS NOT NULL ORDER BY id LIMIT 1`).Scan(&mode, &report); err != nil {
+	var took float64
+	if err := db.QueryRow(`SELECT mode, report::text, EXTRACT(EPOCH FROM finished_at - started_at)::float8
+		FROM task_reconciler_runs WHERE finished_at IS NOT NULL ORDER BY id LIMIT 1`).Scan(&mode, &report, &took); err != nil {
 		t.Fatal(err)
 	}
 	var stored Report
 	if err := json.Unmarshal([]byte(report), &stored); err != nil || mode != "dry-run" || len(stored.Actions["complete"]) != 1 {
 		t.Fatalf("stored mode %q report %s (%v)", mode, report, err)
+	}
+	if took < 0.2 {
+		t.Fatalf("the run took %.3fs by its record; the sweep slept 0.2s", took)
 	}
 }
 

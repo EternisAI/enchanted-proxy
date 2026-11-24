@@ -46,6 +46,8 @@ type Querier interface {
 	// Runs still active long after any run could have finished: their connection
 	// was lost without the run being completed (for example a restart).
 	FailStaleDeepResearchRuns(ctx context.Context, startedBefore time.Time) (int64, error)
+	// The run is started and finished in one transaction, whose NOW() is its
+	// start, so the finish takes the wall clock.
 	FinishTaskReconcilerRun(ctx context.Context, arg FinishTaskReconcilerRunParams) error
 	GetActiveDeepResearchRun(ctx context.Context, arg GetActiveDeepResearchRunParams) (GetActiveDeepResearchRunRow, error)
 	GetAllActiveTasks(ctx context.Context) ([]Task, error)

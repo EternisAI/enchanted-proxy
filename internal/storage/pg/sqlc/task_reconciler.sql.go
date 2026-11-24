@@ -59,7 +59,7 @@ func (q *Queries) DeleteTaskByID(ctx context.Context, taskID string) (int64, err
 }
 
 const finishTaskReconcilerRun = `-- name: FinishTaskReconcilerRun :exec
-UPDATE task_reconciler_runs SET finished_at = NOW(), report = $2 WHERE id = $1
+UPDATE task_reconciler_runs SET finished_at = clock_timestamp(), report = $2 WHERE id = $1
 `
 
 type FinishTaskReconcilerRunParams struct {
@@ -67,6 +67,8 @@ type FinishTaskReconcilerRunParams struct {
 	Report *string `json:"report"`
 }
 
+// The run is started and finished in one transaction, whose NOW() is its
+// start, so the finish takes the wall clock.
 func (q *Queries) FinishTaskReconcilerRun(ctx context.Context, arg FinishTaskReconcilerRunParams) error {
 	_, err := q.db.ExecContext(ctx, finishTaskReconcilerRun, arg.ID, arg.Report)
 	return err
