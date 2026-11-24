@@ -12,18 +12,19 @@ import (
 )
 
 const getEntitlement = `-- name: GetEntitlement :one
-SELECT user_id, subscription_expires_at, subscription_provider, stripe_customer_id, subscription_tier, updated_at
+SELECT user_id, subscription_expires_at, subscription_provider, stripe_customer_id, subscription_tier, updated_at, apple_original_transaction_id
 FROM entitlements
 WHERE user_id = $1
 `
 
 type GetEntitlementRow struct {
-	UserID                string       `json:"userId"`
-	SubscriptionExpiresAt sql.NullTime `json:"subscriptionExpiresAt"`
-	SubscriptionProvider  string       `json:"subscriptionProvider"`
-	StripeCustomerID      *string      `json:"stripeCustomerId"`
-	SubscriptionTier      string       `json:"subscriptionTier"`
-	UpdatedAt             time.Time    `json:"updatedAt"`
+	UserID                     string       `json:"userId"`
+	SubscriptionExpiresAt      sql.NullTime `json:"subscriptionExpiresAt"`
+	SubscriptionProvider       string       `json:"subscriptionProvider"`
+	StripeCustomerID           *string      `json:"stripeCustomerId"`
+	SubscriptionTier           string       `json:"subscriptionTier"`
+	UpdatedAt                  time.Time    `json:"updatedAt"`
+	AppleOriginalTransactionID *string      `json:"appleOriginalTransactionId"`
 }
 
 func (q *Queries) GetEntitlement(ctx context.Context, userID string) (GetEntitlementRow, error) {
@@ -36,6 +37,7 @@ func (q *Queries) GetEntitlement(ctx context.Context, userID string) (GetEntitle
 		&i.StripeCustomerID,
 		&i.SubscriptionTier,
 		&i.UpdatedAt,
+		&i.AppleOriginalTransactionID,
 	)
 	return i, err
 }
@@ -123,6 +125,7 @@ ON CONFLICT (user_id) DO UPDATE SET
     END,
   subscription_provider = $5,
   stripe_customer_id = COALESCE($6, entitlements.stripe_customer_id),
+  apple_original_transaction_id = NULL,
   updated_at = NOW()
 `
 
@@ -158,6 +161,9 @@ ON CONFLICT (user_id) DO UPDATE SET
   subscription_expires_at = EXCLUDED.subscription_expires_at,
   subscription_provider = EXCLUDED.subscription_provider,
   stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, entitlements.stripe_customer_id),
+  -- Only Apple purchases set this (SetAppleEntitlement); a grant from another
+  -- provider replaces the Apple one.
+  apple_original_transaction_id = NULL,
   updated_at = NOW()
 `
 

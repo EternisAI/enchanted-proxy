@@ -11,6 +11,32 @@ import (
 	"github.com/google/uuid"
 )
 
+type ApplePurchase struct {
+	OriginalTransactionID string       `json:"originalTransactionId"`
+	ProductID             string       `json:"productId"`
+	Environment           string       `json:"environment"`
+	Tier                  string       `json:"tier"`
+	ExpiresAt             sql.NullTime `json:"expiresAt"`
+	RevokedAt             sql.NullTime `json:"revokedAt"`
+	HolderUserID          string       `json:"holderUserId"`
+	LastTransactionID     string       `json:"lastTransactionId"`
+	BlockedAt             sql.NullTime `json:"blockedAt"`
+	BlockReason           *string      `json:"blockReason"`
+	CreatedAt             time.Time    `json:"createdAt"`
+	UpdatedAt             time.Time    `json:"updatedAt"`
+}
+
+type ApplePurchaseEvent struct {
+	ID                    int64     `json:"id"`
+	OriginalTransactionID string    `json:"originalTransactionId"`
+	Kind                  string    `json:"kind"`
+	UserID                string    `json:"userId"`
+	PreviousUserID        *string   `json:"previousUserId"`
+	TransactionID         *string   `json:"transactionId"`
+	Reason                *string   `json:"reason"`
+	CreatedAt             time.Time `json:"createdAt"`
+}
+
 type DeepResearchMessage struct {
 	ID          string       `json:"id"`
 	UserID      string       `json:"userId"`
@@ -43,8 +69,27 @@ type Entitlement struct {
 	// Subscription source: apple, stripe
 	SubscriptionProvider string `json:"subscriptionProvider"`
 	// Stripe Customer ID for billing portal access (cus_xxx)
-	StripeCustomerID *string `json:"stripeCustomerId"`
-	SubscriptionTier string  `json:"subscriptionTier"`
+	StripeCustomerID           *string `json:"stripeCustomerId"`
+	SubscriptionTier           string  `json:"subscriptionTier"`
+	AppleOriginalTransactionID *string `json:"appleOriginalTransactionId"`
+}
+
+type EntitlementReviewRun struct {
+	ID         int64        `json:"id"`
+	StartedAt  time.Time    `json:"startedAt"`
+	FinishedAt sql.NullTime `json:"finishedAt"`
+	Mode       string       `json:"mode"`
+	Report     *string      `json:"report"`
+}
+
+type EntitlementsReviewBackup struct {
+	RunID                 int64        `json:"runId"`
+	UserID                string       `json:"userId"`
+	SubscriptionTier      string       `json:"subscriptionTier"`
+	SubscriptionExpiresAt sql.NullTime `json:"subscriptionExpiresAt"`
+	SubscriptionProvider  string       `json:"subscriptionProvider"`
+	StripeCustomerID      *string      `json:"stripeCustomerId"`
+	UpdatedAt             time.Time    `json:"updatedAt"`
 }
 
 type FaiPaymentIntent struct {
@@ -100,6 +145,12 @@ type ProblemReport struct {
 	TicketID               *string       `json:"ticketId"`
 	CreatedAt              time.Time     `json:"createdAt"`
 	UpdatedAt              time.Time     `json:"updatedAt"`
+}
+
+type QuotaGroupMember struct {
+	UserID   string    `json:"userId"`
+	GroupID  string    `json:"groupId"`
+	JoinedAt time.Time `json:"joinedAt"`
 }
 
 type RequestLog struct {

@@ -56,6 +56,10 @@ sql:
             go_type:
               type: "string"
               pointer: true
+          - column: "entitlement_review_runs.report"
+            go_type:
+              type: "string"
+              pointer: true
           - db_type: "text"
             nullable: true
             go_type:
