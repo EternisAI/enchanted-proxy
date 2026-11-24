@@ -42,6 +42,9 @@ type reconWorld struct {
 	pushes    []string
 	events    []string
 	now       time.Time
+
+	locked      bool     // inside a task's lock
+	outsideLock []string // changes made outside one
 }
 
 type fakeSchedule struct {
@@ -83,7 +86,11 @@ func (w *reconWorld) setRow(id string, change func(*pgdb.Task)) {
 }
 
 func (w *reconWorld) log(format string, args ...any) {
-	w.events = append(w.events, fmt.Sprintf(format, args...))
+	event := fmt.Sprintf(format, args...)
+	if !w.locked {
+		w.outsideLock = append(w.outsideLock, event)
+	}
+	w.events = append(w.events, event)
 }
 
 func (w *reconWorld) ListTasksToReconcile(context.Context) ([]pgdb.Task, error) {
@@ -281,6 +288,11 @@ func (w *reconWorld) reconciler(mode ReconcilerMode, notify bool) *Reconciler {
 		groups:         w,
 		logger:         logger.New(logger.Config{Level: slog.LevelError + 4}),
 		clock:          func() time.Time { return w.now },
+		taskLock: func(_ context.Context, _ string, fn func() error) error {
+			w.locked = true
+			defer func() { w.locked = false }()
+			return fn()
+		},
 	}
 	return &Reconciler{
 		s: s, accounts: w, notifier: w, log: s.logger,
@@ -551,5 +563,21 @@ func TestLoadReconcilerConfig(t *testing.T) {
 	want := ReconcilerConfig{Mode: ReconcilerDryRun, Interval: time.Hour, InactiveAfter: 90 * oneDay, PlanEndedGrace: 0, PauseNotifications: true}
 	if cfg != want {
 		t.Fatalf("config %+v, want %+v", cfg, want)
+	}
+}
+
+// Every change holds the task's lock, like an owner's pause, resume or delete.
+func TestReconcilerChangesTasksUnderTheirLock(t *testing.T) {
+	w := newReconWorld()
+	w.owner("idle", 100*oneDay, tiers.TierFree)
+	w.owner("u", oneDay, tiers.TierFree)
+	w.task("idle-t", "idle", "recurring", "0 9 * * *", TaskStatusActive, 200*oneDay, &fakeSchedule{})
+	w.task("gone", "u", "recurring", "0 9 * * *", TaskStatusActive, 30*oneDay, nil)
+	w.task("ran", "u", "one_time", "0 9 21 11 *", TaskStatusActive, 3*oneDay, nil)
+	w.task("frequent", "u", "recurring", "*/10 * * * *", TaskStatusActive, 60*oneDay, &fakeSchedule{})
+	w.schedules["orphan"] = &fakeSchedule{workflow: scheduledTaskWorkflow}
+	w.sweep(t, ReconcilerEnforce)
+	if len(w.events) < 5 || len(w.outsideLock) != 0 {
+		t.Fatalf("changes %q; outside a task lock %q", w.events, w.outsideLock)
 	}
 }

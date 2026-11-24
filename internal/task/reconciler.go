@@ -656,7 +656,7 @@ func (r *Reconciler) execute(ctx context.Context, actions []action, rep *Report)
 	var noticeOrder []noticeKey
 	for _, a := range actions {
 		label := a.label()
-		applied, err := r.apply(ctx, a, enforce)
+		applied, err := r.applyOne(ctx, a, enforce)
 		attrs := []any{
 			slog.String("mode", string(r.cfg.Mode)),
 			slog.String("action", label),
@@ -701,6 +701,24 @@ func (r *Reconciler) execute(ctx context.Context, actions []action, rep *Report)
 	}
 }
 
+// applyOne runs one action. In enforce mode it holds the task's lock, the one
+// creation, pause, resume and deletion hold, so the check and the change
+// cannot interleave with an owner's change to the same task.
+func (r *Reconciler) applyOne(ctx context.Context, a action, enforce bool) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, scheduleSetupTimeout)
+	defer cancel()
+	if !enforce {
+		return r.apply(ctx, a, false)
+	}
+	var applied bool
+	err := r.s.withTaskLock(ctx, a.taskID, func() error {
+		var err error
+		applied, err = r.apply(ctx, a, true)
+		return err
+	})
+	return applied, err
+}
+
 // apply carries out one action, after checking with Temporal or the database
 // that it still applies. It reports false when the state changed since the
 // snapshot. With enforce false it only checks.
@@ -708,19 +726,7 @@ func (r *Reconciler) apply(ctx context.Context, a action, enforce bool) (bool, e
 	q := r.s.queries
 	handle := func() client.ScheduleHandle { return r.s.temporalClient.ScheduleClient().GetHandle(ctx, a.taskID) }
 	// describe reads the schedule's state: nil when it does not exist.
-	describe := func() (*client.ScheduleState, error) {
-		desc, err := handle().Describe(ctx)
-		if isNotFound(err) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		if desc.Schedule.State == nil {
-			return &client.ScheduleState{}, nil
-		}
-		return desc.Schedule.State, nil
-	}
+	describe := func() (*client.ScheduleState, error) { return r.s.scheduleState(ctx, a.taskID) }
 	changed := func(n int64, err error) (bool, error) { return err == nil && n > 0, err }
 
 	switch a.kind {
