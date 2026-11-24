@@ -82,8 +82,9 @@ const staleRunMargin = 30 * time.Minute
 // hold up the ones after it.
 const reapTimeout = time.Minute
 
-// LoadConfig reads the settings from the environment, with defaults that sit just
-// above the largest measured normal run.
+// LoadConfig reads the settings from the environment, with defaults above the
+// largest measured normal run. The call budget is set so that the token budget
+// is the one a normal run reaches first.
 func LoadConfig(groups GroupLookup) *Config {
 	providers := []string{auth.ProviderApple, auth.ProviderGoogle}
 	if raw := strings.TrimSpace(os.Getenv("DEEP_RESEARCH_FREE_RUN_PROVIDERS")); raw != "" {
@@ -98,7 +99,7 @@ func LoadConfig(groups GroupLookup) *Config {
 		Groups:           groups,
 		MaxRunsPerDay:    envInt("DEEP_RESEARCH_MAX_RUNS_PER_DAY", 25),
 		FreeRunProviders: providers,
-		RunMaxLLMCalls:   envInt("DEEP_RESEARCH_RUN_MAX_LLM_CALLS", 300),
+		RunMaxLLMCalls:   envInt("DEEP_RESEARCH_RUN_MAX_LLM_CALLS", 500),
 		RunMaxTokens:     envInt("DEEP_RESEARCH_RUN_MAX_TOKENS", 6_500_000),
 		RunMaxSeconds:    envInt("DEEP_RESEARCH_RUN_MAX_SECONDS", 12_600),
 	}
