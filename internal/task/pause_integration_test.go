@@ -166,12 +166,24 @@ func TestDeleteDuringCreateLeavesNoScheduleWithoutARow(t *testing.T) {
 	ctx := context.Background()
 	userID := "delete-during-create-" + uuid.NewString()
 
+	// The gate is released exactly once, also when the test stops early, so the
+	// creation can finish.
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(gate.release) }) }
+	t.Cleanup(release)
+
 	created := make(chan error, 1)
 	go func() {
 		_, err := s.CreateTask(ctx, userID, request("recurring", "0 9 * * *"))
 		created <- err
 	}()
-	<-gate.entered
+	select {
+	case <-gate.entered:
+	case err := <-created:
+		t.Fatalf("CreateTask returned before creating the schedule: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("CreateTask did not reach Temporal")
+	}
 
 	tasks, err := s.GetTasksByUserID(ctx, userID)
 	if err != nil || len(tasks) != 1 || tasks[0].Status != string(TaskStatusPending) {
@@ -188,7 +200,7 @@ func TestDeleteDuringCreateLeavesNoScheduleWithoutARow(t *testing.T) {
 		t.Errorf("the deletion finished while the creation held the task (err %v)", deleteErr)
 	case <-time.After(300 * time.Millisecond):
 	}
-	close(gate.release)
+	release()
 	if err := <-created; err != nil {
 		t.Logf("create: %v", err)
 	}
@@ -206,7 +218,7 @@ func TestDeleteDuringCreateLeavesNoScheduleWithoutARow(t *testing.T) {
 	if scheduled && errors.Is(rowErr, sql.ErrNoRows) {
 		t.Fatal("the schedule runs with no task row to count it")
 	}
-	if scheduled || rowErr == nil {
+	if scheduled || !errors.Is(rowErr, sql.ErrNoRows) {
 		t.Fatalf("schedule %v, row error %v; want both deleted", scheduled, rowErr)
 	}
 }
