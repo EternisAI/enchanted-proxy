@@ -76,7 +76,7 @@ func TestScheduledTasksTool_Definition(t *testing.T) {
 		t.Fatal("enum should be a string array")
 	}
 
-	expectedEnums := map[string]bool{"list": true, "create": true, "delete": true}
+	expectedEnums := map[string]bool{"list": true, "create": true, "pause": true, "resume": true, "delete": true}
 	for _, v := range enumValues {
 		if !expectedEnums[v] {
 			t.Errorf("unexpected enum value: %s", v)

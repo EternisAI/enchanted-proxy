@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	stderrors "errors"
 	"log/slog"
 	"net/http"
@@ -142,8 +143,7 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 	// Delete the task with ownership verification
 	err := h.service.DeleteTask(c.Request.Context(), userID, taskID)
 	if err != nil {
-		// Check if task not found or unauthorized
-		if err.Error() == "task not found or unauthorized" {
+		if stderrors.Is(err, ErrTaskNotFound) {
 			log.Warn("task not found or unauthorized",
 				slog.String("task_id", taskID),
 				slog.String("user_id", userID))
@@ -167,4 +167,56 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 		Success: true,
 		Message: "task deleted successfully",
 	})
+}
+
+// PauseTask handles POST /api/v1/tasks/:taskId/pause
+// Pauses a task until the owner resumes it.
+func (h *Handler) PauseTask(c *gin.Context) {
+	h.changeTask(c, "pause", h.service.PauseTask)
+}
+
+// ResumeTask handles POST /api/v1/tasks/:taskId/resume
+// Lets a paused task run again on its schedule.
+func (h *Handler) ResumeTask(c *gin.Context) {
+	h.changeTask(c, "resume", h.service.ResumeTask)
+}
+
+// changeTask runs a pause or resume and answers with the task as it now is.
+// A refusal carries a sentence the client can show.
+func (h *Handler) changeTask(c *gin.Context, action string, change func(ctx context.Context, userID, taskID string) (*Task, error)) {
+	log := h.logger.WithContext(c.Request.Context()).WithComponent("task-handler")
+
+	userID, ok := auth.GetUserID(c)
+	if !ok {
+		errors.Unauthorized(c, "unauthorized", nil)
+		return
+	}
+	taskID := c.Param("taskId")
+	if taskID == "" {
+		errors.BadRequest(c, "task_id is required", nil)
+		return
+	}
+
+	task, err := change(c.Request.Context(), userID, taskID)
+	if err != nil {
+		var invalid *ValidationError
+		var limit *LimitError
+		switch {
+		case stderrors.Is(err, ErrTaskNotFound):
+			errors.NotFound(c, "task not found", nil)
+		case stderrors.As(err, &invalid):
+			errors.BadRequest(c, invalid.Message, nil)
+		case stderrors.As(err, &limit):
+			errors.AbortWithForbidden(c, errors.NewForbiddenError(errors.ReasonTaskLimit, limit.Message, limit.Message,
+				limit.Tier, map[string]interface{}{"limit": limit.Reason}))
+		default:
+			log.Error("failed to "+action+" task",
+				slog.String("error", err.Error()),
+				slog.String("task_id", taskID),
+				slog.String("user_id", userID))
+			errors.Internal(c, "failed to "+action+" task", nil)
+		}
+		return
+	}
+	c.JSON(http.StatusOK, TaskResponse{Task: task})
 }

@@ -820,9 +820,11 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 		if input.taskHandler != nil {
 			tasks := api.Group("/tasks")
 			{
-				tasks.POST("", input.taskHandler.CreateTask)           // POST /api/v1/tasks - Create a new task
-				tasks.GET("", input.taskHandler.GetTasks)              // GET /api/v1/tasks - Get all tasks for user
-				tasks.DELETE("/:taskId", input.taskHandler.DeleteTask) // DELETE /api/v1/tasks/:taskId - Delete a task
+				tasks.POST("", input.taskHandler.CreateTask)                // POST /api/v1/tasks - Create a new task
+				tasks.GET("", input.taskHandler.GetTasks)                   // GET /api/v1/tasks - Get all tasks for user
+				tasks.DELETE("/:taskId", input.taskHandler.DeleteTask)      // DELETE /api/v1/tasks/:taskId - Delete a task
+				tasks.POST("/:taskId/pause", input.taskHandler.PauseTask)   // POST /api/v1/tasks/:taskId/pause - Pause a task
+				tasks.POST("/:taskId/resume", input.taskHandler.ResumeTask) // POST /api/v1/tasks/:taskId/resume - Resume a paused task
 			}
 		}
 

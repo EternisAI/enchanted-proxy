@@ -57,6 +57,7 @@ type Querier interface {
 	GetSessionMessages(ctx context.Context, sessionID string) ([]DeepResearchMessage, error)
 	GetStripeCustomerID(ctx context.Context, userID string) (*string, error)
 	GetTaskByID(ctx context.Context, taskID string) (Task, error)
+	GetTaskForUser(ctx context.Context, arg GetTaskForUserParams) (Task, error)
 	GetTasksByChatID(ctx context.Context, chatID string) ([]Task, error)
 	GetTasksByUserID(ctx context.Context, userID string) ([]Task, error)
 	GetTelegramChatByChatID(ctx context.Context, chatID int64) (TelegramChat, error)
@@ -97,12 +98,21 @@ type Querier interface {
 	// One lock covers the whole service: starts are rare, and the service-wide
 	// daily ceiling counts every account's runs.
 	LockDeepResearchAdmission(ctx context.Context) error
+	// Holds one task's lock until the transaction ends, so creating, pausing,
+	// resuming and deleting the same task cannot interleave.
+	LockTask(ctx context.Context, taskID string) error
 	// Holds an account's task admission lock until the transaction ends, so the
 	// limit checks and the new task's rows cannot interleave with another
 	// admission for the same account.
 	LockTaskAdmission(ctx context.Context, userID string) error
 	MarkAllMessagesAsSent(ctx context.Context, sessionID string) error
 	MarkMessageAsSent(ctx context.Context, id string) error
+	// Records that a task's schedule is paused, and why. A task that is already
+	// paused keeps its reason, and a finished one is left as it is.
+	MarkTaskPaused(ctx context.Context, arg MarkTaskPausedParams) (int64, error)
+	// Records that a paused task's schedule runs again. Only a task still paused
+	// for the reason the caller checked is changed.
+	MarkTaskResumed(ctx context.Context, arg MarkTaskResumedParams) (int64, error)
 	RecordTaskCreation(ctx context.Context, arg RecordTaskCreationParams) error
 	ResetInviteCode(ctx context.Context, codeHash string) error
 	SoftDeleteInviteCode(ctx context.Context, id int64) error

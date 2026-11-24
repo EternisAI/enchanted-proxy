@@ -35,14 +35,14 @@ func (t *ScheduledTasksTool) Definition() ToolDefinition {
 		Type: "function",
 		Function: FunctionDef{
 			Name:        "schedule_task",
-			Description: "Manage scheduled reminders, recurring tasks, and automated research/search operations. Use this tool when the user wants to: be reminded of something at a specific time, get updates on a topic (stock prices, news, weather, etc.), or have automated searches performed on a schedule. When executed, the server-side LLM will either send a simple notification OR perform a web search and then send results. Can list existing tasks, create new scheduled tasks, or delete tasks by ID.",
+			Description: "Manage scheduled reminders, recurring tasks, and automated research/search operations. Use this tool when the user wants to: be reminded of something at a specific time, get updates on a topic (stock prices, news, weather, etc.), or have automated searches performed on a schedule. When executed, the server-side LLM will either send a simple notification OR perform a web search and then send results. Can list existing tasks, create new scheduled tasks, pause or resume tasks, or delete tasks by ID. The list says why a task is paused and whether the user can resume it.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"action": map[string]interface{}{
 						"type":        "string",
-						"description": "Action to perform: 'list', 'create', or 'delete'",
-						"enum":        []string{"list", "create", "delete"},
+						"description": "Action to perform: 'list', 'create', 'pause', 'resume', or 'delete'",
+						"enum":        []string{"list", "create", "pause", "resume", "delete"},
 					},
 					"taskName": map[string]interface{}{
 						"type":        "string",
@@ -67,7 +67,7 @@ func (t *ScheduledTasksTool) Definition() ToolDefinition {
 					},
 					"taskId": map[string]interface{}{
 						"type":        "string",
-						"description": "ID of the task to delete (required for 'delete' action)",
+						"description": "ID of the task to pause, resume or delete (required for those actions)",
 					},
 				},
 				"required":             []string{"action"},
@@ -112,10 +112,14 @@ func (t *ScheduledTasksTool) Execute(ctx context.Context, args string) (string, 
 		return t.executeList(ctx, userID)
 	case "create":
 		return t.executeCreate(ctx, userID, &taskArgs)
+	case "pause":
+		return t.executePause(ctx, userID, taskArgs.TaskID)
+	case "resume":
+		return t.executeResume(ctx, userID, taskArgs.TaskID)
 	case "delete":
 		return t.executeDelete(ctx, userID, taskArgs.TaskID)
 	default:
-		return "", fmt.Errorf("invalid action: %s (must be 'list', 'create', or 'delete')", taskArgs.Action)
+		return "", fmt.Errorf("invalid action: %s (must be 'list', 'create', 'pause', 'resume', or 'delete')", taskArgs.Action)
 	}
 }
 
@@ -133,13 +137,13 @@ func (t *ScheduledTasksTool) executeList(ctx context.Context, userID string) (st
 	// Format tasks as human-readable list
 	var lines []string
 	lines = append(lines, fmt.Sprintf("You have %d scheduled task(s):", len(tasks)))
-	for i, task := range tasks {
-		status := task.Status
-		if status == "active" {
-			status = "active"
+	for i, item := range tasks {
+		line := fmt.Sprintf("%d. %s (ID: %s, Type: %s, Status: %s, Schedule: %s)",
+			i+1, item.TaskName, item.TaskID, item.Type, item.Status, item.Time)
+		if item.Status == string(task.TaskStatusPaused) {
+			line += " " + task.PauseExplanation(task.PauseReason(item.PauseReason))
 		}
-		lines = append(lines, fmt.Sprintf("%d. %s (ID: %s, Type: %s, Status: %s, Schedule: %s)",
-			i+1, task.TaskName, task.TaskID, task.Type, status, task.Time))
+		lines = append(lines, line)
 	}
 
 	return strings.Join(lines, "\n"), nil
@@ -221,6 +225,54 @@ func (t *ScheduledTasksTool) executeCreate(ctx context.Context, userID string, a
 	return "Perfect! I've set up that recurring reminder for you. You'll receive notifications according to the schedule.", nil
 }
 
+// executePause pauses a task by ID.
+func (t *ScheduledTasksTool) executePause(ctx context.Context, userID, taskID string) (string, error) {
+	if taskID == "" {
+		return "", fmt.Errorf("taskId is required for pause action")
+	}
+	paused, err := t.taskService.PauseTask(ctx, userID, taskID)
+	if refusal, err := changeOutcome("paused", taskID, err); refusal != "" || err != nil {
+		return refusal, err
+	}
+	// A task paused earlier for another reason keeps that reason.
+	if paused.PauseReason != string(task.PauseUser) {
+		return "The task was already paused. " + task.PauseExplanation(task.PauseReason(paused.PauseReason)), nil
+	}
+	return "Paused. The task will not run until it is resumed.", nil
+}
+
+// executeResume resumes a paused task by ID.
+func (t *ScheduledTasksTool) executeResume(ctx context.Context, userID, taskID string) (string, error) {
+	if taskID == "" {
+		return "", fmt.Errorf("taskId is required for resume action")
+	}
+	_, err := t.taskService.ResumeTask(ctx, userID, taskID)
+	if refusal, err := changeOutcome("resumed", taskID, err); refusal != "" || err != nil {
+		return refusal, err
+	}
+	return "Resumed. The task will run again on its schedule.", nil
+}
+
+// changeOutcome turns a pause or resume error into a sentence for the model to
+// pass on (a refusal) or a tool failure.
+func changeOutcome(done, taskID string, err error) (string, error) {
+	if err == nil {
+		return "", nil
+	}
+	if errors.Is(err, task.ErrTaskNotFound) {
+		return "", fmt.Errorf("task not found or you don't have permission to change it (ID: %s)", taskID)
+	}
+	var limit *task.LimitError
+	if errors.As(err, &limit) {
+		return "The task was not " + done + ". " + limit.Message, nil
+	}
+	var invalid *task.ValidationError
+	if errors.As(err, &invalid) {
+		return "The task was not " + done + ". " + invalid.Message, nil
+	}
+	return "", fmt.Errorf("failed to change task: %w", err)
+}
+
 // executeDelete deletes a task by ID.
 func (t *ScheduledTasksTool) executeDelete(ctx context.Context, userID string, taskID string) (string, error) {
 	// Validate task ID
@@ -235,7 +287,7 @@ func (t *ScheduledTasksTool) executeDelete(ctx context.Context, userID string, t
 	// Call task service
 	err := t.taskService.DeleteTask(ctx, userID, taskID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "unauthorized") {
+		if errors.Is(err, task.ErrTaskNotFound) {
 			return "", fmt.Errorf("task not found or you don't have permission to delete it (ID: %s)", taskID)
 		}
 		return "", fmt.Errorf("failed to delete task: %w", err)
