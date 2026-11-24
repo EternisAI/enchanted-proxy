@@ -23,7 +23,7 @@ Firebase Auth. It then:
 | Owner deleted or disabled | Schedule and row paused, reason `account_missing` |
 | Owner of a recurring task inactive for `TASK_INACTIVE_DAYS` | Schedule and row paused, reason `inactive` |
 | Recurring task over the owner's current plan | First seen time recorded; after `TASK_PLAN_ENDED_GRACE_HOURS`, paused with reason `plan_ended` |
-| `plan_ended` task that fits the plan again | Resumed. This is the only pause the reconciler lifts. |
+| `plan_ended` task that fits the plan again | Row set `active`, then the schedule resumed. This is the only pause the reconciler lifts. |
 
 Inactive means no sign-in and no token refresh. An owner's tasks are walked oldest
 first against the plan: a task is over when it is past the plan's number of recurring
@@ -42,7 +42,7 @@ advisory lock that creating, pausing, resuming and deleting a task hold, so they
 interleave with an owner's change to the same task.
 
 A schedule can read paused while an Unpause that returned an error may still apply,
-after an owner's resume failed. In that case the row stays `active`,
+after an owner's resume or a lifted hold failed. In that case the row stays `active`,
 so the task keeps counting. Before the reconciler sets such a row `paused`, it makes
 the pause again with the same note. Temporal applies a schedule's changes in the order
 it accepts them, so the earlier Unpause cannot undo that pause.

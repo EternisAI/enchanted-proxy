@@ -816,12 +816,14 @@ func (r *Reconciler) apply(ctx context.Context, a action, enforce bool) (bool, e
 		if !enforce {
 			return true, nil
 		}
-		if err := handle().Unpause(ctx, client.ScheduleUnpauseOptions{Note: "plan_ended hold lifted by the task reconciler"}); err != nil {
-			return false, err
-		}
+		// The row counts the task before its schedule resumes, and keeps counting
+		// it after a failed Unpause, which may still apply. If the schedule stays
+		// paused, the next sweep puts the hold back on the row.
 		held := string(PausePlanEnded)
-		if _, err := q.MarkTaskResumed(ctx, pgdb.MarkTaskResumedParams{TaskID: a.taskID, PauseReason: &held}); err != nil {
-			// The schedule runs; the next sweep records it.
+		if resumed, err := changed(q.MarkTaskResumed(ctx, pgdb.MarkTaskResumedParams{TaskID: a.taskID, PauseReason: &held})); !resumed {
+			return false, err // the row changed since the check, or the write failed
+		}
+		if err := handle().Unpause(ctx, client.ScheduleUnpauseOptions{Note: "plan_ended hold lifted by the task reconciler"}); err != nil {
 			return true, err
 		}
 		return true, q.ClearTaskOverLimit(ctx, a.taskID)

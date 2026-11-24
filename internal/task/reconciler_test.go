@@ -376,6 +376,32 @@ func TestReconcilerOutlastsAFailedUnpauseThatAppliesLate(t *testing.T) {
 	}
 }
 
+// Lifting a hold counts the task before its schedule resumes, and a failed
+// Unpause, which may still apply, keeps it counted.
+func TestReconcilerKeepsALiftedHoldCountedWhileItsUnpauseMayApply(t *testing.T) {
+	w := newReconWorld()
+	w.owner("u", oneDay, tiers.TierPro)
+	w.task("held", "u", "recurring", "*/10 * * * *", TaskStatusPaused, 60*oneDay, &fakeSchedule{paused: true, note: "plan_ended: over the limits"})
+	w.setRow("held", func(r *pgdb.Task) { r.PauseReason = reasonPtr(PausePlanEnded) })
+	w.unpauseErr, w.unpauseLate = serviceerror.NewDeadlineExceeded("late"), true
+
+	rep := w.sweep(t, ReconcilerEnforce)
+	if len(rep.Errors) == 0 {
+		t.Fatal("the failed Unpause was not reported")
+	}
+	if row := w.rows["held"]; row.Status != string(TaskStatusActive) {
+		t.Fatalf("row %s, want active and counted while the Unpause may apply", row.Status)
+	}
+
+	// It applies: the next sweep finds nothing to change in the row.
+	w.applyLateUnpauses()
+	w.unpauseErr = nil
+	w.sweep(t, ReconcilerEnforce)
+	if row := w.rows["held"]; row.Status != string(TaskStatusActive) || w.schedules["held"].paused {
+		t.Fatalf("row %s, schedule paused %v; want both running", row.Status, w.schedules["held"].paused)
+	}
+}
+
 func TestReconcilerSettlesRowsWithoutSchedules(t *testing.T) {
 	w := newReconWorld()
 	w.owner("u", oneDay, tiers.TierFree)
