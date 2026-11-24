@@ -32,10 +32,13 @@ type taskWorld struct {
 	paused                          bool
 	note                            string
 	pauseErr, unpauseErr, deleteErr error
-	describeErr                     error // overrides the state above
+	describeErr                     error   // overrides the state above
+	describeErrs                    []error // one per Describe call, in order, before describeErr
+	unpauseApplies                  bool    // Unpause resumes the schedule even when it returns unpauseErr
 
-	locked      bool // inside the task's lock
-	outsideLock []string
+	duringAdmission func() // runs inside the admission lock
+	locked          bool   // inside the task's lock
+	outsideLock     []string
 }
 
 func (w *taskWorld) log(event string) {
@@ -111,7 +114,13 @@ type taskHandle struct {
 
 func (h *taskHandle) Describe(context.Context) (*client.ScheduleDescription, error) {
 	w := h.world
-	if w.describeErr != nil {
+	if len(w.describeErrs) > 0 {
+		err := w.describeErrs[0]
+		w.describeErrs = w.describeErrs[1:]
+		if err != nil {
+			return nil, err
+		}
+	} else if w.describeErr != nil {
 		return nil, w.describeErr
 	}
 	if w.missing {
@@ -133,6 +142,9 @@ func (h *taskHandle) Pause(_ context.Context, o client.SchedulePauseOptions) err
 func (h *taskHandle) Unpause(context.Context, client.ScheduleUnpauseOptions) error {
 	w := h.world
 	if w.unpauseErr != nil {
+		if w.unpauseApplies {
+			w.paused = false
+		}
 		return w.unpauseErr
 	}
 	w.log("schedule resumed")
@@ -171,6 +183,9 @@ func (w *taskWorld) service(tier tiers.Tier) *Service {
 		admission: func(_ context.Context, _ []string, fn func(pgdb.Querier) error) error {
 			w.inAdmission = true
 			defer func() { w.inAdmission = false }()
+			if w.duringAdmission != nil {
+				w.duringAdmission()
+			}
 			return fn(w)
 		},
 		taskLock: func(_ context.Context, _ string, fn func() error) error {
