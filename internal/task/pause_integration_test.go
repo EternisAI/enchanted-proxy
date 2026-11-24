@@ -160,7 +160,7 @@ func TestDeleteDuringCreateLeavesNoScheduleWithoutARow(t *testing.T) {
 		tierLookup:     fixedTier{tier: tiers.TierPro},
 		groups:         soloGroup{},
 		admission:      lockedAdmission(db),
-		taskLock:       lockedTasks(db, logger.New(logger.Config{Level: slog.LevelError + 4})),
+		taskLock:       testTaskLocks(t, db, taskLockWait),
 		clock:          time.Now,
 	}
 	ctx := context.Background()
@@ -234,7 +234,7 @@ func TestTaskLocksDoNotExhaustTheConnectionPool(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = small.Close() })
 	small.SetMaxOpenConns(3)
-	lock := lockedTasks(small, logger.New(logger.Config{Level: slog.LevelError + 4}))
+	lock := testTaskLocks(t, small, taskLockWait)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -256,5 +256,41 @@ func TestTaskLocksDoNotExhaustTheConnectionPool(t *testing.T) {
 		if err != nil {
 			t.Fatalf("a lock holder could not get a connection: %v", err)
 		}
+	}
+}
+
+func testTaskLocks(t *testing.T, db *sql.DB, wait time.Duration) taskLocker {
+	t.Helper()
+	return lockedTasksWaiting(db, logger.New(logger.Config{Level: slog.LevelError + 4}), wait)
+}
+
+// A task's lock is held until its holder returns, also when the holder's
+// steps outlast the wait for the lock, and is released then.
+func TestTaskLockIsHeldUntilItsHolderReturns(t *testing.T) {
+	db := openTestDB(t)
+	lock := testTaskLocks(t, db, 100*time.Millisecond)
+	taskID := "held-lock-" + uuid.NewString()
+	ctx := context.Background()
+	held := func() bool {
+		t.Helper()
+		var taken bool
+		if err := db.QueryRowContext(ctx, "SELECT pg_try_advisory_xact_lock(hashtextextended('task:' || $1::text, 0))", taskID).Scan(&taken); err != nil {
+			t.Fatal(err)
+		}
+		return !taken
+	}
+	var heldLate bool
+	if err := lock(ctx, taskID, func() error {
+		time.Sleep(300 * time.Millisecond) // three times the wait
+		heldLate = held()
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !heldLate {
+		t.Fatal("the lock ended while its holder still ran")
+	}
+	if held() {
+		t.Fatal("the lock outlived its holder")
 	}
 }

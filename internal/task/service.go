@@ -48,17 +48,20 @@ func detached(ctx context.Context, timeout time.Duration) (context.Context, cont
 // instance.
 type taskLocker func(ctx context.Context, taskID string, fn func() error) error
 
-// The longest wait for a task's lock, and the longest it is then held: the
-// steps under it and the recovery after a failed step, each bounded on its own.
-const (
-	taskLockWait = scheduleSetupTimeout
-	taskLockHold = scheduleSetupTimeout + 3*cleanupTimeout
-)
+// taskLockWait is the longest wait for a task's lock. Once taken, the lock is
+// held until its holder returns, however long that takes: each step under it
+// is bounded on its own, so the holder returns by itself, and a separate limit
+// on the hold could only end the lock while a step still runs.
+const taskLockWait = scheduleSetupTimeout
 
 // lockedTasks is the taskLocker backed by a Postgres advisory lock, held in a
 // transaction while fn runs. fn's own reads and writes go through the pool,
 // outside that transaction.
 func lockedTasks(db *sql.DB, log *logger.Logger) taskLocker {
+	return lockedTasksWaiting(db, log, taskLockWait)
+}
+
+func lockedTasksWaiting(db *sql.DB, log *logger.Logger, wait time.Duration) taskLocker {
 	// A holder keeps one pool connection for the lock and takes others for its
 	// work. Holders are limited to a third of the pool, so they cannot take every
 	// connection and then wait for one another.
@@ -69,7 +72,7 @@ func lockedTasks(db *sql.DB, log *logger.Logger) taskLocker {
 	return func(ctx context.Context, taskID string, fn func() error) error {
 		// The lock does not follow the request's cancellation: a client that
 		// disconnects must not release it halfway through.
-		waitCtx, cancelWait := detached(ctx, taskLockWait)
+		waitCtx, cancelWait := detached(ctx, wait)
 		defer cancelWait()
 		if slots != nil {
 			select {
@@ -79,11 +82,10 @@ func lockedTasks(db *sql.DB, log *logger.Logger) taskLocker {
 				return fmt.Errorf("timed out waiting to lock task: %w", waitCtx.Err())
 			}
 		}
-		// database/sql ends the transaction, and with it the lock, when this
-		// context ends, so it covers the wait and the full hold.
-		holdCtx, cancelHold := detached(ctx, taskLockWait+taskLockHold)
-		defer cancelHold()
-		tx, err := db.BeginTx(holdCtx, nil)
+		// database/sql ends a transaction, and with it the lock, when the
+		// transaction's context ends. This one has no deadline, so the lock ends
+		// only once fn has returned.
+		tx, err := db.BeginTx(context.WithoutCancel(ctx), nil)
 		if err != nil {
 			return fmt.Errorf("failed to begin task lock: %w", err)
 		}
@@ -103,8 +105,9 @@ func lockedTasks(db *sql.DB, log *logger.Logger) taskLocker {
 	}
 }
 
-// withTaskLock runs fn under the task's lock. The lock's wait and hold are
-// bounded on their own, apart from ctx's cancellation; fn bounds its own steps.
+// withTaskLock runs fn under the task's lock. The wait for the lock is bounded
+// on its own, apart from ctx's cancellation; the lock is then held until fn
+// returns, and fn bounds its own steps.
 func (s *Service) withTaskLock(ctx context.Context, taskID string, fn func() error) error {
 	if s.taskLock == nil {
 		return fn() // tests without a database
