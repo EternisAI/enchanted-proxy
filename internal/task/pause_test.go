@@ -223,3 +223,23 @@ func TestPauseAndResumeHandlersAnswerWithReadableRefusals(t *testing.T) {
 		}
 	}
 }
+
+// Pause, resume and delete read and write a task only under its lock, so they
+// cannot interleave with each other or with the task's creation.
+func TestTaskChangesRunUnderTheTaskLock(t *testing.T) {
+	w := newTaskWorld()
+	s := w.service(tiers.TierFree)
+	ctx := context.Background()
+	if _, err := s.PauseTask(ctx, "user-1", "task-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ResumeTask(ctx, "user-1", "task-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteTask(ctx, "user-1", "task-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.events) == 0 || len(w.outsideLock) != 0 {
+		t.Fatalf("events %q; outside the lock %q", w.events, w.outsideLock)
+	}
+}

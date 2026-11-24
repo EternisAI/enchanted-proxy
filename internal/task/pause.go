@@ -101,9 +101,26 @@ func taskFromRow(row pgdb.Task) *Task {
 // exists. The reconciler removes such rows.
 var errScheduleGone = &ValidationError{Message: "This task is no longer scheduled. Delete it and create it again."}
 
-// PauseTask pauses one of the caller's tasks until the caller resumes it. A
-// task that is already paused keeps its reason.
+// PauseTask runs pauseTask under the task's lock, so a pause, resume or deletion of
+// the same task cannot interleave with it.
 func (s *Service) PauseTask(ctx context.Context, userID, taskID string) (*Task, error) {
+	lockCtx, cancel := detached(ctx, scheduleSetupTimeout)
+	defer cancel()
+	var task *Task
+	err := s.withTaskLock(lockCtx, taskID, func() error {
+		var err error
+		task, err = s.pauseTask(ctx, userID, taskID)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+// pauseTask pauses one of the caller's tasks until the caller resumes it. A
+// task that is already paused keeps its reason.
+func (s *Service) pauseTask(ctx context.Context, userID, taskID string) (*Task, error) {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
 
 	row, err := getOwnedTask(ctx, s.queries, userID, taskID)
@@ -159,13 +176,30 @@ func (s *Service) PauseTask(ctx context.Context, userID, taskID string) (*Task, 
 	return taskFromRow(row), nil
 }
 
-// ResumeTask lets a paused task of the caller's run again on its schedule. It
+// ResumeTask runs resumeTask under the task's lock, so a pause, resume or deletion of
+// the same task cannot interleave with it.
+func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task, error) {
+	lockCtx, cancel := detached(ctx, scheduleSetupTimeout)
+	defer cancel()
+	var task *Task
+	err := s.withTaskLock(lockCtx, taskID, func() error {
+		var err error
+		task, err = s.resumeTask(ctx, userID, taskID)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+// resumeTask lets a paused task of the caller's run again on its schedule. It
 // refuses a task paused by an admin or held because the plan ended, and a
 // task that would take the caller over the plan's number of tasks. The other
 // creation limits are not applied again, so that pausing stays reversible. A
 // row that says active is checked against its schedule, which may be paused
 // if recording a pause failed.
-func (s *Service) ResumeTask(ctx context.Context, userID, taskID string) (*Task, error) {
+func (s *Service) resumeTask(ctx context.Context, userID, taskID string) (*Task, error) {
 	log := s.logger.WithContext(ctx).WithComponent("task-service")
 
 	row, err := getOwnedTask(ctx, s.queries, userID, taskID)

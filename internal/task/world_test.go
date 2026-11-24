@@ -33,9 +33,15 @@ type taskWorld struct {
 	note                            string
 	pauseErr, unpauseErr, deleteErr error
 	describeErr                     error // overrides the state above
+
+	locked      bool // inside the task's lock
+	outsideLock []string
 }
 
 func (w *taskWorld) log(event string) {
+	if !w.locked {
+		w.outsideLock = append(w.outsideLock, event)
+	}
 	if w.inAdmission {
 		event = "@" + event
 	}
@@ -43,6 +49,9 @@ func (w *taskWorld) log(event string) {
 }
 
 func (w *taskWorld) GetTaskForUser(_ context.Context, arg pgdb.GetTaskForUserParams) (pgdb.Task, error) {
+	if !w.locked {
+		w.outsideLock = append(w.outsideLock, "read row")
+	}
 	row, ok := w.rows[arg.TaskID]
 	if !ok || row.UserID != arg.UserID {
 		return pgdb.Task{}, sql.ErrNoRows
@@ -163,6 +172,11 @@ func (w *taskWorld) service(tier tiers.Tier) *Service {
 			w.inAdmission = true
 			defer func() { w.inAdmission = false }()
 			return fn(w)
+		},
+		taskLock: func(_ context.Context, _ string, fn func() error) error {
+			w.locked = true
+			defer func() { w.locked = false }()
+			return fn()
 		},
 	}
 }

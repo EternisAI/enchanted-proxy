@@ -74,3 +74,8 @@ UPDATE tasks
 SET status = 'active', pause_reason = NULL, updated_at = NOW()
 WHERE task_id = sqlc.arg(task_id) AND status = 'paused'
   AND pause_reason IS NOT DISTINCT FROM sqlc.narg(pause_reason);
+
+-- name: LockTask :exec
+-- Holds one task's lock until the transaction ends, so creating, pausing,
+-- resuming and deleting the same task cannot interleave.
+SELECT pg_advisory_xact_lock(hashtextextended('task:' || sqlc.arg(task_id)::text, 0));

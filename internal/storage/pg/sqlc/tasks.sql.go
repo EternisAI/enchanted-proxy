@@ -321,6 +321,17 @@ func (q *Queries) ListOpenTasksForUsers(ctx context.Context, userIds []string) (
 	return items, nil
 }
 
+const lockTask = `-- name: LockTask :exec
+SELECT pg_advisory_xact_lock(hashtextextended('task:' || $1::text, 0))
+`
+
+// Holds one task's lock until the transaction ends, so creating, pausing,
+// resuming and deleting the same task cannot interleave.
+func (q *Queries) LockTask(ctx context.Context, taskID string) error {
+	_, err := q.db.ExecContext(ctx, lockTask, taskID)
+	return err
+}
+
 const lockTaskAdmission = `-- name: LockTaskAdmission :exec
 SELECT pg_advisory_xact_lock(hashtextextended('task_admission:' || $1::text, 0))
 `

@@ -4,10 +4,19 @@ package task
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"log/slog"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/eternisai/enchanted-proxy/internal/logger"
 	pgdb "github.com/eternisai/enchanted-proxy/internal/storage/pg/sqlc"
+	"github.com/eternisai/enchanted-proxy/internal/tiers"
 	"github.com/google/uuid"
+	"go.temporal.io/api/serviceerror"
+	"go.temporal.io/sdk/client"
 )
 
 // The pause and resume writes are compare-and-set: a pause keeps the reason of
@@ -72,5 +81,127 @@ func TestPauseAndResumeWritesAgainstPostgres(t *testing.T) {
 	}
 	if len(open) != 1 || open[0].TaskID != active {
 		t.Fatalf("open tasks %+v, want only the resumed one", open)
+	}
+}
+
+// gatedSchedules is a Temporal schedule store, safe for concurrent use, whose
+// Create waits until the test releases it.
+type gatedSchedules struct {
+	client.Client
+	mu       sync.Mutex
+	created  map[string]bool
+	entered  chan struct{} // closed when Create is called
+	release  chan struct{} // Create returns once this is closed
+	announce sync.Once
+}
+
+func (g *gatedSchedules) ScheduleClient() client.ScheduleClient { return gatedClient{g: g} }
+
+type gatedClient struct {
+	client.ScheduleClient
+	g *gatedSchedules
+}
+
+func (c gatedClient) Create(_ context.Context, o client.ScheduleOptions) (client.ScheduleHandle, error) {
+	c.g.announce.Do(func() { close(c.g.entered) })
+	<-c.g.release
+	c.g.mu.Lock()
+	defer c.g.mu.Unlock()
+	c.g.created[o.ID] = true
+	return gatedHandle{g: c.g, id: o.ID}, nil
+}
+
+func (c gatedClient) GetHandle(_ context.Context, id string) client.ScheduleHandle {
+	return gatedHandle{g: c.g, id: id}
+}
+
+type gatedHandle struct {
+	client.ScheduleHandle
+	g  *gatedSchedules
+	id string
+}
+
+func (h gatedHandle) GetID() string { return h.id }
+
+func (h gatedHandle) Describe(context.Context) (*client.ScheduleDescription, error) {
+	h.g.mu.Lock()
+	defer h.g.mu.Unlock()
+	if !h.g.created[h.id] {
+		return nil, serviceerror.NewNotFound("no schedule")
+	}
+	return &client.ScheduleDescription{}, nil
+}
+
+func (h gatedHandle) Delete(context.Context) error {
+	h.g.mu.Lock()
+	defer h.g.mu.Unlock()
+	if !h.g.created[h.id] {
+		return serviceerror.NewNotFound("no schedule")
+	}
+	delete(h.g.created, h.id)
+	return nil
+}
+
+// An owner who lists a task while it is being created and deletes it must
+// not leave its schedule running without a row: the deletion waits for the
+// creation, under the task's lock.
+func TestDeleteDuringCreateLeavesNoScheduleWithoutARow(t *testing.T) {
+	db := openTestDB(t)
+	gate := &gatedSchedules{created: map[string]bool{}, entered: make(chan struct{}), release: make(chan struct{})}
+	s := &Service{
+		temporalClient: gate,
+		logger:         logger.New(logger.Config{Level: slog.LevelError + 4}),
+		queries:        pgdb.New(db),
+		tierLookup:     fixedTier{tier: tiers.TierPro},
+		groups:         soloGroup{},
+		admission:      lockedAdmission(db),
+		taskLock:       lockedTasks(db),
+		clock:          time.Now,
+	}
+	ctx := context.Background()
+	userID := "delete-during-create-" + uuid.NewString()
+
+	created := make(chan error, 1)
+	go func() {
+		_, err := s.CreateTask(ctx, userID, request("recurring", "0 9 * * *"))
+		created <- err
+	}()
+	<-gate.entered
+
+	tasks, err := s.GetTasksByUserID(ctx, userID)
+	if err != nil || len(tasks) != 1 || tasks[0].Status != string(TaskStatusPending) {
+		t.Fatalf("tasks %+v (%v), want the one pending task", tasks, err)
+	}
+	taskID := tasks[0].TaskID
+	deleted := make(chan error, 1)
+	go func() { deleted <- s.DeleteTask(ctx, userID, taskID) }()
+	var deleteErr error
+	deleteDone := false
+	select {
+	case deleteErr = <-deleted:
+		deleteDone = true
+		t.Errorf("the deletion finished while the creation held the task (err %v)", deleteErr)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(gate.release)
+	if err := <-created; err != nil {
+		t.Logf("create: %v", err)
+	}
+	if !deleteDone {
+		deleteErr = <-deleted
+	}
+	if deleteErr != nil && !errors.Is(deleteErr, ErrTaskNotFound) {
+		t.Fatalf("delete: %v", deleteErr)
+	}
+
+	_, rowErr := pgdb.New(db).GetTaskByID(ctx, taskID)
+	gate.mu.Lock()
+	scheduled := gate.created[taskID]
+	gate.mu.Unlock()
+	if scheduled && errors.Is(rowErr, sql.ErrNoRows) {
+		t.Fatal("the schedule runs with no task row to count it")
+	}
+	if scheduled || rowErr == nil {
+		t.Fatalf("schedule %v, row error %v; want both deleted", scheduled, rowErr)
 	}
 }
