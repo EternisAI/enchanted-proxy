@@ -96,9 +96,12 @@ type ConfigResponse struct {
 
 // Blocks on Base come about every 2 seconds.
 const (
-	startupSyncBlocks            = 43_200 // ~24 hours, the lifetime of a payment intent
-	resubscribeSyncBlocks        = 1_800  // ~1 hour
-	replayBatchBlocks            = 500
+	startupSyncBlocks     = 43_200 // ~24 hours, the lifetime of a payment intent
+	resubscribeSyncBlocks = 1_800  // ~1 hour
+	// replayBatchBlocks is the most blocks one log query covers. Free RPC plans
+	// refuse wider ranges (dRPC's at more than 100 blocks), and dRPC then closes
+	// the WebSocket, which ends the subscription too.
+	replayBatchBlocks            = 100
 	settlementRetryCheckInterval = time.Minute
 	// Live events arriving while a replay runs wait here (the client buffers more).
 	liveLogBuffer = 1024

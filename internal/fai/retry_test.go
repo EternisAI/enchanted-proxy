@@ -195,6 +195,29 @@ func TestFailedReplayStaysPendingUntilItCompletes(t *testing.T) {
 	}
 }
 
+// The startup replay reads the whole 24 hours in log queries of at most 100
+// blocks each, which free RPC plans accept.
+func TestReplayQueriesAtMost100Blocks(t *testing.T) {
+	chain := &fakeChain{}
+	s := NewService(nil, nil, logger.New(logger.Config{Level: slog.LevelError + 4}))
+	s.chain = chain
+
+	r := lookbackRange(50_000, startupSyncBlocks)
+	if err := s.replay(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	next := r.from
+	for _, q := range chain.queried {
+		if q.from != next || q.to < q.from || q.to-q.from+1 > 100 {
+			t.Fatalf("query %d-%d: want a range of at most 100 blocks from %d", q.from, q.to, next)
+		}
+		next = q.to + 1
+	}
+	if next != r.to+1 {
+		t.Fatalf("queries ended at block %d, want %d", next-1, r.to)
+	}
+}
+
 // seenQuerier records which payment IDs the handler looked up; none is known.
 type seenQuerier struct {
 	pgdb.Querier
