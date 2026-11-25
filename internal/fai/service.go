@@ -110,9 +110,10 @@ const (
 	// the WebSocket, which ends the subscription too.
 	replayBatchBlocks = 100
 	// replayBatchPause spaces a replay's log queries, so a replay stays under
-	// public endpoints' rate limits: the 24-hour startup replay takes about two
-	// minutes.
-	replayBatchPause = 250 * time.Millisecond
+	// public endpoints' rate limits with every instance replaying at once (three
+	// clients at 4 queries a second each were limited): the 24-hour startup
+	// replay takes about four minutes.
+	replayBatchPause = 500 * time.Millisecond
 	// A subscription that ends sooner than stableSubscription after it started
 	// counts as failed, and the listener waits longer before each further
 	// resubscribe, up to maxResubscribeWait, instead of reconnecting in a loop.
