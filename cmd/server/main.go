@@ -163,15 +163,10 @@ func main() {
 
 	// Initialize FAI payment service
 	faiService := fai.NewService(db.DB, db.Queries, logger.WithComponent("fai"))
-	faiReady := false
-	if config.AppConfig.FaiEnabled && config.AppConfig.FaiWsRpcURL != "" && config.AppConfig.FaiPaymentContract != "" {
-		if err := faiService.InitBlockchain(config.AppConfig.FaiWsRpcURL, config.AppConfig.FaiPaymentContract); err != nil {
-			log.Error("failed to initialize FAI blockchain connection", slog.String("error", err.Error()))
-		} else {
-			faiReady = true
-			log.Info("FAI blockchain connection initialized")
-		}
-	}
+	// The chain connection is made in the background (faiService.Run, below),
+	// with retries, so a refused first attempt does not leave this instance
+	// without FAI.
+	faiConfigured := config.AppConfig.FaiEnabled && config.AppConfig.FaiWsRpcURL != "" && config.AppConfig.FaiPaymentContract != ""
 
 	mcpService := mcp.NewService()
 	searchService := search.NewService(logger.WithComponent("search"))
@@ -404,30 +399,22 @@ func main() {
 		}()
 	}
 
-	if faiReady {
+	if faiConfigured {
 		faiListenerCtx, faiListenerCancel := context.WithCancel(context.Background())
+		faiListenerDone := make(chan struct{})
 		go func() {
-			for {
-				if err := faiService.StartEventListener(faiListenerCtx); err != nil {
-					if errors.Is(err, context.Canceled) {
-						return
-					}
-					log.Error("FAI event listener stopped, restarting in 5s", slog.String("error", err.Error()))
-					select {
-					case <-time.After(5 * time.Second):
-						continue
-					case <-faiListenerCtx.Done():
-						return
-					}
-				}
-				return
-			}
+			defer close(faiListenerDone)
+			faiService.Run(faiListenerCtx, config.AppConfig.FaiWsRpcURL, config.AppConfig.FaiPaymentContract)
 		}()
 		log.Info("FAI payment event listener started")
 		defer func() {
 			log.Info("stopping FAI payment event listener")
 			faiListenerCancel()
-			faiService.Close()
+			select {
+			case <-faiListenerDone:
+			case <-time.After(10 * time.Second):
+				log.Warn("FAI payment event listener did not stop within 10s")
+			}
 		}()
 	}
 
@@ -588,7 +575,7 @@ func main() {
 		stripeHandler:          stripeHandler,
 		zcashHandler:           zcashHandler,
 		faiHandler:             faiHandler,
-		faiReady:               faiReady,
+		faiConfigured:          faiConfigured,
 		mcpHandler:             mcpHandler,
 		searchHandler:          searchHandler,
 		taskHandler:            taskHandler,
@@ -766,7 +753,7 @@ type restServerInput struct {
 	stripeHandler          *stripe.Handler
 	zcashHandler           *zcash.Handler
 	faiHandler             *fai.Handler
-	faiReady               bool
+	faiConfigured          bool
 	mcpHandler             *mcp.Handler
 	searchHandler          *search.Handler
 	taskHandler            *task.Handler
@@ -860,8 +847,9 @@ func setupRESTServer(input restServerInput) *gin.Engine {
 			zcashGroup.GET("/invoice/:invoiceId", input.zcashHandler.GetInvoice)
 		}
 
-		// FAI crypto payment (protected, only registered when blockchain is ready)
-		if input.faiReady {
+		// FAI crypto payment (protected, registered when FAI is configured; the
+		// config route answers 503 until the chain connection is made)
+		if input.faiConfigured {
 			faiGroup := api.Group("/fai")
 			{
 				faiGroup.GET("/config", input.faiHandler.GetConfig)

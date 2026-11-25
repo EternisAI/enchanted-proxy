@@ -31,6 +31,8 @@ egress:
   # FAI crypto payments (Base RPC + CoinGecko price feed)
   - base-sepolia.drpc.org
   - base.drpc.org
+  - base-sepolia-rpc.publicnode.com
+  - base-rpc.publicnode.com
   - api.coingecko.com
   # MCP API client endpoints
   - api.perplexity.ai

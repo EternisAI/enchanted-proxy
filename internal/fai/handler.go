@@ -119,6 +119,11 @@ func (h *Handler) GetPaymentIntent(c *gin.Context) {
 // GET /api/v1/fai/config
 func (h *Handler) GetConfig(c *gin.Context) {
 	cfg, err := h.service.GetConfig()
+	if errors.Is(err, ErrBlockchainNotReady) {
+		// The instance is still connecting to the chain; it retries by itself.
+		c.JSON(http.StatusServiceUnavailable, apierrors.NewAPIError("FAI payments are temporarily unavailable, please try again shortly", nil))
+		return
+	}
 	if err != nil {
 		h.logger.Error("failed to get FAI config", slog.String("error", err.Error()))
 		apierrors.Internal(c, "FAI payments not configured", nil)
