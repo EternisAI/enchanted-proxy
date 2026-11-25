@@ -72,7 +72,7 @@ type Service struct {
 	wait func(ctx context.Context, d time.Duration) error
 	now  func() time.Time
 	// connect makes the chain connection; it is InitBlockchain outside tests.
-	connect func(wsRpcURL, contractAddress string) error
+	connect func(ctx context.Context, wsRpcURL, contractAddress string) error
 	// ready is set once the chain connection is made. Setting it publishes the
 	// connection's fields to other goroutines, which check Ready first.
 	ready atomic.Bool
@@ -130,9 +130,12 @@ const (
 	// A failed chain connection is retried after connectRetryFirst, then twice
 	// as long each time up to connectRetryMax. A listener that stops with an
 	// error is restarted after listenerRestartWait.
-	connectRetryFirst            = 5 * time.Second
-	connectRetryMax              = 5 * time.Minute
-	listenerRestartWait          = 5 * time.Second
+	connectRetryFirst   = 5 * time.Second
+	connectRetryMax     = 5 * time.Minute
+	listenerRestartWait = 5 * time.Second
+	// connectTimeout bounds one connection attempt: the WebSocket handshake
+	// and the chain ID query.
+	connectTimeout               = 30 * time.Second
 	settlementRetryCheckInterval = time.Minute
 	// Live events arriving while a replay runs wait here (the client buffers more).
 	liveLogBuffer = 1024
@@ -194,8 +197,13 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 }
 
 // InitBlockchain connects to the blockchain via WebSocket and sets up event listening.
-func (s *Service) InitBlockchain(wsRpcURL, contractAddress string) (err error) {
-	ethClient, err := ethclient.Dial(wsRpcURL)
+//
+// One attempt takes at most connectTimeout, and ends early when ctx does.
+func (s *Service) InitBlockchain(ctx context.Context, wsRpcURL, contractAddress string) (err error) {
+	ctx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
+	// The context bounds only the connection's setup, not its later use.
+	ethClient, err := ethclient.DialContext(ctx, wsRpcURL)
 	if err != nil {
 		return fmt.Errorf("failed to connect to Ethereum WebSocket: %w", err)
 	}
@@ -208,7 +216,7 @@ func (s *Service) InitBlockchain(wsRpcURL, contractAddress string) (err error) {
 	contractAddr := common.HexToAddress(contractAddress)
 	eventSig := crypto.Keccak256Hash([]byte("PaymentReceived(bytes32,address,uint256,address)"))
 
-	chainID, err := ethClient.ChainID(context.Background())
+	chainID, err := ethClient.ChainID(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get chain ID: %w", err)
 	}
@@ -879,10 +887,13 @@ func (s *Service) Ready() bool {
 func (s *Service) Run(ctx context.Context, wsRpcURL, contractAddress string) {
 	defer s.Close()
 	for wait := connectRetryFirst; ; wait = min(2*wait, connectRetryMax) {
-		err := s.connect(wsRpcURL, contractAddress)
+		err := s.connect(ctx, wsRpcURL, contractAddress)
 		if err == nil {
 			s.ready.Store(true)
 			break
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		s.logger.Error("failed to initialize FAI blockchain connection, retrying", "error", err.Error(), "wait", wait.String())
 		if s.wait(ctx, wait) != nil {
