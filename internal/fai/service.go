@@ -61,6 +61,8 @@ type Service struct {
 	// attempted in this process. Both are used only by the listener goroutine.
 	pendingReplay     *blockRange
 	initialReplayDone bool
+	// wait pauses for d, or until ctx ends; tests replace it.
+	wait func(ctx context.Context, d time.Duration) error
 }
 
 // Product represents a purchasable subscription product.
@@ -101,7 +103,11 @@ const (
 	// replayBatchBlocks is the most blocks one log query covers. Free RPC plans
 	// refuse wider ranges (dRPC's at more than 100 blocks), and dRPC then closes
 	// the WebSocket, which ends the subscription too.
-	replayBatchBlocks            = 100
+	replayBatchBlocks = 100
+	// replayBatchPause spaces a replay's log queries, so a replay stays under
+	// public endpoints' rate limits: the 24-hour startup replay takes about two
+	// minutes.
+	replayBatchPause             = 250 * time.Millisecond
 	settlementRetryCheckInterval = time.Minute
 	// Live events arriving while a replay runs wait here (the client buffers more).
 	liveLogBuffer = 1024
@@ -130,6 +136,19 @@ func NewService(db *sql.DB, queries pgdb.Querier, logger *logger.Logger) *Servic
 		logger:    logger,
 		coingecko: NewCoinGeckoService(logger),
 		retries:   newSettlementRetries(),
+		wait:      sleepContext,
+	}
+}
+
+// sleepContext waits for d, or until ctx ends.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
 	}
 }
 
@@ -743,6 +762,12 @@ func (s *Service) replay(ctx context.Context, r blockRange) error {
 	s.logger.Info("replaying payment events", "from_block", r.from, "to_block", r.to)
 
 	for start := r.from; start <= r.to; start += replayBatchBlocks {
+		if start > r.from {
+			if err := s.wait(ctx, replayBatchPause); err != nil {
+				s.addPendingReplay(blockRange{from: start, to: r.to})
+				return err
+			}
+		}
 		end := min(start+replayBatchBlocks-1, r.to)
 
 		logs, err := s.chain.FilterLogs(ctx, ethereum.FilterQuery{
