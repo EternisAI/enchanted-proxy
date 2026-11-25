@@ -61,6 +61,13 @@ type Service struct {
 	// attempted in this process. Both are used only by the listener goroutine.
 	pendingReplay     *blockRange
 	initialReplayDone bool
+	// resubscribeFailures counts subscriptions in a row that failed before
+	// lasting stableSubscription; it sets the wait before the next resubscribe.
+	// Used only by the listener goroutine.
+	resubscribeFailures int
+	// wait pauses for d, or until ctx ends; now tells the time. Tests replace both.
+	wait func(ctx context.Context, d time.Duration) error
+	now  func() time.Time
 }
 
 // Product represents a purchasable subscription product.
@@ -96,9 +103,21 @@ type ConfigResponse struct {
 
 // Blocks on Base come about every 2 seconds.
 const (
-	startupSyncBlocks            = 43_200 // ~24 hours, the lifetime of a payment intent
-	resubscribeSyncBlocks        = 1_800  // ~1 hour
-	replayBatchBlocks            = 500
+	startupSyncBlocks     = 43_200 // ~24 hours, the lifetime of a payment intent
+	resubscribeSyncBlocks = 1_800  // ~1 hour
+	// replayBatchBlocks is the most blocks one log query covers. Free RPC plans
+	// refuse wider ranges (dRPC's at more than 100 blocks), and dRPC then closes
+	// the WebSocket, which ends the subscription too.
+	replayBatchBlocks = 100
+	// replayBatchPause spaces a replay's log queries, so a replay stays under
+	// public endpoints' rate limits: the 24-hour startup replay takes about two
+	// minutes.
+	replayBatchPause = 250 * time.Millisecond
+	// A subscription that ends sooner than stableSubscription after it started
+	// counts as failed, and the listener waits longer before each further
+	// resubscribe, up to maxResubscribeWait, instead of reconnecting in a loop.
+	stableSubscription           = time.Minute
+	maxResubscribeWait           = time.Minute
 	settlementRetryCheckInterval = time.Minute
 	// Live events arriving while a replay runs wait here (the client buffers more).
 	liveLogBuffer = 1024
@@ -127,6 +146,33 @@ func NewService(db *sql.DB, queries pgdb.Querier, logger *logger.Logger) *Servic
 		logger:    logger,
 		coingecko: NewCoinGeckoService(logger),
 		retries:   newSettlementRetries(),
+		wait:      sleepContext,
+		now:       time.Now,
+	}
+}
+
+// resubscribeWait is how long the listener waits before resubscribing after
+// failures subscriptions in a row ended early: nothing after the first, then
+// 1 s, doubling up to maxResubscribeWait.
+func resubscribeWait(failures int) time.Duration {
+	if failures <= 0 {
+		return 0
+	}
+	if failures > 7 {
+		return maxResubscribeWait
+	}
+	return min(time.Second<<(failures-1), maxResubscribeWait)
+}
+
+// sleepContext waits for d, or until ctx ends.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
 	}
 }
 
@@ -366,6 +412,9 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 		"event_signature", s.eventSignature.Hex())
 
 	logs := make(chan types.Log, liveLogBuffer)
+	// A subscription's lifetime counts from the attempt, so the time is set
+	// before the subscription exists.
+	subscribedAt := s.now()
 	sub, err := s.subscribe(ctx, logs)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to logs: %w", err)
@@ -397,6 +446,17 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 		case err := <-sub.Err():
 			s.logger.Error("subscription error, resubscribing", "error", err)
 			sub.Unsubscribe() // release the failed one; safe to repeat
+			if s.now().Sub(subscribedAt) >= stableSubscription {
+				s.resubscribeFailures = 0
+			}
+			if wait := resubscribeWait(s.resubscribeFailures); wait > 0 {
+				s.logger.Info("waiting before resubscribing", "wait", wait.String())
+				if err := s.wait(ctx, wait); err != nil {
+					return err
+				}
+			}
+			s.resubscribeFailures++
+			subscribedAt = s.now()
 			next, err := s.subscribe(ctx, logs)
 			if err != nil {
 				return fmt.Errorf("failed to resubscribe: %w", err)
@@ -740,6 +800,12 @@ func (s *Service) replay(ctx context.Context, r blockRange) error {
 	s.logger.Info("replaying payment events", "from_block", r.from, "to_block", r.to)
 
 	for start := r.from; start <= r.to; start += replayBatchBlocks {
+		if start > r.from {
+			if err := s.wait(ctx, replayBatchPause); err != nil {
+				s.addPendingReplay(blockRange{from: start, to: r.to})
+				return err
+			}
+		}
 		end := min(start+replayBatchBlocks-1, r.to)
 
 		logs, err := s.chain.FilterLogs(ctx, ethereum.FilterQuery{

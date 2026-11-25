@@ -168,8 +168,7 @@ func (f *fakeChain) HeaderByNumber(_ context.Context, n *big.Int) (*types.Header
 
 func TestFailedReplayStaysPendingUntilItCompletes(t *testing.T) {
 	chain := &fakeChain{failFrom: map[uint64]bool{1500: true}}
-	s := NewService(nil, nil, logger.New(logger.Config{Level: slog.LevelError + 4}))
-	s.chain = chain
+	s := newChainService(nil, chain)
 
 	if err := s.replay(context.Background(), blockRange{from: 1000, to: 2999}); err == nil {
 		t.Fatal("replay reported success although a batch failed")
@@ -195,6 +194,77 @@ func TestFailedReplayStaysPendingUntilItCompletes(t *testing.T) {
 	}
 }
 
+// noWait replaces the service's pauses in tests.
+func noWait(context.Context, time.Duration) error { return nil }
+
+// newChainService returns a service that reads chain and does not pause.
+func newChainService(q pgdb.Querier, chain *fakeChain) *Service {
+	s := NewService(nil, q, logger.New(logger.Config{Level: slog.LevelError + 4}))
+	s.chain = chain
+	s.wait = noWait
+	return s
+}
+
+// The startup replay reads the whole 24 hours in log queries of at most 100
+// blocks each, which free RPC plans accept.
+func TestReplayQueriesAtMost100Blocks(t *testing.T) {
+	chain := &fakeChain{}
+	s := newChainService(nil, chain)
+
+	r := lookbackRange(50_000, startupSyncBlocks)
+	if err := s.replay(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	next := r.from
+	for _, q := range chain.queried {
+		if q.from != next || q.to < q.from || q.to-q.from+1 > 100 {
+			t.Fatalf("query %d-%d: want a range of at most 100 blocks from %d", q.from, q.to, next)
+		}
+		next = q.to + 1
+	}
+	if next != r.to+1 {
+		t.Fatalf("queries ended at block %d, want %d", next-1, r.to)
+	}
+}
+
+// A replay pauses between its log queries, and a pause cut short by shutdown
+// leaves the unread blocks pending.
+func TestReplayPausesBetweenQueries(t *testing.T) {
+	chain := &fakeChain{}
+	s := newChainService(nil, chain)
+	var waits []time.Duration
+	s.wait = func(_ context.Context, d time.Duration) error {
+		waits = append(waits, d)
+		return nil
+	}
+	if err := s.replay(context.Background(), blockRange{from: 0, to: 999}); err != nil {
+		t.Fatal(err)
+	}
+	if len(chain.queried) != 10 || len(waits) != 9 {
+		t.Fatalf("%d queries and %d pauses, want 10 and 9", len(chain.queried), len(waits))
+	}
+	for _, d := range waits {
+		if d != replayBatchPause {
+			t.Fatalf("paused %v, want %v", d, replayBatchPause)
+		}
+	}
+
+	chain.queried = nil
+	pauses := 0
+	s.wait = func(context.Context, time.Duration) error {
+		if pauses++; pauses == 3 {
+			return context.Canceled
+		}
+		return nil
+	}
+	if err := s.replay(context.Background(), blockRange{from: 0, to: 999}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("replay = %v, want the cancellation", err)
+	}
+	if len(chain.queried) != 3 || s.pendingReplay == nil || *s.pendingReplay != (blockRange{from: 300, to: 999}) {
+		t.Fatalf("%d queries, pending %+v; want 3 queries and 300-999 pending", len(chain.queried), s.pendingReplay)
+	}
+}
+
 // seenQuerier records which payment IDs the handler looked up; none is known.
 type seenQuerier struct {
 	pgdb.Querier
@@ -212,12 +282,12 @@ func (q seenQuerier) GetFaiPaymentIntentByPaymentID(_ context.Context, id string
 func TestListenerSubscribesBeforeReplay(t *testing.T) {
 	sig := common.HexToHash("0x01")
 	q := seenQuerier{seen: make(chan string, 16)}
-	s := NewService(nil, q, logger.New(logger.Config{Level: slog.LevelError + 4}))
+	chain := &fakeChain{head: 1000}
+	s := newChainService(q, chain)
 	s.eventSignature = sig
 
 	gap := types.Log{Topics: []common.Hash{sig}, Data: make([]byte, 128), TxHash: common.HexToHash("0x9")}
 	gap.Data[31] = 0x42 // payment ID
-	chain := &fakeChain{head: 1000}
 	var once sync.Once
 	chain.onFilter = func() {
 		once.Do(func() {
@@ -227,7 +297,6 @@ func TestListenerSubscribesBeforeReplay(t *testing.T) {
 			live <- gap // mined during the replay; the replay itself does not see it
 		})
 	}
-	s.chain = chain
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -256,10 +325,9 @@ func TestListenerSubscribesBeforeReplay(t *testing.T) {
 // the error (main restarts it) instead of panicking, and releases the failed
 // subscription.
 func TestListenerReturnsErrorWhenResubscribeFails(t *testing.T) {
-	s := NewService(nil, nil, logger.New(logger.Config{Level: slog.LevelError + 4}))
-	s.eventSignature = common.HexToHash("0x01")
 	chain := &fakeChain{head: 10, subscribeErrs: map[int]error{1: errors.New("websocket closed")}}
-	s.chain = chain
+	s := newChainService(nil, chain)
+	s.eventSignature = common.HexToHash("0x01")
 
 	done := make(chan error, 1)
 	go func() {
@@ -297,5 +365,81 @@ func TestListenerReturnsErrorWhenResubscribeFails(t *testing.T) {
 	defer first.mu.Unlock()
 	if first.unsubscribed == 0 {
 		t.Fatal("the failed subscription was not released")
+	}
+}
+
+func TestResubscribeWait(t *testing.T) {
+	for failures, want := range map[int]time.Duration{
+		0: 0, 1: time.Second, 2: 2 * time.Second, 3: 4 * time.Second, 6: 32 * time.Second,
+		7: time.Minute, 8: time.Minute, 100: time.Minute,
+	} {
+		if got := resubscribeWait(failures); got != want {
+			t.Errorf("resubscribeWait(%d) = %v, want %v", failures, got, want)
+		}
+	}
+}
+
+// When subscriptions keep ending at once, as when the endpoint closes the
+// connection, the listener waits longer before each resubscribe instead of
+// reconnecting in a loop; a subscription that lasted a minute resets the wait.
+func TestListenerBacksOffWhileTheSubscriptionKeepsFailing(t *testing.T) {
+	chain := &fakeChain{head: 10}
+	s := newChainService(nil, chain)
+	s.eventSignature = common.HexToHash("0x01")
+
+	var mu sync.Mutex
+	clock := time.Date(2026, 11, 25, 20, 0, 0, 0, time.UTC)
+	var waits []time.Duration
+	s.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return clock
+	}
+	s.wait = func(ctx context.Context, d time.Duration) error {
+		mu.Lock()
+		defer mu.Unlock()
+		waits = append(waits, d)
+		return ctx.Err()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.StartEventListener(ctx) }()
+
+	subAt := func(i int) *fakeSubscription {
+		t.Helper()
+		for range 5000 {
+			chain.mu.Lock()
+			if len(chain.subs) > i {
+				sub := chain.subs[i]
+				chain.mu.Unlock()
+				return sub
+			}
+			chain.mu.Unlock()
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatalf("subscription %d was not made", i)
+		return nil
+	}
+	for i := range 4 {
+		subAt(i).errs <- errors.New("websocket: close 1006")
+	}
+	// The listener reads the clock before it subscribes, so once subAt sees the
+	// fifth subscription its start time is recorded and the clock can move.
+	fifth := subAt(4)
+	mu.Lock()
+	clock = clock.Add(2 * time.Minute) // the fifth subscription lasts two minutes
+	mu.Unlock()
+	fifth.errs <- errors.New("websocket: close 1006")
+	subAt(5).errs <- errors.New("websocket: close 1006")
+	subAt(6)
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, time.Second}
+	if fmt.Sprint(waits) != fmt.Sprint(want) {
+		t.Fatalf("waits before resubscribing = %v, want %v", waits, want)
 	}
 }
