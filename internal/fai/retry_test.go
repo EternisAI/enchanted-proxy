@@ -367,3 +367,77 @@ func TestListenerReturnsErrorWhenResubscribeFails(t *testing.T) {
 		t.Fatal("the failed subscription was not released")
 	}
 }
+
+func TestResubscribeWait(t *testing.T) {
+	for failures, want := range map[int]time.Duration{
+		0: 0, 1: time.Second, 2: 2 * time.Second, 3: 4 * time.Second, 6: 32 * time.Second,
+		7: time.Minute, 8: time.Minute, 100: time.Minute,
+	} {
+		if got := resubscribeWait(failures); got != want {
+			t.Errorf("resubscribeWait(%d) = %v, want %v", failures, got, want)
+		}
+	}
+}
+
+// When subscriptions keep ending at once, as when the endpoint closes the
+// connection, the listener waits longer before each resubscribe instead of
+// reconnecting in a loop; a subscription that lasted a minute resets the wait.
+func TestListenerBacksOffWhileTheSubscriptionKeepsFailing(t *testing.T) {
+	chain := &fakeChain{head: 10}
+	s := newChainService(nil, chain)
+	s.eventSignature = common.HexToHash("0x01")
+
+	var mu sync.Mutex
+	clock := time.Date(2026, 11, 25, 20, 0, 0, 0, time.UTC)
+	var waits []time.Duration
+	s.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return clock
+	}
+	s.wait = func(ctx context.Context, d time.Duration) error {
+		mu.Lock()
+		defer mu.Unlock()
+		waits = append(waits, d)
+		return ctx.Err()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.StartEventListener(ctx) }()
+
+	subAt := func(i int) *fakeSubscription {
+		t.Helper()
+		for range 5000 {
+			chain.mu.Lock()
+			if len(chain.subs) > i {
+				sub := chain.subs[i]
+				chain.mu.Unlock()
+				return sub
+			}
+			chain.mu.Unlock()
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatalf("subscription %d was not made", i)
+		return nil
+	}
+	for i := range 4 {
+		subAt(i).errs <- errors.New("websocket: close 1006")
+	}
+	fifth := subAt(4)
+	mu.Lock()
+	clock = clock.Add(2 * time.Minute) // the fifth subscription lasts two minutes
+	mu.Unlock()
+	fifth.errs <- errors.New("websocket: close 1006")
+	subAt(5).errs <- errors.New("websocket: close 1006")
+	subAt(6)
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, time.Second}
+	if fmt.Sprint(waits) != fmt.Sprint(want) {
+		t.Fatalf("waits before resubscribing = %v, want %v", waits, want)
+	}
+}

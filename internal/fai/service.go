@@ -61,8 +61,13 @@ type Service struct {
 	// attempted in this process. Both are used only by the listener goroutine.
 	pendingReplay     *blockRange
 	initialReplayDone bool
-	// wait pauses for d, or until ctx ends; tests replace it.
+	// resubscribeFailures counts subscriptions in a row that failed before
+	// lasting stableSubscription; it sets the wait before the next resubscribe.
+	// Used only by the listener goroutine.
+	resubscribeFailures int
+	// wait pauses for d, or until ctx ends; now tells the time. Tests replace both.
 	wait func(ctx context.Context, d time.Duration) error
+	now  func() time.Time
 }
 
 // Product represents a purchasable subscription product.
@@ -107,7 +112,12 @@ const (
 	// replayBatchPause spaces a replay's log queries, so a replay stays under
 	// public endpoints' rate limits: the 24-hour startup replay takes about two
 	// minutes.
-	replayBatchPause             = 250 * time.Millisecond
+	replayBatchPause = 250 * time.Millisecond
+	// A subscription that ends sooner than stableSubscription after it started
+	// counts as failed, and the listener waits longer before each further
+	// resubscribe, up to maxResubscribeWait, instead of reconnecting in a loop.
+	stableSubscription           = time.Minute
+	maxResubscribeWait           = time.Minute
 	settlementRetryCheckInterval = time.Minute
 	// Live events arriving while a replay runs wait here (the client buffers more).
 	liveLogBuffer = 1024
@@ -137,7 +147,21 @@ func NewService(db *sql.DB, queries pgdb.Querier, logger *logger.Logger) *Servic
 		coingecko: NewCoinGeckoService(logger),
 		retries:   newSettlementRetries(),
 		wait:      sleepContext,
+		now:       time.Now,
 	}
+}
+
+// resubscribeWait is how long the listener waits before resubscribing after
+// failures subscriptions in a row ended early: nothing after the first, then
+// 1 s, doubling up to maxResubscribeWait.
+func resubscribeWait(failures int) time.Duration {
+	if failures <= 0 {
+		return 0
+	}
+	if failures > 7 {
+		return maxResubscribeWait
+	}
+	return min(time.Second<<(failures-1), maxResubscribeWait)
 }
 
 // sleepContext waits for d, or until ctx ends.
@@ -397,6 +421,7 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 			sub.Unsubscribe()
 		}
 	}()
+	subscribedAt := s.now()
 	s.logger.Info("subscribed to PaymentReceived events")
 
 	// The first start in this process replays the last 24 hours: settlement is
@@ -419,11 +444,22 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 		case err := <-sub.Err():
 			s.logger.Error("subscription error, resubscribing", "error", err)
 			sub.Unsubscribe() // release the failed one; safe to repeat
+			if s.now().Sub(subscribedAt) >= stableSubscription {
+				s.resubscribeFailures = 0
+			}
+			if wait := resubscribeWait(s.resubscribeFailures); wait > 0 {
+				s.logger.Info("waiting before resubscribing", "wait", wait.String())
+				if err := s.wait(ctx, wait); err != nil {
+					return err
+				}
+			}
+			s.resubscribeFailures++
 			next, err := s.subscribe(ctx, logs)
 			if err != nil {
 				return fmt.Errorf("failed to resubscribe: %w", err)
 			}
 			sub = next
+			subscribedAt = s.now()
 			s.logger.Info("resubscribed to PaymentReceived events")
 			if err := s.catchUp(ctx, resubscribeSyncBlocks); err != nil {
 				return err
