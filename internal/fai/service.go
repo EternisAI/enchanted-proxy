@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
@@ -26,6 +27,8 @@ import (
 var (
 	ErrPaymentNotFound = errors.New("payment intent not found")
 	ErrInvalidProduct  = errors.New("invalid product")
+	// ErrBlockchainNotReady means the chain connection has not been made yet.
+	ErrBlockchainNotReady = errors.New("blockchain connection not ready")
 )
 
 // chainReader is the part of the chain client the listener uses: subscribing to
@@ -68,6 +71,11 @@ type Service struct {
 	// wait pauses for d, or until ctx ends; now tells the time. Tests replace both.
 	wait func(ctx context.Context, d time.Duration) error
 	now  func() time.Time
+	// connect makes the chain connection; it is InitBlockchain outside tests.
+	connect func(wsRpcURL, contractAddress string) error
+	// ready is set once the chain connection is made. Setting it publishes the
+	// connection's fields to other goroutines, which check Ready first.
+	ready atomic.Bool
 }
 
 // Product represents a purchasable subscription product.
@@ -117,8 +125,14 @@ const (
 	// A subscription that ends sooner than stableSubscription after it started
 	// counts as failed, and the listener waits longer before each further
 	// resubscribe, up to maxResubscribeWait, instead of reconnecting in a loop.
-	stableSubscription           = time.Minute
-	maxResubscribeWait           = time.Minute
+	stableSubscription = time.Minute
+	maxResubscribeWait = time.Minute
+	// A failed chain connection is retried after connectRetryFirst, then twice
+	// as long each time up to connectRetryMax. A listener that stops with an
+	// error is restarted after listenerRestartWait.
+	connectRetryFirst            = 5 * time.Second
+	connectRetryMax              = 5 * time.Minute
+	listenerRestartWait          = 5 * time.Second
 	settlementRetryCheckInterval = time.Minute
 	// Live events arriving while a replay runs wait here (the client buffers more).
 	liveLogBuffer = 1024
@@ -141,7 +155,7 @@ const (
 )
 
 func NewService(db *sql.DB, queries pgdb.Querier, logger *logger.Logger) *Service {
-	return &Service{
+	s := &Service{
 		db:        db,
 		queries:   queries,
 		logger:    logger,
@@ -150,6 +164,8 @@ func NewService(db *sql.DB, queries pgdb.Querier, logger *logger.Logger) *Servic
 		wait:      sleepContext,
 		now:       time.Now,
 	}
+	s.connect = s.InitBlockchain
+	return s
 }
 
 // resubscribeWait is how long the listener waits before resubscribing after
@@ -283,8 +299,8 @@ func (s *Service) GetProduct(productID string) *Product {
 
 // GetConfig returns blockchain configuration for client-side contract interaction.
 func (s *Service) GetConfig() (*ConfigResponse, error) {
-	if s.ethClient == nil {
-		return nil, fmt.Errorf("blockchain not initialized")
+	if !s.ready.Load() {
+		return nil, ErrBlockchainNotReady
 	}
 
 	var faiTokenAddress string
@@ -846,6 +862,44 @@ func (s *Service) retryPendingReplay(ctx context.Context) {
 	s.pendingReplay = nil
 	if err := s.replay(ctx, r); err != nil {
 		s.logger.Warn("historical replay retry failed", "error", err.Error())
+	}
+}
+
+// Ready reports whether the chain connection has been made.
+func (s *Service) Ready() bool {
+	return s.ready.Load()
+}
+
+// Run makes the chain connection and runs the payment event listener until ctx
+// ends, then closes the connection. A failed connection is retried, waiting
+// connectRetryFirst and then twice as long each time up to connectRetryMax, so
+// an instance whose first attempt was refused (by a rate limit, say) still
+// listens once the endpoint lets it. The listener is restarted
+// listenerRestartWait after it stops with an error.
+func (s *Service) Run(ctx context.Context, wsRpcURL, contractAddress string) {
+	defer s.Close()
+	for wait := connectRetryFirst; ; wait = min(2*wait, connectRetryMax) {
+		err := s.connect(wsRpcURL, contractAddress)
+		if err == nil {
+			s.ready.Store(true)
+			break
+		}
+		s.logger.Error("failed to initialize FAI blockchain connection, retrying", "error", err.Error(), "wait", wait.String())
+		if s.wait(ctx, wait) != nil {
+			return
+		}
+	}
+	s.logger.Info("FAI blockchain connection initialized")
+
+	for {
+		err := s.StartEventListener(ctx)
+		if err == nil || ctx.Err() != nil {
+			return
+		}
+		s.logger.Error("FAI event listener stopped, restarting in 5s", "error", err.Error())
+		if s.wait(ctx, listenerRestartWait) != nil {
+			return
+		}
 	}
 }
 
