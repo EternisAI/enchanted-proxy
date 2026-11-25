@@ -424,6 +424,8 @@ func TestListenerBacksOffWhileTheSubscriptionKeepsFailing(t *testing.T) {
 	for i := range 4 {
 		subAt(i).errs <- errors.New("websocket: close 1006")
 	}
+	// The listener reads the clock before it subscribes, so once subAt sees the
+	// fifth subscription its start time is recorded and the clock can move.
 	fifth := subAt(4)
 	mu.Lock()
 	clock = clock.Add(2 * time.Minute) // the fifth subscription lasts two minutes

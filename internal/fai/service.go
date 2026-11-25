@@ -412,6 +412,9 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 		"event_signature", s.eventSignature.Hex())
 
 	logs := make(chan types.Log, liveLogBuffer)
+	// A subscription's lifetime counts from the attempt, so the time is set
+	// before the subscription exists.
+	subscribedAt := s.now()
 	sub, err := s.subscribe(ctx, logs)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to logs: %w", err)
@@ -421,7 +424,6 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 			sub.Unsubscribe()
 		}
 	}()
-	subscribedAt := s.now()
 	s.logger.Info("subscribed to PaymentReceived events")
 
 	// The first start in this process replays the last 24 hours: settlement is
@@ -454,12 +456,12 @@ func (s *Service) StartEventListener(ctx context.Context) error {
 				}
 			}
 			s.resubscribeFailures++
+			subscribedAt = s.now()
 			next, err := s.subscribe(ctx, logs)
 			if err != nil {
 				return fmt.Errorf("failed to resubscribe: %w", err)
 			}
 			sub = next
-			subscribedAt = s.now()
 			s.logger.Info("resubscribed to PaymentReceived events")
 			if err := s.catchUp(ctx, resubscribeSyncBlocks); err != nil {
 				return err
