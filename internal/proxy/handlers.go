@@ -261,12 +261,13 @@ func ProxyHandler(
 
 		// Trigger title generation/regeneration if applicable
 		if userID, exists := auth.GetUserID(c); exists {
+			titleModel, titleBaseURL, titleAPIKey := chatTitleEndpoint(log, modelRouter, provider.Model, baseURL, apiKey)
 			TriggerTitleGeneration(c, titleService, requestBody, TitleGenerationParams{
 				UserID:            userID,
 				ChatID:            c.GetHeader("X-Chat-ID"),
-				Model:             provider.Model,
-				BaseURL:           baseURL,
-				APIKey:            apiKey,
+				Model:             titleModel,
+				BaseURL:           titleBaseURL,
+				APIKey:            titleAPIKey,
 				Platform:          platform,
 				EncryptionEnabled: GetEncryptionEnabled(c),
 			})

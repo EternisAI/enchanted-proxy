@@ -192,10 +192,10 @@ func StartDeepResearchHandler(logger *logger.Logger, trackingService *request_tr
 					slog.String("user_id", userID),
 					slog.String("chat_id", req.ChatID))
 			} else if runCount == 1 {
-				// First run for this chat - generate title with GLM 4.6
+				// First run for this chat - generate its title with the title model
 				titleConfig, err := modelRouter.GetTitleGenerationConfig()
 				if err != nil {
-					log.Warn("Kimi K2 not configured for deep research title generation",
+					log.Warn("title model unavailable, skipping the deep research title",
 						slog.String("error", err.Error()))
 				} else {
 					platform := c.GetHeader("X-Client-Platform")

@@ -1,5 +1,12 @@
-# Title Generation Prompts
+# Title Generation
 title_generation:
+  # Every conversation title is generated with this model on this provider (one
+  # of model_router.providers), whatever model the conversation uses. The model
+  # need not be listed under model_router.models, so clients are not offered it.
+  # Without these two settings, a chat's title uses the chat's own model, and
+  # Responses API and deep research titles use Kimi K2.
+  provider: Tinfoil
+  model: gemma4-31b
   initial_prompt: |
     You are a title generator. Generate a short, concise title for this conversation based on the user's first message.
 

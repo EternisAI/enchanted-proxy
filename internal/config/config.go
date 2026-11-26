@@ -2,6 +2,8 @@ package config
 
 import (
 	"crypto/sha256"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/url"
@@ -14,10 +16,45 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// TitleGenerationConfig contains system prompts for title generation
+// TitleGenerationConfig configures conversation title generation.
 type TitleGenerationConfig struct {
+	// Provider and Model name the endpoint every title is generated with,
+	// whatever model the conversation uses: Provider is one of
+	// model_router.providers, and Model is the model ID that provider expects.
+	// The model need not be one of model_router.models, so clients are not
+	// offered it. Without them, a chat's title uses the chat's own model, and
+	// Responses API and deep research titles use Kimi K2.
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
+
+	// System prompts for a conversation's first title and for its regeneration.
 	InitialPrompt      string `yaml:"initial_prompt"`
 	RegenerationPrompt string `yaml:"regeneration_prompt"`
+}
+
+// Validate checks that Provider and Model are set together, and that Provider
+// is one of the model router's providers with a base URL and an API key
+// variable of its own. (OpenRouter's key is chosen per request, and a provider
+// without a base URL has one per model.)
+func (cfg *TitleGenerationConfig) Validate(router *ModelRouterConfig) error {
+	if cfg.Provider == "" && cfg.Model == "" {
+		return nil
+	}
+	if cfg.Provider == "" || cfg.Model == "" {
+		return errors.New("title_generation: provider and model must be set together")
+	}
+	if router != nil {
+		for _, provider := range router.Providers {
+			if provider.Name != cfg.Provider {
+				continue
+			}
+			if provider.BaseURL == "" || provider.APIKeyEnvVar == "" {
+				return fmt.Errorf("title_generation: provider %q needs a base_url and an api_key_env_var of its own", cfg.Provider)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("title_generation: unknown provider %q", cfg.Provider)
 }
 
 type Config struct {
@@ -493,6 +530,12 @@ func LoadConfigFile(reader io.Reader, config *Config) error {
 
 	if err := decoder.Decode(config); err != nil {
 		return err
+	}
+
+	if config.TitleGeneration != nil {
+		if err := config.TitleGeneration.Validate(config.ModelRouterConfig); err != nil {
+			return err
+		}
 	}
 
 	return nil
