@@ -88,12 +88,13 @@ In addition to the HTTPS egress on port 443, Envoy has protocol-specific transpa
 | 443 | HTTPS | General TLS egress (SNI-based routing) |
 | 4222 | TCP | NATS messaging |
 | 5432 | TCP | PostgreSQL |
-| 8000 | TCP | Internal inference hardware (temporary) |
 | 20002 | HTTP | Zcash backend (with retry policy) |
+| 20130 | HTTP | Dolphin Mistral, self-hosted SGLang (mutual TLS upstream) |
 
 Some services use Envoy internal listeners for special TLS handling:
 - `internal_near-ai` — HTTP/2 + ALPN negotiation + TLS 1.3 required
 - `internal_zcash_backend` — Custom CA cert (`/etc/ssl/certs/eternis/llm-ca.pem`)
+- `internal_dolphin` — Mutual TLS to `34.28.19.236:8443`: presents the pod's TEE client certificate (`/var/run/secrets/mtls`) and accepts only the pinned key of the server's self-signed certificate (`verify_certificate_spki`). The VM's Envoy accepts the `proxy-api` and `proxy-api-dev` SPIFFE IDs from the TEE Production and Development CAs. The LLM prober probes it directly with the same certificate (`probe.tls` in `config/config.yaml`).
 
 Config: [`deploy/envoy.yaml`](../deploy/envoy.yaml) (clusters section)
 

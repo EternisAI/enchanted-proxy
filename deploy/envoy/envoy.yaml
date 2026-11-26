@@ -104,24 +104,6 @@ static_resources:
                   upstream_wire_bytes_sent: '%UPSTREAM_WIRE_BYTES_SENT%'
           access_log_options:
             flush_access_log_on_connected: true
-  # test inference hardware endpoint (temporary)
-  - name: egress_ai_box
-    address:
-      socket_address:
-        address: 0.0.0.0
-        port_value: 8000
-    filter_chains:
-    - filters:
-      - name: envoy.filters.network.tcp_proxy
-        typed_config:
-          '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
-          stat_prefix: tcp_proxy
-          cluster: enclaver_odyn_egress
-          tunneling_config:
-            hostname: '%DOWNSTREAM_DIRECT_REMOTE_ADDRESS_WITHOUT_PORT%:8000'
-          access_log: *access_log_tcp
-          access_log_options:
-            flush_access_log_on_connected: true
   # internal inference endpoints
   - name: internal_anonymizer
     internal_listener: {}
@@ -148,6 +130,20 @@ static_resources:
           cluster: enclaver_odyn_egress
           tunneling_config:
             hostname: zcash.eternisai.net:443
+          access_log: *access_log_tcp
+          access_log_options:
+            flush_access_log_on_connected: true
+  - name: internal_dolphin
+    internal_listener: {}
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.tcp_proxy
+        typed_config:
+          '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+          stat_prefix: tcp_proxy
+          cluster: enclaver_odyn_egress
+          tunneling_config:
+            hostname: 34.28.19.236:8443
           access_log: *access_log_tcp
           access_log_options:
             flush_access_log_on_connected: true
@@ -247,6 +243,41 @@ static_resources:
                   prefix: /
                 route:
                   cluster: internal_zcash_backend
+                  timeout: 0s
+                  retry_policy:
+                    retry_on: gateway-error
+                    num_retries: 2
+  # self-hosted Dolphin Mistral (SGLang behind mTLS); config.yaml points its
+  # base URL here
+  - name: egress_dolphin
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 20130
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: http_proxy
+          stream_idle_timeout: 900s
+          access_log: *access_log_http
+          http_filters:
+          - name: envoy.filters.http.router
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+          route_config:
+            name: main
+            virtual_hosts:
+            - name: default
+              domains:
+              - '*'
+              routes:
+              - name: default
+                match:
+                  prefix: /
+                route:
+                  cluster: internal_dolphin
                   timeout: 0s
                   retry_policy:
                     retry_on: gateway-error
@@ -502,6 +533,40 @@ static_resources:
                 watched_directory:
                   path: /etc/ssl/certs/eternis
   # transparent proxy endpoint
+  - name: internal_dolphin
+    load_assignment:
+      cluster_name: internal_dolphin
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              envoy_internal_address:
+                server_listener_name: internal_dolphin
+    typed_extension_protocol_options:
+      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+        '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+        explicit_http_config:
+          http2_protocol_options: {}
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+        common_tls_context:
+          alpn_protocols: ["h2", "http/1.1"]
+          tls_params: *mtls_params
+          tls_certificate_sds_secret_configs:
+          - name: mtls
+            sds_config:
+              path_config_source:
+                path: /etc/envoy/sds/mtls.yaml
+                watched_directory:
+                  path: /var/run/secrets/mtls
+          # The server certificate is self-signed: its public key is pinned
+          # (base64 SHA-256 of the SubjectPublicKeyInfo) instead of checking a
+          # CA chain.
+          validation_context:
+            verify_certificate_spki:
+            - d7afxr+KiPEsZL9Vss21E6HKskR7G26PmZNZcWhBgXk=
   - name: enclaver_odyn_egress
     connect_timeout: 1s
     circuit_breakers: *circuit_breakers
