@@ -43,6 +43,10 @@ type ModelRouter struct {
 	apiKeys  map[string]map[string]string // Store platform-specific keys for API providers
 	routes   atomic.Pointer[map[string]ModelRoute]
 	logger   *logger.Logger
+
+	// titleModel is the endpoint every title is generated with, set by
+	// title_generation.provider and title_generation.model; nil without them.
+	titleModel *ProviderConfig
 }
 
 // GetRoutes retrieves the current routing map from the atomic pointer store.
@@ -270,6 +274,18 @@ func NewModelRouter(cfg *config.Config, logger *logger.Logger) *ModelRouter {
 
 	logger.Info("model router initialized",
 		slog.Int("route_count", len(routes)))
+
+	router.titleModel = titleModelFromConfig(cfg)
+	if title := router.titleModel; title != nil {
+		if _, err := router.GetTitleGenerationConfig(); err != nil {
+			logger.Error("title model unavailable: chat titles use each chat's model, other titles are skipped",
+				slog.String("error", err.Error()))
+		} else {
+			logger.Info("title model configured",
+				slog.String("provider", title.Name),
+				slog.String("model", title.Model))
+		}
+	}
 
 	return router
 }
@@ -631,22 +647,60 @@ func (mr *ModelRouter) GetProviders() []string {
 	return providers
 }
 
-// GetTitleGenerationConfig returns the provider configuration for title generation.
-// Uses Kimi K2 as the default model for cost-effective title generation.
-//
-// Returns:
-//   - *ProviderConfig: Kimi K2 provider config (model, baseURL, API key)
-//   - error: If Kimi K2 is not configured
-//
-// Used by:
-//   - GPT-5 Pro responses (instead of expensive GPT-5 Pro for titles)
-//   - Deep Research sessions (for initial chat title)
-func (mr *ModelRouter) GetTitleGenerationConfig() (*ProviderConfig, error) {
-	// Use Kimi K2 for title generation (cost-effective, fast).
-	// IMPORTANT: Use canonical name "moonshot/kimi-k2" as that's the "canonical" name.
-	if provider := mr.getModelEndpointProvider("moonshot/kimi-k2", ""); provider != nil {
-		return provider, nil
-	} else {
-		return nil, errors.New("could not find a suitable endpoint for Kimi K2 for title generation")
+// defaultTitleModel generates Responses API and deep research titles when
+// title_generation.provider and title_generation.model are not set.
+const defaultTitleModel = "moonshot/kimi-k2"
+
+// titleModelFromConfig returns the endpoint set by title_generation.provider and
+// title_generation.model, or nil when they are not set. The provider's base URL
+// and API key are empty when it is not configured (config validation refuses an
+// unknown provider) or its key variable is unset.
+func titleModelFromConfig(cfg *config.Config) *ProviderConfig {
+	title := cfg.TitleGeneration
+	if title == nil || title.Model == "" {
+		return nil
 	}
+	endpoint := &ProviderConfig{
+		Name:    title.Provider,
+		Model:   title.Model,
+		APIType: config.APITypeChatCompletions,
+	}
+	if cfg.ModelRouterConfig != nil {
+		for _, provider := range cfg.ModelRouterConfig.Providers {
+			if provider.Name == title.Provider {
+				endpoint.BaseURL = provider.BaseURL
+				endpoint.APIKey = provider.APIKey
+				break
+			}
+		}
+	}
+	return endpoint
+}
+
+// HasTitleModel reports whether title_generation.provider and
+// title_generation.model are set. Without them, a chat's title is generated
+// with the chat's own model.
+func (mr *ModelRouter) HasTitleModel() bool {
+	return mr.titleModel != nil
+}
+
+// GetTitleGenerationConfig returns the endpoint titles are generated with: the
+// title_generation provider and model when they are set, or else Kimi K2.
+//
+// Used by chat completions (when HasTitleModel), Responses API chats, and deep
+// research sessions.
+func (mr *ModelRouter) GetTitleGenerationConfig() (*ProviderConfig, error) {
+	if title := mr.titleModel; title != nil {
+		if title.BaseURL == "" || title.APIKey == "" {
+			return nil, fmt.Errorf("title model %s on provider %s has no base URL or API key", title.Model, title.Name)
+		}
+		endpoint := *title
+		return &endpoint, nil
+	}
+
+	// IMPORTANT: Use the canonical name, as routes are keyed by it.
+	if provider := mr.getModelEndpointProvider(defaultTitleModel, ""); provider != nil {
+		return provider, nil
+	}
+	return nil, errors.New("could not find a suitable endpoint for Kimi K2 for title generation")
 }

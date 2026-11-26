@@ -143,9 +143,10 @@ func handleResponsesAPI(
 		}
 	}
 
-	// Step 2: Trigger title generation using cost-effective model (GLM 4.6)
+	// Step 2: Trigger title generation with the title model (not the expensive
+	// Responses API model)
 	if titleConfig, err := modelRouter.GetTitleGenerationConfig(); err != nil {
-		log.Warn("Kimi K2 not configured for title generation, skipping",
+		log.Warn("title model unavailable, skipping the title",
 			slog.String("error", err.Error()))
 	} else {
 		platform := c.GetHeader("X-Client-Platform")

@@ -53,7 +53,9 @@ func newEnv(overrides map[string]string) map[string]string {
 	return env
 }
 
-func newModelRouter(t *testing.T, env map[string]string) *ModelRouter {
+// newModelRouter builds a router from the test config with env set. Each opt
+// changes the loaded configuration before the router is built.
+func newModelRouter(t *testing.T, env map[string]string, opts ...func(*config.Config)) *ModelRouter {
 	var log *logger.Logger
 	if testing.Verbose() {
 		log = logger.New(logger.Config{Level: slog.LevelDebug})
@@ -84,6 +86,10 @@ func newModelRouter(t *testing.T, env map[string]string) *ModelRouter {
 
 	if err := config.LoadConfigFile(configFile, appConfig); err != nil {
 		t.Fatalf("Failed to load config file: %v", err)
+	}
+
+	for _, opt := range opts {
+		opt(appConfig)
 	}
 
 	return NewModelRouter(appConfig, log)
