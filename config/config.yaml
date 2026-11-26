@@ -66,7 +66,7 @@ model_router:
     base_url: https://openrouter.ai/api/v1
 
   models:
-  # Kimi K2.6 - Free & Pro - via NEAR AI (0.75× multiplier) - NEW DEFAULT
+  # Kimi K2.6 - Free & Pro - via Chutes (0.75× multiplier) - NEW DEFAULT
   - name: moonshot/kimi-k2
     aliases:
     - kimi-k2
@@ -74,12 +74,13 @@ model_router:
     - kimi-2.5
     - kimi
     - moonshot/kimi-k2
+    - moonshotai/kimi-k2.6
     token_multiplier: 0.75
     providers:
-    - name: NEAR AI
-      model: moonshotai/kimi-k2.6
+    - name: Chutes
+      model: moonshotai/Kimi-K2.6-TEE
 
-  # DeepSeek V4 Pro - Free & Pro - temporary reroute to DeepSeek V4 Flash via NEAR AI (0.75× multiplier)
+  # DeepSeek V4 Pro - Free & Pro - temporary reroute to DeepSeek V4.1 Flash via NEAR AI (0.75× multiplier)
   - name: deepseek-ai/DeepSeek-V4-Pro
     aliases:
     - deepseek/deepseek-v4-pro
@@ -88,11 +89,12 @@ model_router:
     - deepseek/deepseek-r1-0528
     - deepseek-r1-0528
     - deepseek-r1
+    - deepseek-ai/DeepSeek-V4-Flash
     token_multiplier: 0.75
     providers:
     # Temporary reroute before full deprecation as unavailable at upstream providers
     - name: NEAR AI
-      model: deepseek-ai/DeepSeek-V4-Flash
+      model: deepseek-ai/DeepSeek-V4.1-Flash-1017
 
   # Llama 3.3 70B - Free & Pro - via Tinfoil (0.75× multiplier)
   - name: meta-llama/Llama-3.3-70B

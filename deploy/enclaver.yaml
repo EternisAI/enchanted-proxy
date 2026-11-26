@@ -46,6 +46,7 @@ egress:
   - serpapi.com
   - api.exa.ai
   - cloud-api.near.ai
+  - llm.chutes.ai
   - us-east-1.aws.api.temporal.io
   # Internal API endpoints
   - 7697efc6.igw.ghostagent.org
@@ -59,7 +60,7 @@ egress:
   # Self-hosted Anonymizer-4B
   - anonymizer-4b.llm.eternisai.net
   # Self-hosted Venice (GCP)
-  - 34.30.193.13
+  - 34.28.19.236
   # aws-0-us-east-2.pooler.supabase.com
   - 3.13.175.194
   - 3.139.14.59
@@ -103,6 +104,7 @@ env:
 - APPSTORE_SANDBOX_EMAIL_DOMAINS
 - APPSTORE_SANDBOX_EMAILS
 - APPSTORE_TEST_PRODUCTS
+- CHUTES_API_KEY
 - CORS_ALLOWED_ORIGINS
 - DATABASE_URL
 - DB_CONN_MAX_IDLE_TIME_MINUTES
