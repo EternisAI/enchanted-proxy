@@ -178,6 +178,12 @@ type ProbeConfig struct {
 	Thinking         bool
 	SuccessThreshold int // consecutive successes required to transition from failure to success state
 	FailureThreshold int // consecutive failures required to transition from success to failure state
+
+	// BaseURL, when set, replaces the endpoint's base URL for probe requests.
+	BaseURL string
+	// TLS, when set, is the mutual TLS (client certificate, pinned server key)
+	// for probe requests.
+	TLS *config.ProbeTLSConfig
 }
 
 // defaultProbeConfig returns a ProbeConfig with all defaults applied.
@@ -211,6 +217,8 @@ func probeConfigFromConfig(cfg *config.ProbeConfig) *ProbeConfig {
 		Thinking:         cfg.Thinking,
 		SuccessThreshold: cfg.SuccessThreshold,
 		FailureThreshold: cfg.FailureThreshold,
+		BaseURL:          cfg.BaseURL,
+		TLS:              cfg.TLS,
 	}
 
 	// Distinguish "explicitly set to empty" from "default OK".

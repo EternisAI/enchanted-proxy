@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/url"
@@ -441,6 +442,32 @@ type ProbeConfig struct {
 	// FailureThreshold is the number of consecutive failed probes required before
 	// a probe in success state transitions to failure state. Minimum 1, default 3.
 	FailureThreshold int `yaml:"failure_threshold,omitempty"`
+
+	// BaseURL, when set, is the base URL probe requests go to instead of the
+	// endpoint's own. An endpoint the proxy reaches through an Envoy listener in
+	// the enclave has a loopback base URL that exists only inside the enclave;
+	// the prober runs outside it and calls the upstream directly.
+	BaseURL string `yaml:"base_url,omitempty"`
+
+	// TLS, when set, makes probe requests authenticate with a client certificate
+	// and accept only pinned server public keys. It requires an https BaseURL.
+	TLS *ProbeTLSConfig `yaml:"tls,omitempty"`
+}
+
+// ProbeTLSConfig is the mutual TLS for probing an endpoint whose server
+// certificate is self-signed and pinned.
+type ProbeTLSConfig struct {
+	// ClientCertFile and ClientKeyFile are the PEM client certificate and key.
+	// They are read for every connection, so a rotated certificate is used
+	// without a restart.
+	ClientCertFile string `yaml:"client_cert_file"`
+	ClientKeyFile  string `yaml:"client_key_file"`
+
+	// ServerSPKISHA256 lists the accepted server public keys, each the base64
+	// SHA-256 of the certificate's DER SubjectPublicKeyInfo (the format of
+	// Envoy's verify_certificate_spki). The server's certificate chain is not
+	// checked.
+	ServerSPKISHA256 []string `yaml:"server_spki_sha256"`
 }
 
 const (
@@ -529,6 +556,30 @@ func (cfg *ProbeConfig) Validate() error {
 	}
 	if cfg.FailureThreshold <= 0 {
 		cfg.FailureThreshold = DefaultProbeFailureThreshold
+	}
+
+	if cfg.BaseURL != "" {
+		u, err := url.Parse(cfg.BaseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("probe base_url %q must be an absolute http or https URL", cfg.BaseURL)
+		}
+	}
+
+	if cfg.TLS != nil {
+		if !strings.HasPrefix(cfg.BaseURL, "https://") {
+			return errors.New("probe tls requires an https base_url")
+		}
+		if cfg.TLS.ClientCertFile == "" || cfg.TLS.ClientKeyFile == "" {
+			return errors.New("probe tls requires client_cert_file and client_key_file")
+		}
+		if len(cfg.TLS.ServerSPKISHA256) == 0 {
+			return errors.New("probe tls requires at least one server_spki_sha256 pin")
+		}
+		for _, pin := range cfg.TLS.ServerSPKISHA256 {
+			if sum, err := base64.StdEncoding.DecodeString(pin); err != nil || len(sum) != 32 {
+				return fmt.Errorf("probe tls pin %q is not a base64 SHA-256", pin)
+			}
+		}
 	}
 
 	return nil

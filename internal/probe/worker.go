@@ -435,11 +435,17 @@ func (w *probeWorker) runProbe() probeResult {
 		return probeResult{err: err}
 	}
 
+	// A probe base URL replaces the endpoint's, which may exist only inside the
+	// enclave.
+	baseURL := w.endpoint.BaseURL
+	if w.probe.BaseURL != "" {
+		baseURL = w.probe.BaseURL
+	}
 	var url string
 	if w.endpoint.APIType == config.APITypeResponses {
-		url = strings.TrimRight(w.endpoint.BaseURL, "/") + "/responses"
+		url = strings.TrimRight(baseURL, "/") + "/responses"
 	} else {
-		url = strings.TrimRight(w.endpoint.BaseURL, "/") + "/chat/completions"
+		url = strings.TrimRight(baseURL, "/") + "/chat/completions"
 	}
 	req, err := http.NewRequestWithContext(w.ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
