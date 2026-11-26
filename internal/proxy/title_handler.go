@@ -2,7 +2,10 @@ package proxy
 
 import (
 	"context"
+	"log/slog"
 
+	"github.com/eternisai/enchanted-proxy/internal/logger"
+	"github.com/eternisai/enchanted-proxy/internal/routing"
 	"github.com/eternisai/enchanted-proxy/internal/title_generation"
 	"github.com/gin-gonic/gin"
 )
@@ -16,6 +19,30 @@ type TitleGenerationParams struct {
 	APIKey            string
 	Platform          string
 	EncryptionEnabled *bool
+}
+
+// titleModelSource is the part of the model router that picks the title model.
+type titleModelSource interface {
+	HasTitleModel() bool
+	GetTitleGenerationConfig() (*routing.ProviderConfig, error)
+}
+
+// chatTitleEndpoint returns the model, base URL and API key a chat
+// completion's title is generated with: the configured title model, or the
+// chat's own endpoint when none is configured. A configured title model that is
+// unavailable (its provider has no API key) also falls back to the chat's own
+// endpoint, so titles keep working.
+func chatTitleEndpoint(log *logger.Logger, titles titleModelSource, model, baseURL, apiKey string) (string, string, string) {
+	if !titles.HasTitleModel() {
+		return model, baseURL, apiKey
+	}
+	title, err := titles.GetTitleGenerationConfig()
+	if err != nil {
+		log.Debug("title model unavailable, using the chat's model for its title",
+			slog.String("error", err.Error()))
+		return model, baseURL, apiKey
+	}
+	return title.Model, title.BaseURL, title.APIKey
 }
 
 // TriggerTitleGeneration checks if title generation should be triggered and handles it
