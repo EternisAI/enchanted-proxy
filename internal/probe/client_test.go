@@ -37,7 +37,7 @@ func newSlowProbeEndpoint(t *testing.T, delay time.Duration) *httptest.Server {
 
 func TestNewProbeHTTPClientDefaultsToConfigDefault(t *testing.T) {
 	for _, timeout := range []time.Duration{0, -time.Second} {
-		client := newProbeHTTPClient(timeout)
+		client := newProbeHTTPClient(timeout, nil)
 		if client.Timeout != config.DefaultProbeTimeout {
 			t.Errorf("timeout %v: got client timeout %v, want %v",
 				timeout, client.Timeout, config.DefaultProbeTimeout)
@@ -49,7 +49,7 @@ func TestNewProbeHTTPClientDefaultsToConfigDefault(t *testing.T) {
 // a probe is non-streaming, so headers arrive only once generation is done, and
 // a shorter header limit would be the only deadline that ever applied.
 func TestProbeHTTPClientHeaderTimeoutMatchesBudget(t *testing.T) {
-	client := newProbeHTTPClient(90 * time.Second)
+	client := newProbeHTTPClient(90*time.Second, nil)
 	transport, ok := client.Transport.(*http.Transport)
 	if !ok {
 		t.Fatalf("unexpected transport type %T", client.Transport)
@@ -62,7 +62,7 @@ func TestProbeHTTPClientHeaderTimeoutMatchesBudget(t *testing.T) {
 
 // Connection setup must never be allowed to eat a budget smaller than itself.
 func TestProbeHTTPClientCapsConnectTimeoutToBudget(t *testing.T) {
-	client := newProbeHTTPClient(2 * time.Second)
+	client := newProbeHTTPClient(2*time.Second, nil)
 	transport, ok := client.Transport.(*http.Transport)
 	if !ok {
 		t.Fatalf("unexpected transport type %T", client.Transport)
@@ -108,7 +108,7 @@ func TestProbeRespectsConfiguredTimeout(t *testing.T) {
 				},
 				provider: "TestProvider",
 				model:    "slow-model",
-				client:   newProbeHTTPClient(tt.timeout),
+				client:   newProbeHTTPClient(tt.timeout, nil),
 				logger:   testLogger(),
 			}
 
@@ -165,7 +165,7 @@ func TestSlowProbesLeaveTheRetryIntervalIdle(t *testing.T) {
 	w.probe.Interval = 400 * time.Millisecond
 	w.probe.RetryInterval = retryInterval
 	w.probe.Timeout = probeTimeout
-	w.client = newProbeHTTPClient(probeTimeout)
+	w.client = newProbeHTTPClient(probeTimeout, nil)
 	start(t, w)
 
 	const want = 3

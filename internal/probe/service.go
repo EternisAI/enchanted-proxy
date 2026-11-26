@@ -169,7 +169,7 @@ func NewProbeService(logger *logger.Logger, router *routing.ModelRouter, models 
 			probe:    target.probe,
 			key:      key,
 			restored: state,
-			client:   newProbeHTTPClient(target.probe.Timeout),
+			client:   newProbeHTTPClient(target.probe.Timeout, target.probe.TLS),
 			logger:   logger,
 			slack:    s.slack,
 		}

@@ -143,6 +143,10 @@ model_router:
         max_tokens: 512
 
   # Dolphin Mistral (Venice) - Free & Pro - via GCP self-hosted (0.5× multiplier)
+  # SGLang behind mutual TLS at 34.28.19.236:8443. The proxy reaches it through
+  # the enclave's Envoy listener egress_dolphin (deploy/envoy/envoy.yaml), which
+  # presents the pod's TEE client certificate and pins the server's key. The
+  # prober runs outside the enclave and does the same itself.
   - name: dphn/Dolphin-Mistral-24B-Venice-Edition
     aliases:
     - dolphin-mistral-eternis
@@ -150,7 +154,14 @@ model_router:
     token_multiplier: 0.5
     providers:
     - name: Eternis
-      base_url: http://34.28.19.236:8000/v1
+      base_url: http://127.0.0.1:20130/v1
+      probe:
+        base_url: https://34.28.19.236:8443/v1
+        tls:
+          client_cert_file: /var/run/secrets/mtls/tls.crt
+          client_key_file: /var/run/secrets/mtls/tls.key
+          server_spki_sha256:
+          - d7afxr+KiPEsZL9Vss21E6HKskR7G26PmZNZcWhBgXk=
 
   # GPT-4.1 - Pro only - via OpenRouter (4× multiplier)
   - name: openai/gpt-4.1

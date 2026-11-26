@@ -1,6 +1,11 @@
 package probe
 
 import (
+	"crypto/sha256"
+	"crypto/tls"
+	"encoding/base64"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -24,7 +29,9 @@ const connectTimeout = 10 * time.Second
 //
 // A non-positive timeout selects the default, which keeps workers built outside
 // the config path (tests) on the same budget as configured ones.
-func newProbeHTTPClient(timeout time.Duration) *http.Client {
+//
+// A non-nil tlsCfg adds the endpoint's mutual TLS (see pinnedTLSConfig).
+func newProbeHTTPClient(timeout time.Duration, tlsCfg *config.ProbeTLSConfig) *http.Client {
 	if timeout <= 0 {
 		timeout = config.DefaultProbeTimeout
 	}
@@ -32,15 +39,72 @@ func newProbeHTTPClient(timeout time.Duration) *http.Client {
 	// Never let connection setup alone consume the whole budget.
 	connect := min(connectTimeout, timeout)
 
-	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout: connect,
-			}).DialContext,
-			TLSHandshakeTimeout:   connect,
-			ResponseHeaderTimeout: timeout,
-			DisableKeepAlives:     true,
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: connect,
+		}).DialContext,
+		TLSHandshakeTimeout:   connect,
+		ResponseHeaderTimeout: timeout,
+		DisableKeepAlives:     true,
+	}
+	client := &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+	}
+	if tlsCfg != nil {
+		transport.TLSClientConfig = pinnedTLSConfig(tlsCfg)
+		// A redirect to plain http would resend the request, with its API key,
+		// without TLS, and its answer could pass the probe. An https redirect
+		// is still held to the pinned key.
+		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			if req.URL.Scheme != "https" {
+				return fmt.Errorf("refusing redirect to non-HTTPS URL %s", req.URL.Redacted())
+			}
+			if len(via) >= 10 { // the default client's limit
+				return errors.New("stopped after 10 redirects")
+			}
+			return nil
+		}
+	}
+	return client
+}
+
+// pinnedTLSConfig authenticates the prober with the configured client
+// certificate and accepts only a server whose public key is pinned.
+//
+// The server certificate is self-signed, so the usual chain verification is
+// off and VerifyConnection, which runs regardless, checks the pin instead.
+// The client certificate is read on every handshake (keep-alives are off, so
+// that is every probe): it is rotated on disk, and a stale copy would expire.
+func pinnedTLSConfig(cfg *config.ProbeTLSConfig) *tls.Config {
+	// The config validation checked that every pin decodes to 32 bytes.
+	pins := make(map[[sha256.Size]byte]bool, len(cfg.ServerSPKISHA256))
+	for _, pin := range cfg.ServerSPKISHA256 {
+		var sum [sha256.Size]byte
+		if b, err := base64.StdEncoding.DecodeString(pin); err == nil && len(b) == sha256.Size {
+			copy(sum[:], b)
+			pins[sum] = true
+		}
+	}
+
+	return &tls.Config{
+		InsecureSkipVerify: true,
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return errors.New("server presented no certificate")
+			}
+			sum := sha256.Sum256(cs.PeerCertificates[0].RawSubjectPublicKeyInfo)
+			if !pins[sum] {
+				return fmt.Errorf("server public key %s is not pinned", base64.StdEncoding.EncodeToString(sum[:]))
+			}
+			return nil
+		},
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			cert, err := tls.LoadX509KeyPair(cfg.ClientCertFile, cfg.ClientKeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("loading the probe client certificate: %w", err)
+			}
+			return &cert, nil
 		},
 	}
 }
