@@ -227,7 +227,7 @@ func (s *Service) InitBlockchain(ctx context.Context, wsRpcURL, contractAddress 
 	}
 
 	s.ethClient = ethClient
-	s.chain = ethClient
+	s.chain = chainClient{ethClient}
 	s.contractAddress = contractAddr
 	s.eventSignature = eventSig
 	s.chainID = chainID.Uint64()
