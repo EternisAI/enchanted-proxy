@@ -47,14 +47,26 @@ func newProbeHTTPClient(timeout time.Duration, tlsCfg *config.ProbeTLSConfig) *h
 		ResponseHeaderTimeout: timeout,
 		DisableKeepAlives:     true,
 	}
-	if tlsCfg != nil {
-		transport.TLSClientConfig = pinnedTLSConfig(tlsCfg)
-	}
-
-	return &http.Client{
+	client := &http.Client{
 		Timeout:   timeout,
 		Transport: transport,
 	}
+	if tlsCfg != nil {
+		transport.TLSClientConfig = pinnedTLSConfig(tlsCfg)
+		// A redirect to plain http would resend the request, with its API key,
+		// without TLS, and its answer could pass the probe. An https redirect
+		// is still held to the pinned key.
+		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			if req.URL.Scheme != "https" {
+				return fmt.Errorf("refusing redirect to non-HTTPS URL %s", req.URL.Redacted())
+			}
+			if len(via) >= 10 { // the default client's limit
+				return errors.New("stopped after 10 redirects")
+			}
+			return nil
+		}
+	}
+	return client
 }
 
 // pinnedTLSConfig authenticates the prober with the configured client

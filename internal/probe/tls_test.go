@@ -237,3 +237,55 @@ func TestProbeFailsWithoutItsClientCertificate(t *testing.T) {
 		t.Fatalf("server served %v, want no requests", got)
 	}
 }
+
+// A pinned server that redirects to plain http must not get the probe resent
+// there: the hop would skip TLS, carry the request body and API key in
+// cleartext, and its unauthenticated answer could pass the probe.
+func TestProbeRefusesARedirectToPlainHTTP(t *testing.T) {
+	var mu sync.Mutex
+	var plainRequests []string
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		plainRequests = append(plainRequests, r.Method+" "+r.URL.Path+" auth="+r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": "OK"}}},
+		})
+	}))
+	t.Cleanup(plain.Close)
+
+	ca := newTestCA(t)
+	pool := x509.NewCertPool()
+	pool.AddCert(ca.cert)
+	pinned := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	pinned.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool}
+	pinned.StartTLS()
+	t.Cleanup(pinned.Close)
+
+	dir := t.TempDir()
+	certFile, keyFile := filepath.Join(dir, "tls.crt"), filepath.Join(dir, "tls.key")
+	ca.writeClientCert(t, certFile, keyFile, "client")
+
+	w := newMutualTLSWorker(pinned.URL, &config.ProbeTLSConfig{
+		ClientCertFile:   certFile,
+		ClientKeyFile:    keyFile,
+		ServerSPKISHA256: []string{spkiPin(pinned.Certificate())},
+	})
+	w.endpoint.APIKey = "test-key"
+
+	result := w.runProbe()
+	if result.success {
+		t.Error("probe succeeded through a redirect to plain http")
+	}
+	if result.err == nil || !strings.Contains(result.err.Error(), "non-HTTPS") {
+		t.Errorf("got error %v, want one refusing the non-HTTPS redirect", result.err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(plainRequests) != 0 {
+		t.Errorf("plain http server received %v, want nothing", plainRequests)
+	}
+}
