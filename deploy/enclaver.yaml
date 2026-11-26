@@ -60,7 +60,7 @@ egress:
   # Self-hosted Anonymizer-4B
   - anonymizer-4b.llm.eternisai.net
   # Self-hosted Venice (GCP)
-  - 34.30.193.13
+  - 34.28.19.236
   # aws-0-us-east-2.pooler.supabase.com
   - 3.13.175.194
   - 3.139.14.59
