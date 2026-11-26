@@ -78,7 +78,7 @@ All model and provider definitions live in `config/config.yaml` (loaded via `CON
 **Config structure**:
 - `model_router.providers` — provider name, base URL, API key env var
 - `model_router.models` — canonical model name, aliases, token multiplier, provider list
-- `title_generation` — system prompts for conversation title generation
+- `title_generation` — the model every conversation title is generated with (`provider`, `model`) and the title system prompts
 
 **Resolution order**: exact match → alias match → prefix match → wildcard fallback (OpenRouter).
 
