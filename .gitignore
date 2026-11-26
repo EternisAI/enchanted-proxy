@@ -73,3 +73,7 @@ deepr_sessions/.env.test
 # dynamically generated build/endorsement information
 deploy/build-info.json
 deploy/endorsements.json
+
+# Local notes
+/docs/notes/
+/docs/scratch/
